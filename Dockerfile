@@ -1,31 +1,23 @@
-FROM python:3.10-alpine
+FROM python:3.11-alpine
 
 WORKDIR /app
 
-# Install build dependencies (gcc, etc.)
 RUN apk update \
-    && apk --no-cache --update add build-base libffi-dev openssl-dev
+    && apk --no-cache --update add build-base libffi-dev openssl-dev curl
 
-# Set poetry version to use
-ARG POETRY_VERSION=1.4.0
-# Prevent Python from generating .pyc files
-ENV PYTHONDONTWRITEBYTECODE 1
-# Turn off stdout/stderr buffering to make output appear in real time
-ENV PYTHONUNBUFFERED 1
-# Set pip env vars for faster/leaner docker builds
-ENV PIP_DEFAULT_TIMEOUT=100 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-RUN pip install "poetry==$POETRY_VERSION"
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install dependencies first to leverage Docker layer caching
-ADD poetry.lock pyproject.toml ./
+# Copy dependency files first for layer caching
+COPY pyproject.toml uv.lock README.md ./
 
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi
+# Install dependencies
+RUN uv sync --frozen --no-dev --no-cache --python-preference only-system
 
-# After dependencies are installed, copy the rest of the code
-ADD . .
+# Copy application code
+COPY . .
 
-ENTRYPOINT ["python", "main.py"]
+ENTRYPOINT ["uv", "run", "python", "main.py"]
