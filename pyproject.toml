@@ -1,37 +1,41 @@
-[tool.poetry]
+[project]
 name = "ghtopdep"
 version = "0.4.3"
 description = "CLI tool for sorting dependents repositories and packages by stars"
-authors = ["Andriy Orehov <andriyorehov@gmail.com>"]
-license = "MIT"
+authors = [
+    {name = "Andriy Orehov", email = "andriyorehov@gmail.com"}
+]
+license = {text = "MIT"}
 readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "selectolax>=0.3.7,<0.4.0",
+    "tabulate>=0.8.3,<0.9.0",
+    "click>=8.1.2,<9.0.0",
+    "requests>=2.22,<3.0.0",
+    "github3-py>=4.0.1,<5.0.0",
+    "appdirs>=1.4.4,<2.0.0",
+    "pipdate>=0.5.6,<0.6.0",
+    "cachecontrol[filecache]>=0.14.0,<0.15.0",
+    "tqdm>=4.66.4,<5.0.0",
+]
 
-[tool.poetry.urls]
-"Source" = "https://github.com/github-tooling/ghtopdep"
+[project.urls]
+Source = "https://github.com/github-tooling/ghtopdep"
 "Bug Tracker" = "https://github.com/github-tooling/ghtopdep/issues"
 
-[tool.poetry.dependencies]
-python = "^3.7"
-selectolax = "^0.3.7"
-tabulate = "^0.8.3"
-click = "^8.1.2"
-requests = "^2.22"
-"github3.py" = "^4.0.1"
-appdirs = "^1.4.4"
-pipdate = "^0.5.6"
-cachecontrol = {extras = ["filecache"], version = "^0.14.0"}
-tqdm = "^4.66.4"
+[project.scripts]
+ghtopdep = "ghtopdep.ghtopdep:cli"
 
-[tool.poetry.dev-dependencies]
-better_exceptions = "^0.2.2"
-pysnooper = "^0.3.0"
+[dependency-groups]
+dev = [
+    "better-exceptions>=0.2.2,<0.3.0",
+    "pysnooper>=0.3.0,<0.4.0",
+]
 
-[tool.poetry.scripts]
-ghtopdep = 'ghtopdep.ghtopdep:cli'
 [build-system]
-requires = ["poetry>=0.12"]
-build-backend = "poetry.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.dephell.main]
-from = {format = "poetry", path = "pyproject.toml"}
-to = {format = "setuppy", path = "setup.py"}
+[tool.hatch.build.targets.wheel]
+packages = ["ghtopdep"]
