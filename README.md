@@ -8,7 +8,7 @@ CLI tool for sorting dependents repo by stars
 
 ## Requirements
 
-- Python 3.5 and up
+- Python 3.11 and up
 - Python development libraries
 
 ## Installation
@@ -103,49 +103,49 @@ Options:
 ### Table view (by default)
 
 ```sh
-➜ ghtopdep https://github.com/dropbox/dropbox-sdk-js
+➜ ghtopdep https://github.com/pytest-dev/pytest
 | url                                               | stars   |
 |---------------------------------------------------|---------|
-| https://github.com/transloadit/uppy               | 21K     |
-| https://github.com/codesandbox/codesandbox-client | 8.6K    |
-| https://github.com/joemccann/dillinger            | 6.5K    |
-| https://github.com/keplergl/kepler.gl             | 5.8K    |
-| https://github.com/jitsi/jitsi-meet               | 4.5K    |
-| https://github.com/jsbin/jsbin                    | 4.0K    |
-| https://github.com/NorthwoodsSoftware/GoJS        | 3.8K    |
-| https://github.com/buttercup/buttercup-desktop    | 3.1K    |
-| https://github.com/openstyles/stylus              | 2.3K    |
-| https://github.com/mickael-kerjean/filestash      | 2.0K    |
-found 1660 repositories others repositories are private
-found 443 repositories with more than zero star
-~ via ⬢ v12.5.0 via 🐘 v7.2.19 via 🐍 3.8.0 took 2m 57s
+| https://github.com/pallets/flask                  | 67K     |
+| https://github.com/encode/httpx                   | 13K     |
+| https://github.com/tiangolo/fastapi               | 75K     |
+| https://github.com/psf/black                      | 38K     |
+| https://github.com/python-poetry/poetry           | 31K     |
+| https://github.com/pre-commit/pre-commit          | 12K     |
+| https://github.com/pytest-dev/pytest-cov          | 1.7K    |
+| https://github.com/pytest-dev/pytest-asyncio      | 1.4K    |
+| https://github.com/pytest-dev/pytest-mock         | 1.8K    |
+| https://github.com/spulec/freezegun               | 4.0K    |
+found 1800 repositories others repositories are private
+found 950 repositories with more than zero star
+~ via 🐍 3.11.0 took 2m 15s
 ```
 
 ### JSON view
 
 ```sh
-➜ ghtopdep https://github.com/dropbox/dropbox-sdk-js --json
-[{"url": "https://github.com/transloadit/uppy", "stars": 21191}, {"url": "https://github.com/codesandbox/codesandbox-client", "stars": 8386}, {"url": "https://github.com/joemccann/dillinger", "stars": 6491}, {"url": "https://github.com/keplergl/kepler.gl", "stars": 5615}, {"url": "https://github.com/jitsi/jitsi-meet", "stars": 4303}, {"url": "https://github.com/jsbin/jsbin", "stars": 3947}, {"url": "https://github.com/NorthwoodsSoftware/GoJS", "stars": 3692}, {"url": "https://github.com/buttercup/buttercup-desktop", "stars": 3054}, {"url": "https://github.com/openstyles/stylus", "stars": 2219}, {"url": "https://github.com/mickael-kerjean/filestash", "stars": 1869}]
+➜ ghtopdep https://github.com/pytest-dev/pytest --json
+[{"url": "https://github.com/tiangolo/fastapi", "stars": 75000}, {"url": "https://github.com/pallets/flask", "stars": 67000}, {"url": "https://github.com/psf/black", "stars": 38000}, {"url": "https://github.com/python-poetry/poetry", "stars": 31000}, {"url": "https://github.com/encode/httpx", "stars": 13000}, {"url": "https://github.com/pre-commit/pre-commit", "stars": 12000}, {"url": "https://github.com/spulec/freezegun", "stars": 4000}, {"url": "https://github.com/pytest-dev/pytest-mock", "stars": 1800}, {"url": "https://github.com/pytest-dev/pytest-cov", "stars": 1700}, {"url": "https://github.com/pytest-dev/pytest-asyncio", "stars": 1400}]
 ```
 
 you can sort packages and fetch their description
 
 ```sh
-➜ ghtopdep https://github.com/dropbox/dropbox-sdk-js --description --packages
+➜ ghtopdep https://github.com/pytest-dev/pytest --description --packages
 | url                                            | stars   | description                                                  |
 |------------------------------------------------|---------|--------------------------------------------------------------|
-| https://github.com/jsbin/jsbin                 | 4.0K    | Collaborative JavaScript Debugging App                       |
-| https://github.com/jvilk/BrowserFS             | 1.9K    | BrowserFS is an in-browser filesystem that emulates the...   |
-| https://github.com/coderaiser/cloudcmd         | 1.1K    | ✨☁️📁✨ Cloud Commander file manager for the web with...       |
-| https://github.com/node-red/node-red-web-nodes | 153     | A collection of node-red nodes aimed at web services         |
-| https://github.com/robertknight/passcards      | 133     | A 1Password-compatible command-line and web-based...         |
-| https://github.com/enyojs/ares-project         | 125     | A browser-based code editor and UI designer for Enyo 2...    |
-| https://github.com/transloadit/uppy-server     | 114     | [DEPRECATED] 'Uppy Server' was renamed to 'Companion' and... |
-| https://github.com/bioimagesuiteweb/bisweb     | 34      | This is the repository for the BioImage Suite Web Project    |
-| https://github.com/sallar/dropbox-fs           | 30      | :package: Node FS wrapper for Dropbox                        |
-| https://github.com/filefog/filefog             | 26      | A thin cloud-service agnostic wrapper/interface to access... |
-found 140 packages others packages are private
-found 61 packages with more than zero star
+| https://github.com/pytest-dev/pytest-cov       | 1.7K    | Coverage plugin for pytest                                   |
+| https://github.com/pytest-dev/pytest-asyncio   | 1.4K    | Pytest support for asyncio                                   |
+| https://github.com/pytest-dev/pytest-mock      | 1.8K    | Thin-wrapper around the mock package for easier use with... |
+| https://github.com/pytest-dev/pytest-xdist     | 1.4K    | pytest plugin for distributed testing and loop-on-failures   |
+| https://github.com/pytest-dev/pytest-django    | 1.3K    | A Django plugin for pytest                                   |
+| https://github.com/Teemu/pytest-sugar          | 1.1K    | A plugin that changes the default look and feel of pytest    |
+| https://github.com/pytest-dev/pytest-timeout   | 567     | pytest plugin to abort hanging tests                         |
+| https://github.com/pytest-dev/pytest-html      | 724     | Plugin for generating HTML reports for pytest results        |
+| https://github.com/eisensheng/pytest-catchlog  | 89      | py.test plugin to catch log messages                         |
+| https://github.com/man-group/pytest-plugins    | 531     | A grab-bag of nifty pytest plugins                           |
+found 420 packages others packages are private
+found 280 packages with more than zero star
 ```
 
 also ghtopdep support code searching at dependents (repositories/packages)
@@ -163,22 +163,72 @@ https://github.com/wolbodo/members/blob/d091f1e44b4e8cb8cc31f39ea6f6e9c36211d019
 
 ## Development setup
 
-Using [Poetry](https://poetry.eustace.io/docs/)
+Using [UV](https://docs.astral.sh/uv/) - a fast Python package and project manager
 
+### Installing UV
+
+**macOS and Linux:**
 ```sh
-$ poetry install
-$ poetry run ghtopdep https://github.com/dropbox/dropbox-sdk-js
-$ dephell deps convert --from=pyproject.toml --to=setup.py
-$ poetry build
-$ poetry publish
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-[poetry2setup: Convert python-poetry(pyproject.toml) to setup.py.](https://github.com/abersheeran/poetry2setup)
+**Windows:**
+```powershell
+$ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
-or [Pipenv](https://docs.pipenv.org/)
-
+**Alternative (via pip):**
 ```sh
-$ pipenv install --dev -e .
+$ pip install uv
+```
+
+### Basic Development Workflow
+
+**Install dependencies:**
+```sh
+$ uv sync
+```
+
+**Run the application:**
+```sh
+$ uv run ghtopdep https://github.com/pytest-dev/pytest
+```
+
+**Build the package:**
+```sh
+$ uv build
+```
+
+**Publish to PyPI:**
+```sh
+$ uv publish
+```
+
+### Common Development Tasks
+
+**Add a new dependency:**
+```sh
+$ uv add <package-name>
+```
+
+**Add a development dependency:**
+```sh
+$ uv add --dev <package-name>
+```
+
+**Remove a dependency:**
+```sh
+$ uv remove <package-name>
+```
+
+**Run tests:**
+```sh
+$ uv run pytest
+```
+
+**Run any Python script:**
+```sh
+$ uv run python script.py
 ```
 
 ## License
