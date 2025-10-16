@@ -1,6 +1,6 @@
 [project]
 name = "ghtopdep"
-version = "0.4.3"
+dynamic = ["version"]
 description = "CLI tool for sorting dependents repositories and packages by stars"
 authors = [
     {name = "Andriy Orehov", email = "andriyorehov@gmail.com"}
@@ -8,6 +8,21 @@ authors = [
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["github", "dependencies", "cli", "stars", "sorting", "dependents", "analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+
 dependencies = [
     "selectolax>=0.3.7,<0.4.0",
     "tabulate>=0.8.3,<0.9.0",
@@ -23,9 +38,11 @@ dependencies = [
 [project.urls]
 Source = "https://github.com/github-tooling/ghtopdep"
 "Bug Tracker" = "https://github.com/github-tooling/ghtopdep/issues"
+Homepage = "https://github.com/github-tooling/ghtopdep"
+Documentation = "https://github.com/github-tooling/ghtopdep#readme"
 
 [project.scripts]
-ghtopdep = "ghtopdep.ghtopdep:cli"
+ghtopdep = "ghtopdep.cli:cli"
 
 [dependency-groups]
 dev = [
@@ -36,6 +53,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "ghtopdep/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ghtopdep"]

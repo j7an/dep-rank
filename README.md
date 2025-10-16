@@ -30,7 +30,15 @@ $ pip install git+https://github.com/github-tooling/ghtopdep.git#egg=ghtopdep
 ```sh
 $ git clone https://github.com/github-tooling/ghtopdep
 $ cd ghtopdep
-$ python setup.py install
+$ pip install .
+```
+
+Or using UV (recommended):
+
+```sh
+$ git clone https://github.com/github-tooling/ghtopdep
+$ cd ghtopdep
+$ uv pip install .
 ```
 
 ### Using docker (from source)
@@ -76,11 +84,26 @@ To prevent rale limit being exceeded for unauthentIcated requests, ghtopdep need
 For public repositories, [create a token](https://github.com/settings/tokens/new?scopes=public_repo&description=ghtopdep)
 with the public_repo permission.
 
-You can use token as environment variable `GHTOPDEP_TOKEN` at `~/.bashrc` or `~/.zshrc`
+### Environment Variables
 
-export GHTOPDEP_TOKEN="**\*\*\*\***\*\***\*\*\*\***\*\*\*\***\*\*\*\***\*\***\*\*\*\***"
+You can configure ghtopdep using environment variables in `~/.bashrc` or `~/.zshrc`:
 
-or pass token as option --token
+**GHTOPDEP_TOKEN** - GitHub personal access token for API requests:
+```sh
+export GHTOPDEP_TOKEN="********************"
+```
+
+**GHTOPDEP_BASE_URL** - Base URL for report mode (required when using `--report` flag):
+```sh
+export GHTOPDEP_BASE_URL="https://your-server.com"
+```
+
+**GHTOPDEP_ENV** - Set to "development" to use local development server (defaults to `http://127.0.0.1:3000`):
+```sh
+export GHTOPDEP_ENV="development"
+```
+
+Alternatively, you can pass the token as option --token
 
 ```sh
 ➜ ghtopdep --help
