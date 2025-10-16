@@ -267,7 +267,6 @@ wheels = [
 
 [[package]]
 name = "ghtopdep"
-version = "0.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "appdirs" },

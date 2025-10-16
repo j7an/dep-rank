@@ -20,7 +20,7 @@ from tqdm import tqdm
 from selectolax.parser import HTMLParser
 from tabulate import tabulate
 
-from ghtopdep import __version__
+from .__version__ import __version__
 
 PACKAGE_NAME = "ghtopdep"
 CACHE_DIR = appdirs.user_cache_dir(PACKAGE_NAME)
@@ -32,7 +32,7 @@ GITHUB_URL = "https://github.com"
 REPOS_PER_PAGE = 30
 
 if pipdate.needs_checking(PACKAGE_NAME):
-    msg = pipdate.check(PACKAGE_NAME, __version__.__version__)
+    msg = pipdate.check(PACKAGE_NAME, __version__)
     click.echo(msg)
 
 
@@ -58,6 +58,7 @@ def already_added(repo_url, repos):
     for repo in repos:
         if repo['url'] == repo_url:
             return True
+    return False
 
 
 def fetch_description(gh, relative_url):
@@ -113,6 +114,74 @@ def get_max_deps(sess, url):
     return max_deps
 
 
+def validate_github_url(url):
+    """
+    Validate and parse a GitHub repository URL.
+    
+    Args:
+        url: The GitHub repository URL to validate
+        
+    Returns:
+        tuple: (owner, repository) if valid
+        
+    Raises:
+        SystemExit: If URL is invalid with appropriate error message
+    """
+    if not url or not isinstance(url, str):
+        click.echo("Error: URL cannot be empty", err=True)
+        sys.exit(1)
+    
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        click.echo(f"Error: Invalid URL format - {e}", err=True)
+        sys.exit(1)
+    
+    # Validate it's a GitHub URL
+    if parsed.netloc and parsed.netloc not in ['github.com', 'www.github.com']:
+        click.echo(f"Error: URL must be a GitHub repository URL (github.com), got: {parsed.netloc}", err=True)
+        sys.exit(1)
+    
+    # Extract and validate path segments
+    path = parsed.path.strip('/')
+    if not path:
+        click.echo("Error: Invalid GitHub URL - missing repository path", err=True)
+        click.echo("Expected format: https://github.com/owner/repository", err=True)
+        sys.exit(1)
+    
+    path_segments = path.split('/')
+    
+    # GitHub repo URLs should have exactly 2 segments: owner/repo
+    if len(path_segments) != 2:
+        click.echo(f"Error: Invalid GitHub repository URL format", err=True)
+        click.echo(f"Expected format: https://github.com/owner/repository", err=True)
+        click.echo(f"Got {len(path_segments)} path segment(s): {'/'.join(path_segments)}", err=True)
+        sys.exit(1)
+    
+    owner, repository = path_segments
+    
+    # Validate owner and repository are not empty
+    if not owner or not repository:
+        click.echo("Error: Both owner and repository names must be non-empty", err=True)
+        click.echo("Expected format: https://github.com/owner/repository", err=True)
+        sys.exit(1)
+    
+    # Basic validation for valid GitHub username/repo name characters
+    # GitHub allows alphanumeric, hyphens, underscores, and dots
+    import re
+    valid_pattern = re.compile(r'^[a-zA-Z0-9._-]+$')
+    
+    if not valid_pattern.match(owner):
+        click.echo(f"Error: Invalid owner name '{owner}' - must contain only alphanumeric characters, dots, hyphens, or underscores", err=True)
+        sys.exit(1)
+    
+    if not valid_pattern.match(repository):
+        click.echo(f"Error: Invalid repository name '{repository}' - must contain only alphanumeric characters, dots, hyphens, or underscores", err=True)
+        sys.exit(1)
+    
+    return owner, repository
+
+
 @click.command()
 @click.argument("url")
 @click.option("--repositories/--packages", default=True, help="Sort repositories or packages (default repositories)")
@@ -126,11 +195,21 @@ def get_max_deps(sess, url):
 @click.option("--token", envvar="GHTOPDEP_TOKEN")
 def cli(url, repositories, search, table, rows, minstar, report, description, token):
     MODE = os.environ.get("GHTOPDEP_ENV")
-    BASE_URL = 'http://159.223.231.170'
-    if MODE == "development":
+    BASE_URL = os.environ.get("GHTOPDEP_BASE_URL")
+
+    # Handle report mode - require BASE_URL to be set
+    if report and not BASE_URL:
+        click.echo("Error: GHTOPDEP_BASE_URL environment variable is required for report mode", err=True)
+        sys.exit(1)
+
+    # Default to development URL if MODE is set to development
+    if MODE == "development" and not BASE_URL:
         BASE_URL = 'http://127.0.0.1:3000'
 
-    owner, repository = urlparse(url).path[1:].split("/")
+    # Validate and parse the GitHub URL
+    owner, repository = validate_github_url(url)
+
+    gh = None
 
     if report:
         try:
