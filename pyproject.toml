@@ -48,7 +48,55 @@ ghtopdep = "ghtopdep.cli:cli"
 dev = [
     "better-exceptions>=0.2.2,<0.3.0",
     "pysnooper>=0.3.0,<0.4.0",
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-cov>=4.1.0,<5.0.0",
+    "pytest-mock>=3.12.0,<4.0.0",
+    "responses>=0.24.0,<1.0.0",
+    "vcrpy>=5.1.0,<6.0.0",
+    "ruff>=0.1.0,<1.0.0",
+    "mypy>=1.8.0,<2.0.0",
+    "pre-commit>=3.6.0,<4.0.0",
+    "types-requests>=2.31.0,<3.0.0",
+    "types-tabulate>=0.9.0,<1.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "--cov=ghtopdep --cov-report=html --cov-report=term-missing --cov-fail-under=80"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = false
+strict = false
+explicit_package_bases = true
+namespace_packages = true
 
 [build-system]
 requires = ["hatchling"]

@@ -30,6 +30,8 @@ REPO_SELECTOR = "span > a.text-bold"
 STARS_SELECTOR = "div > span:nth-child(1)"
 GITHUB_URL = "https://github.com"
 REPOS_PER_PAGE = 30
+MAX_PAGES = 1000  # Safety limit to prevent infinite loops
+REQUEST_TIMEOUT = 30  # Timeout for requests in seconds
 
 if pipdate.needs_checking(PACKAGE_NAME):
     msg = pipdate.check(PACKAGE_NAME, __version__)
@@ -45,9 +47,19 @@ class OneDayHeuristic(BaseHeuristic):
         if response.status not in self.cacheable_by_default_statuses:
             return {}
 
-        date = parsedate(response.headers["date"])
-        expires = datetime.datetime(*date[:6]) + datetime.timedelta(days=1)
-        return {"expires": formatdate(calendar.timegm(expires.timetuple())), "cache-control": "public"}
+        date_header = response.headers.get("date")
+        if not date_header:
+            return {}
+
+        try:
+            date = parsedate(date_header)
+            if not date:
+                return {}
+            expires = datetime.datetime(*date[:6]) + datetime.timedelta(days=1)
+            return {"expires": formatdate(calendar.timegm(expires.timetuple())), "cache-control": "public"}
+        except (TypeError, ValueError, OverflowError):
+            # If date parsing fails, don't cache
+            return {}
 
     def warning(self, response):
         msg = "Automatically cached! Response is Stale."
@@ -55,6 +67,20 @@ class OneDayHeuristic(BaseHeuristic):
 
 
 def already_added(repo_url, repos):
+    """
+    Check if a repository URL is already in the repos list.
+
+    DEPRECATED: This function is no longer used internally.
+    Use set-based tracking for O(1) duplicate detection instead.
+    Kept for backward compatibility with external code.
+
+    Args:
+        repo_url: The repository URL to check
+        repos: List of repository dictionaries
+
+    Returns:
+        bool: True if repo_url is found in repos, False otherwise
+    """
     for repo in repos:
         if repo['url'] == repo_url:
             return True
@@ -62,12 +88,49 @@ def already_added(repo_url, repos):
 
 
 def fetch_description(gh, relative_url):
-    _, owner, repository = relative_url.split("/")
-    repository = gh.repository(owner, repository)
-    repo_description = " "
-    if repository.description:
-        repo_description = textwrap.shorten(repository.description, width=60, placeholder="...")
-    return repo_description
+    """
+    Fetch repository description from GitHub API.
+
+    Args:
+        gh: Authenticated GitHub session
+        relative_url: Relative GitHub URL (e.g., "/owner/repository")
+
+    Returns:
+        str: Repository description (shortened to 60 chars) or empty string on error
+    """
+    try:
+        # Validate and parse the URL
+        url_parts = relative_url.split("/")
+        if len(url_parts) < 3:
+            click.echo(f"Warning: Invalid relative URL format: {relative_url}", err=True)
+            return ""
+
+        owner, repository = url_parts[1], url_parts[2]
+
+        if not owner or not repository:
+            click.echo(f"Warning: Empty owner or repository in URL: {relative_url}", err=True)
+            return ""
+
+        # Fetch repository from GitHub API
+        try:
+            repo_obj = gh.repository(owner, repository)
+        except Exception as e:
+            click.echo(f"Warning: Failed to fetch repository {owner}/{repository}: {e}", err=True)
+            return ""
+
+        # Handle case where repository doesn't exist or is inaccessible
+        if not repo_obj:
+            click.echo(f"Warning: Repository not found: {owner}/{repository}", err=True)
+            return ""
+
+        repo_description = " "
+        if repo_obj.description:
+            repo_description = textwrap.shorten(repo_obj.description, width=60, placeholder="...")
+        return repo_description
+
+    except Exception as e:
+        click.echo(f"Warning: Unexpected error fetching description for {relative_url}: {e}", err=True)
+        return ""
 
 
 def sort_repos(repos, rows):
@@ -105,13 +168,66 @@ def show_result(repos, total_repos_count, more_than_zero_count, destinations, ta
         click.echo(json.dumps(repos))
 
 
-def get_max_deps(sess, url):
-    main_response = sess.get(url)
-    parsed_node = HTMLParser(main_response.text)
+def get_max_deps(sess, url, timeout=REQUEST_TIMEOUT):
+    """
+    Fetch the maximum number of dependents from GitHub's dependents page.
 
-    deps_count_element = parsed_node.css_first('.table-list-header-toggle .btn-link.selected')
-    max_deps = int(deps_count_element.text().strip().split()[0].replace(',', ''))
-    return max_deps
+    Args:
+        sess: Requests session
+        url: The GitHub dependents URL
+        timeout: Request timeout in seconds (default: 30)
+
+    Returns:
+        int: Maximum number of dependents
+
+    Raises:
+        SystemExit: If unable to fetch or parse the data
+    """
+    try:
+        main_response = sess.get(url, timeout=timeout)
+        main_response.raise_for_status()
+    except requests.exceptions.Timeout:
+        click.echo(f"Error: Request timeout while fetching {url}", err=True)
+        sys.exit(1)
+    except requests.exceptions.ConnectionError as e:
+        click.echo(f"Error: Connection failed while fetching {url}: {e}", err=True)
+        sys.exit(1)
+    except requests.exceptions.HTTPError as e:
+        click.echo(f"Error: HTTP error while fetching {url}: {e}", err=True)
+        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        click.echo(f"Error: Request failed while fetching {url}: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        parsed_node = HTMLParser(main_response.text)
+    except Exception as e:
+        click.echo(f"Error: Failed to parse HTML response: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        deps_count_element = parsed_node.css_first('.table-list-header-toggle .btn-link.selected')
+        if not deps_count_element:
+            click.echo("Error: Could not find dependents count element in page", err=True)
+            click.echo("The page structure may have changed or the URL is invalid", err=True)
+            sys.exit(1)
+
+        element_text = deps_count_element.text()
+        if not element_text:
+            click.echo("Error: Dependents count element has no text content", err=True)
+            sys.exit(1)
+
+        # Extract number from text (e.g., "1,234 Repositories")
+        count_str = element_text.strip().split()[0].replace(',', '')
+        max_deps = int(count_str)
+        return max_deps
+
+    except (ValueError, IndexError) as e:
+        click.echo(f"Error: Could not parse dependents count from page: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: Unexpected error while parsing dependents count: {e}", err=True)
+        sys.exit(1)
 
 
 def validate_github_url(url):
@@ -153,8 +269,8 @@ def validate_github_url(url):
     
     # GitHub repo URLs should have exactly 2 segments: owner/repo
     if len(path_segments) != 2:
-        click.echo(f"Error: Invalid GitHub repository URL format", err=True)
-        click.echo(f"Expected format: https://github.com/owner/repository", err=True)
+        click.echo("Error: Invalid GitHub repository URL format", err=True)
+        click.echo("Expected format: https://github.com/owner/repository", err=True)
         click.echo(f"Got {len(path_segments)} path segment(s): {'/'.join(path_segments)}", err=True)
         sys.exit(1)
     
@@ -213,14 +329,38 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
 
     if report:
         try:
-            result = requests.get('{}/repos/{}/{}'.format(BASE_URL, owner, repository))
-            if result.status_code != 404:
-                sorted_repos = sort_repos(result.json(), rows)
-                repos = readable_stars(sorted_repos)
-                click.echo(tabulate(repos, headers="keys", tablefmt="github"))
-                sys.exit()
+            report_url = '{}/repos/{}/{}'.format(BASE_URL, owner, repository)
+            result = requests.get(report_url, timeout=30)
+
+            # Handle successful response
+            if result.status_code == 200:
+                try:
+                    sorted_repos = sort_repos(result.json(), rows)
+                    repos = readable_stars(sorted_repos)
+                    click.echo(tabulate(repos, headers="keys", tablefmt="github"))
+                    sys.exit()
+                except (ValueError, KeyError) as e:
+                    click.echo(f"Error: Invalid response format from report server: {e}", err=True)
+                    sys.exit(1)
+            elif result.status_code == 404:
+                # 404 means no cached data available, continue with scraping
+                pass
+            else:
+                click.echo(f"Error: Report server returned status {result.status_code}", err=True)
+                sys.exit(1)
+
+        except requests.exceptions.Timeout:
+            click.echo(f"Error: Report server request timeout ({report_url})", err=True)
+            sys.exit(1)
         except requests.exceptions.ConnectionError as e:
-            click.echo(e)
+            click.echo(f"Error: Could not connect to report server ({BASE_URL}): {e}", err=True)
+            sys.exit(1)
+        except requests.exceptions.HTTPError as e:
+            click.echo(f"Error: HTTP error from report server: {e}", err=True)
+            sys.exit(1)
+        except requests.exceptions.RequestException as e:
+            click.echo(f"Error: Request failed to report server: {e}", err=True)
+            sys.exit(1)
 
     if (description or search) and token:
         gh = github3.login(token=token)
@@ -229,7 +369,7 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
                      heuristic=OneDayHeuristic())
     elif (description or search) and not token:
         click.echo("Please provide token")
-        sys.exit()
+        sys.exit(1)
 
     destination = "repository"
     destinations = "repositories"
@@ -238,6 +378,7 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
         destinations = "packages"
 
     repos = []
+    seen_urls = set()  # Set-based tracking for O(1) duplicate detection
     more_than_zero_count = 0
     total_repos_count = 0
 
@@ -253,54 +394,123 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
     sess.mount("https://", adapter)
 
     page_url = "{0}/network/dependents?dependent_type={1}".format(url, destination.upper())
-    
+
     max_deps = get_max_deps(sess, page_url)
 
     pbar = tqdm(total=max_deps)
 
+    page_count = 0
     while True:
-        response = sess.get(page_url)
-        parsed_node = HTMLParser(response.text)
-        dependents = parsed_node.css(ITEM_SELECTOR)
-        total_repos_count += len(dependents)
-        for dep in dependents:
-            repo_stars_list = dep.css(STARS_SELECTOR)
-            # only for ghost or private? packages
-            if repo_stars_list:
-                repo_stars = repo_stars_list[0].text().strip()
-                repo_stars_num = int(repo_stars.replace(",", ""))
+        page_count += 1
+
+        # Safety limit to prevent infinite loops
+        if page_count > MAX_PAGES:
+            click.echo(f"Warning: Reached maximum page limit ({MAX_PAGES}), stopping pagination", err=True)
+            break
+
+        try:
+            response = sess.get(page_url, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+        except requests.exceptions.Timeout:
+            click.echo(f"Warning: Request timeout on page {page_count}, stopping pagination", err=True)
+            break
+        except requests.exceptions.ConnectionError as e:
+            click.echo(f"Warning: Connection error on page {page_count}: {e}", err=True)
+            break
+        except requests.exceptions.HTTPError as e:
+            click.echo(f"Warning: HTTP error on page {page_count}: {e}", err=True)
+            break
+        except requests.exceptions.RequestException as e:
+            click.echo(f"Warning: Request error on page {page_count}: {e}", err=True)
+            break
+
+        try:
+            parsed_node = HTMLParser(response.text)
+        except Exception as e:
+            click.echo(f"Warning: Failed to parse HTML on page {page_count}: {e}", err=True)
+            break
+
+        try:
+            dependents = parsed_node.css(ITEM_SELECTOR)
+            total_repos_count += len(dependents)
+
+            for dep in dependents:
+                try:
+                    repo_stars_list = dep.css(STARS_SELECTOR)
+                    # only for ghost or private? packages
+                    if not repo_stars_list:
+                        continue
+
+                    repo_stars = repo_stars_list[0].text().strip()
+                    if not repo_stars:
+                        continue
+
+                    try:
+                        repo_stars_num = int(repo_stars.replace(",", ""))
+                    except ValueError:
+                        click.echo(f"Warning: Could not parse star count '{repo_stars}'", err=True)
+                        continue
+
+                    if repo_stars_num != 0:
+                        more_than_zero_count += 1
+
+                    if repo_stars_num >= minstar:
+                        repo_selector_list = dep.css(REPO_SELECTOR)
+                        if not repo_selector_list:
+                            continue
+
+                        try:
+                            relative_repo_url = repo_selector_list[0].attributes.get("href")
+                            if not relative_repo_url:
+                                continue
+                        except (KeyError, AttributeError):
+                            click.echo("Warning: Could not extract repository URL", err=True)
+                            continue
+
+                        repo_url = "{0}{1}".format(GITHUB_URL, relative_repo_url)
+
+                        # Set-based duplicate detection (O(1) lookup) - can be listed same package
+                        if repo_url not in seen_urls and repo_url != url:
+                            seen_urls.add(repo_url)
+                            if description:
+                                repo_description = fetch_description(gh, relative_repo_url)
+                                repos.append({
+                                    "url": repo_url,
+                                    "stars": repo_stars_num,
+                                    "description": repo_description
+                                })
+                            else:
+                                repos.append({
+                                    "url": repo_url,
+                                    "stars": repo_stars_num
+                                })
+
+                except Exception as e:
+                    click.echo(f"Warning: Error processing dependent on page {page_count}: {e}", err=True)
+                    continue
+
+        except Exception as e:
+            click.echo(f"Warning: Error processing page {page_count}: {e}", err=True)
+            break
+
+        try:
+            pagination_buttons = parsed_node.css(NEXT_BUTTON_SELECTOR)
+
+            if len(pagination_buttons) == 2:
+                page_url = pagination_buttons[1].attributes.get("href")
+                if not page_url:
+                    break
+            elif pagination_buttons and pagination_buttons[0].text() == "Next":
+                page_url = pagination_buttons[0].attributes.get("href")
+                if not page_url:
+                    break
+            elif len(pagination_buttons) == 0 or pagination_buttons[0].text() == "Previous":
+                break
             else:
-                continue
+                break
 
-            if repo_stars_num != 0:
-                more_than_zero_count += 1
-            if repo_stars_num >= minstar:
-                relative_repo_url = dep.css(REPO_SELECTOR)[0].attributes["href"]
-                repo_url = "{0}{1}".format(GITHUB_URL, relative_repo_url)
-
-                # can be listed same package
-                is_already_added = already_added(repo_url, repos)
-                if not is_already_added and repo_url != url:
-                    if description:
-                        repo_description = fetch_description(gh, relative_repo_url)
-                        repos.append({
-                            "url": repo_url,
-                            "stars": repo_stars_num,
-                            "description": repo_description
-                        })
-                    else:
-                        repos.append({
-                            "url": repo_url,
-                            "stars": repo_stars_num
-                        })
-
-        pagination_buttons = parsed_node.css(NEXT_BUTTON_SELECTOR)
-
-        if len(pagination_buttons) == 2:
-            page_url = pagination_buttons[1].attributes["href"]
-        elif pagination_buttons and pagination_buttons[0].text() == "Next":
-            page_url = pagination_buttons[0].attributes["href"]
-        elif len(pagination_buttons) == 0 or pagination_buttons[0].text() == "Previous":
+        except Exception as e:
+            click.echo(f"Warning: Error reading pagination controls on page {page_count}: {e}", err=True)
             break
 
         pbar.update(REPOS_PER_PAGE)
@@ -309,16 +519,58 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
 
     if report:
         try:
-            requests.post('{}/repos'.format(BASE_URL), json={"url": url, "owner": owner, "repository": repository, "deps": repos})
+            report_post_url = '{}/repos'.format(BASE_URL)
+            payload = {"url": url, "owner": owner, "repository": repository, "deps": repos}
+            response = requests.post(report_post_url, json=payload, timeout=30)
+
+            # Check if the POST was successful
+            if response.status_code not in [200, 201]:
+                click.echo(f"Error: Report server returned status {response.status_code}", err=True)
+                sys.exit(1)
+
+        except requests.exceptions.Timeout:
+            click.echo(f"Error: Report server POST request timeout ({report_post_url})", err=True)
+            sys.exit(1)
         except requests.exceptions.ConnectionError as e:
-            click.echo(e)
+            click.echo(f"Error: Could not connect to report server to submit results ({BASE_URL}): {e}", err=True)
+            sys.exit(1)
+        except requests.exceptions.HTTPError as e:
+            click.echo(f"Error: HTTP error while submitting report: {e}", err=True)
+            sys.exit(1)
+        except requests.exceptions.RequestException as e:
+            click.echo(f"Error: Request failed while submitting report: {e}", err=True)
+            sys.exit(1)
 
     sorted_repos = sort_repos(repos, rows)
 
     if search:
         for repo in repos:
-            repo_path = urlparse(repo["url"]).path[1:]
-            for s in gh.search_code("{0} repo:{1}".format(search, repo_path)):
-                click.echo("{0} with {1} stars".format(s.html_url, repo["stars"]))
+            try:
+                repo_path = urlparse(repo["url"]).path[1:]
+                if not repo_path:
+                    click.echo(f"Warning: Could not extract path from repo URL: {repo['url']}", err=True)
+                    continue
+
+                try:
+                    search_query = "{0} repo:{1}".format(search, repo_path)
+                    search_results = gh.search_code(search_query)
+
+                    for s in search_results:
+                        try:
+                            if hasattr(s, 'html_url'):
+                                click.echo("{0} with {1} stars".format(s.html_url, repo["stars"]))
+                            else:
+                                click.echo("Warning: Search result missing html_url attribute", err=True)
+                        except Exception as e:
+                            click.echo(f"Warning: Error displaying search result: {e}", err=True)
+                            continue
+
+                except Exception as e:
+                    click.echo(f"Warning: GitHub API search failed for {repo_path}: {e}", err=True)
+                    continue
+
+            except Exception as e:
+                click.echo(f"Warning: Error processing search for repository: {e}", err=True)
+                continue
     else:
         show_result(sorted_repos, total_repos_count, more_than_zero_count, destinations, table)
