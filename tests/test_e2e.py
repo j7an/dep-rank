@@ -2,10 +2,15 @@
 
 import pytest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch, MagicMock
+from click import Command
 from click.testing import CliRunner
 import vcr
-from ghtopdep.cli import cli
+from ghtopdep.cli import cli as _cli
+
+# Type cast to help type checkers understand cli is a Command
+cli = cast(Command, _cli)
 
 
 # Define cassettes directory using absolute path
@@ -389,6 +394,37 @@ class TestE2EWithMocks:
 class TestE2EErrorRecovery:
     """E2E tests for error handling and recovery."""
 
+    @staticmethod
+    def _invoke_with_mocked_session(cli_runner, html_response, max_deps=0, cli_args=None):
+        """
+        Helper method to invoke CLI with mocked session.
+
+        Args:
+            cli_runner: Click test runner
+            html_response: HTML content to return from mocked session
+            max_deps: Value to return from get_max_deps mock
+            cli_args: List of CLI arguments (default: ["https://github.com/test/repo", "--json"])
+
+        Returns:
+            Click test result
+        """
+        from unittest.mock import Mock
+
+        if cli_args is None:
+            cli_args = ["https://github.com/test/repo", "--json"]
+
+        with patch("ghtopdep.cli.requests.session") as mock_session_class:
+            with patch("ghtopdep.cli.get_max_deps", return_value=max_deps):
+                mock_session = MagicMock()
+                response = Mock()
+                response.text = html_response
+                response.status_code = 200
+                mock_session.get.return_value = response
+                mock_session_class.return_value = mock_session
+
+                with patch("ghtopdep.cli.CacheControl"):
+                    return cli_runner.invoke(cli, cli_args)
+
     def test_e2e_handle_empty_results_mock(self, cli_runner):
         """Test handling when no dependents are found."""
         html_response = '''
@@ -407,25 +443,9 @@ class TestE2EErrorRecovery:
         </html>
         '''
 
-        from unittest.mock import Mock
-
-        with patch("ghtopdep.cli.requests.session") as mock_session_class:
-            with patch("ghtopdep.cli.get_max_deps", return_value=0):
-                mock_session = MagicMock()
-                response = Mock()
-                response.text = html_response
-                response.status_code = 200
-                mock_session.get.return_value = response
-                mock_session_class.return_value = mock_session
-
-                with patch("ghtopdep.cli.CacheControl"):
-                    result = cli_runner.invoke(
-                        cli,
-                        ["https://github.com/test/repo", "--json"]
-                    )
-
-                    # Should handle empty results gracefully
-                    assert result.exit_code in [0, 1]
+        result = self._invoke_with_mocked_session(cli_runner, html_response, max_deps=0)
+        # Should handle empty results gracefully
+        assert result.exit_code in [0, 1]
 
     def test_e2e_handle_no_stars_repos_mock(self, cli_runner):
         """Test handling repos with zero stars."""
@@ -501,22 +521,6 @@ class TestE2EErrorRecovery:
         </html>
         '''
 
-        from unittest.mock import Mock
-
-        with patch("ghtopdep.cli.requests.session") as mock_session_class:
-            with patch("ghtopdep.cli.get_max_deps", return_value=30):
-                mock_session = MagicMock()
-                response = Mock()
-                response.text = html_response
-                response.status_code = 200
-                mock_session.get.return_value = response
-                mock_session_class.return_value = mock_session
-
-                with patch("ghtopdep.cli.CacheControl"):
-                    result = cli_runner.invoke(
-                        cli,
-                        ["https://github.com/test/repo", "--json"]
-                    )
-
-                    # Should handle duplicates by filtering them out
-                    assert result.exit_code in [0, 1]
+        result = self._invoke_with_mocked_session(cli_runner, html_response, max_deps=30)
+        # Should handle duplicates by filtering them out
+        assert result.exit_code in [0, 1]

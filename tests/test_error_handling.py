@@ -1,15 +1,20 @@
 """Unit tests for error handling in ghtopdep API calls."""
 
 import pytest
+from typing import cast
 from unittest.mock import Mock, patch
+from click import Command
 from click.testing import CliRunner
 import requests
 from ghtopdep.cli import (
     get_max_deps,
     fetch_description,
     OneDayHeuristic,
-    cli,
+    cli as _cli,
 )
+
+# Type cast to help type checkers understand cli is a Command
+cli = cast(Command, _cli)
 
 
 class TestOneDayHeuristicErrorHandling:

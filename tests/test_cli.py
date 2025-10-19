@@ -2,9 +2,14 @@
 
 import os
 import pytest
+from typing import cast
 from unittest.mock import Mock, patch
+from click import Command
 from click.testing import CliRunner
-from ghtopdep.cli import cli
+from ghtopdep.cli import cli as _cli
+
+# Type cast to help type checkers understand cli is a Command
+cli = cast(Command, _cli)
 
 
 @pytest.fixture
@@ -72,7 +77,7 @@ class TestCLIOptions:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_repositories_flag(self, mock_deps, mock_session, cli_runner):
+    def test_cli_repositories_flag(self, _mock_deps, _mock_session, cli_runner):
         """Test --repositories flag."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--repositories"])
         # Should complete without error (even if no dependents)
@@ -80,35 +85,35 @@ class TestCLIOptions:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_packages_flag(self, mock_deps, mock_session, cli_runner):
+    def test_cli_packages_flag(self, _mock_deps, _mock_session, cli_runner):
         """Test --packages flag."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--packages"])
         assert "Error" not in result.output or "Error connecting" in result.output
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_table_flag(self, mock_deps, mock_session, cli_runner):
+    def test_cli_table_flag(self, _mock_deps, _mock_session, cli_runner):
         """Test --table flag."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--table"])
         assert result.exit_code in [0, 1]  # May fail on connection
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_json_flag(self, mock_deps, mock_session, cli_runner):
+    def test_cli_json_flag(self, _mock_deps, _mock_session, cli_runner):
         """Test --json flag."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--json"])
         assert result.exit_code in [0, 1]
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_rows_option(self, mock_deps, mock_session, cli_runner):
+    def test_cli_rows_option(self, _mock_deps, _mock_session, cli_runner):
         """Test --rows option."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--rows", "20"])
         assert result.exit_code in [0, 1]
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_minstar_option(self, mock_deps, mock_session, cli_runner):
+    def test_cli_minstar_option(self, _mock_deps, _mock_session, cli_runner):
         """Test --minstar option."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--minstar", "100"])
         assert result.exit_code in [0, 1]
@@ -127,7 +132,7 @@ class TestCLIEnvironmentVariables:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_cli_description_with_token(self, mock_login, mock_deps, mock_session, cli_runner):
+    def test_cli_description_with_token(self, _mock_login, _mock_deps, _mock_session, cli_runner):
         """Test --description with token from environment."""
         result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--description"])
         # Should not require token error
@@ -144,7 +149,7 @@ class TestCLIEnvironmentVariables:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_report_with_base_url(self, mock_deps, mock_session, mock_post, mock_get, cli_runner):
+    def test_cli_report_with_base_url(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
         """Test --report with GHTOPDEP_BASE_URL set."""
         mock_get_response = Mock()
         mock_get_response.status_code = 404
@@ -157,7 +162,7 @@ class TestCLIEnvironmentVariables:
     @patch.dict(os.environ, {"GHTOPDEP_ENV": "development"})
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_development_mode_default_url(self, mock_deps, mock_session, cli_runner):
+    def test_cli_development_mode_default_url(self, _mock_deps, _mock_session, cli_runner):
         """Test development mode sets default URL."""
         with patch("ghtopdep.cli.requests.get"):
             result = cli_runner.invoke(cli, ["https://github.com/user/repo"])
@@ -178,7 +183,7 @@ class TestCLIErrorHandling:
                 assert result.exit_code != 0
 
     @patch("ghtopdep.cli.requests.session")
-    def test_cli_invalid_token_handling(self, mock_session, cli_runner):
+    def test_cli_invalid_token_handling(self, _mock_session, cli_runner):
         """Test handling of invalid tokens."""
         with patch("ghtopdep.cli.get_max_deps", return_value=0):
             with patch("ghtopdep.cli.github3.login") as mock_login:
@@ -206,7 +211,7 @@ class TestCLIOutputModes:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_json_output(self, mock_deps, mock_session, cli_runner):
+    def test_cli_json_output(self, _mock_deps, _mock_session, cli_runner):
         """Test JSON output format."""
         with patch("ghtopdep.cli.show_result") as mock_show:
             cli_runner.invoke(cli, ["https://github.com/user/repo", "--json"])
@@ -220,7 +225,7 @@ class TestCLIIntegration:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_cli_all_options_combined(self, mock_deps, mock_session, cli_runner):
+    def test_cli_all_options_combined(self, _mock_deps, _mock_session, cli_runner):
         """Test CLI with multiple options combined."""
         result = cli_runner.invoke(
             cli,

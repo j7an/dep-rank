@@ -6,6 +6,7 @@ import textwrap
 import datetime
 from email.utils import formatdate, parsedate
 from urllib.parse import urlparse
+from typing import Optional, Dict, List, Any, Tuple, Union
 
 import appdirs
 import click
@@ -43,7 +44,7 @@ class OneDayHeuristic(BaseHeuristic):
         200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501
     }
 
-    def update_headers(self, response):
+    def update_headers(self, response: Any) -> Dict[str, str]:
         if response.status not in self.cacheable_by_default_statuses:
             return {}
 
@@ -61,12 +62,12 @@ class OneDayHeuristic(BaseHeuristic):
             # If date parsing fails, don't cache
             return {}
 
-    def warning(self, response):
-        msg = "Automatically cached! Response is Stale."
-        return "110 - {0}".format(msg)
+    def warning(self, response: Any) -> str:
+        warning_msg = "Automatically cached! Response is Stale."
+        return "110 - {0}".format(warning_msg)
 
 
-def already_added(repo_url, repos):
+def already_added(repo_url: str, repos: List[Dict[str, Any]]) -> bool:
     """
     Check if a repository URL is already in the repos list.
 
@@ -87,7 +88,7 @@ def already_added(repo_url, repos):
     return False
 
 
-def fetch_description(gh, relative_url):
+def fetch_description(gh: Any, relative_url: str) -> str:
     """
     Fetch repository description from GitHub API.
 
@@ -133,12 +134,20 @@ def fetch_description(gh, relative_url):
         return ""
 
 
-def sort_repos(repos, rows):
+def sort_repos(repos: List[Dict[str, Any]], rows: int) -> List[Dict[str, Any]]:
     sorted_repos = sorted(repos, key=lambda i: i["stars"], reverse=True)
     return sorted_repos[:rows]
 
 
-def humanize(num):
+def humanize(num: int) -> Union[int, str]:
+    """Convert large numbers to human-readable format (e.g., 1500 -> 1.5K).
+
+    Args:
+        num: Number to humanize
+
+    Returns:
+        Original number if < 1000 or >= 1000000, formatted string with K suffix otherwise
+    """
     if num < 1_000:
         return num
     elif num < 10_000:
@@ -149,13 +158,19 @@ def humanize(num):
         return num
 
 
-def readable_stars(repos):
+def readable_stars(repos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for repo in repos:
         repo["stars"] = humanize(repo["stars"])
     return repos
 
 
-def show_result(repos, total_repos_count, more_than_zero_count, destinations, table):
+def show_result(
+    repos: List[Dict[str, Any]],
+    total_repos_count: int,
+    more_than_zero_count: int,
+    destinations: str,
+    table: bool
+) -> None:
     if table:
         if repos:
             repos = readable_stars(repos)
@@ -168,7 +183,7 @@ def show_result(repos, total_repos_count, more_than_zero_count, destinations, ta
         click.echo(json.dumps(repos))
 
 
-def get_max_deps(sess, url, timeout=REQUEST_TIMEOUT):
+def get_max_deps(sess: requests.Session, url: str, timeout: int = REQUEST_TIMEOUT) -> int:
     """
     Fetch the maximum number of dependents from GitHub's dependents page.
 
@@ -230,16 +245,16 @@ def get_max_deps(sess, url, timeout=REQUEST_TIMEOUT):
         sys.exit(1)
 
 
-def validate_github_url(url):
+def validate_github_url(url: str) -> Tuple[str, str]:
     """
     Validate and parse a GitHub repository URL.
-    
+
     Args:
         url: The GitHub repository URL to validate
-        
+
     Returns:
         tuple: (owner, repository) if valid
-        
+
     Raises:
         SystemExit: If URL is invalid with appropriate error message
     """
@@ -309,7 +324,17 @@ def validate_github_url(url):
 @click.option("--minstar", default=5, help="Minimum number of stars (default=5)")
 @click.option("--search", help="search code at dependents (repositories/packages)")
 @click.option("--token", envvar="GHTOPDEP_TOKEN")
-def cli(url, repositories, search, table, rows, minstar, report, description, token):
+def cli(
+    url: str,
+    repositories: bool,
+    search: Optional[str],
+    table: bool,
+    rows: int,
+    minstar: int,
+    report: bool,
+    description: bool,
+    token: Optional[str]
+) -> None:
     MODE = os.environ.get("GHTOPDEP_ENV")
     BASE_URL = os.environ.get("GHTOPDEP_BASE_URL")
 
@@ -328,8 +353,8 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
     gh = None
 
     if report:
+        report_url = '{}/repos/{}/{}'.format(BASE_URL, owner, repository)
         try:
-            report_url = '{}/repos/{}/{}'.format(BASE_URL, owner, repository)
             result = requests.get(report_url, timeout=30)
 
             # Handle successful response
@@ -406,6 +431,10 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
         # Safety limit to prevent infinite loops
         if page_count > MAX_PAGES:
             click.echo(f"Warning: Reached maximum page limit ({MAX_PAGES}), stopping pagination", err=True)
+            break
+
+        # Type guard: ensure page_url is not None
+        if not page_url:
             break
 
         try:
@@ -518,8 +547,8 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
     pbar.close()
 
     if report:
+        report_post_url = '{}/repos'.format(BASE_URL)
         try:
-            report_post_url = '{}/repos'.format(BASE_URL)
             payload = {"url": url, "owner": owner, "repository": repository, "deps": repos}
             response = requests.post(report_post_url, json=payload, timeout=30)
 
@@ -544,6 +573,7 @@ def cli(url, repositories, search, table, rows, minstar, report, description, to
     sorted_repos = sort_repos(repos, rows)
 
     if search:
+        assert gh is not None, "gh should be initialized when search is provided"
         for repo in repos:
             try:
                 repo_path = urlparse(repo["url"]).path[1:]

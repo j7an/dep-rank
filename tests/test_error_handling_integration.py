@@ -1,9 +1,14 @@
 """Integration tests for error handling in ghtopdep API calls."""
 
+from typing import cast
 from unittest.mock import patch, MagicMock
+from click import Command
 from click.testing import CliRunner
 import requests
-from ghtopdep.cli import cli
+from ghtopdep.cli import cli as _cli
+
+# Type cast to help type checkers understand cli is a Command
+cli = cast(Command, _cli)
 
 
 class TestEndToEndErrorHandling:

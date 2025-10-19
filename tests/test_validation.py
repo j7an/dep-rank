@@ -63,7 +63,7 @@ class TestValidateGithubUrl:
     def test_none_url_raises_error(self):
         """Test that None URL raises SystemExit."""
         with pytest.raises(SystemExit):
-            validate_github_url(None)
+            validate_github_url(None)  # type: ignore[arg-type]
 
     def test_invalid_netloc_raises_error(self):
         """Test that non-GitHub URL raises error."""

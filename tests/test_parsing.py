@@ -108,14 +108,27 @@ class TestFetchDescription:
 class TestOneDayHeuristic:
     """Tests for the OneDayHeuristic cache control class."""
 
+    @staticmethod
+    def _create_response_with_date(status=200, date_tuple=(2024, 1, 1, 12, 0, 0)):
+        """
+        Helper method to create a mock response with date header.
+
+        Args:
+            status: HTTP status code (default: 200)
+            date_tuple: Date as tuple (year, month, day, hour, min, sec)
+
+        Returns:
+            Mock response object with status and date header
+        """
+        response = Mock()
+        response.status = status
+        response.headers = {"date": formatdate(calendar.timegm(datetime.datetime(*date_tuple).timetuple()))}
+        return response
+
     def test_one_day_heuristic_cacheable_status(self):
         """Test that cacheable statuses are handled correctly."""
         heuristic = OneDayHeuristic()
-
-        response = Mock()
-        response.status = 200
-        date_tuple = (2024, 1, 1, 12, 0, 0)
-        response.headers = {"date": formatdate(calendar.timegm(datetime.datetime(*date_tuple).timetuple()))}
+        response = self._create_response_with_date(status=200)
 
         result = heuristic.update_headers(response)
         assert "expires" in result
@@ -139,10 +152,7 @@ class TestOneDayHeuristic:
         cacheable_statuses = {200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501}
 
         for status in cacheable_statuses:
-            response = Mock()
-            response.status = status
-            date_tuple = (2024, 1, 1, 12, 0, 0)
-            response.headers = {"date": formatdate(calendar.timegm(datetime.datetime(*date_tuple).timetuple()))}
+            response = self._create_response_with_date(status=status)
 
             result = heuristic.update_headers(response)
             assert "expires" in result

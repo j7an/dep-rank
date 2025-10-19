@@ -2,10 +2,15 @@
 
 import os
 import pytest
+from typing import cast
 from unittest.mock import Mock, MagicMock, patch
+from click import Command
 from click.testing import CliRunner
 from selectolax.parser import HTMLParser
-from ghtopdep.cli import cli
+from ghtopdep.cli import cli as _cli
+
+# Type cast to help type checkers understand cli is a Command
+cli = cast(Command, _cli)
 
 
 @pytest.fixture
@@ -59,7 +64,7 @@ def mock_session_with_dependents(html_response_dependents, html_response_last_pa
 
 @patch("ghtopdep.cli.requests.session")
 @patch("ghtopdep.cli.github3")
-def test_cli_with_pagination(mock_github, mock_session_class, cli_runner, mock_session_with_dependents):
+def test_cli_with_pagination(_mock_github, mock_session_class, cli_runner, mock_session_with_dependents):
     """Test CLI processes paginated results."""
     mock_session_class.return_value = mock_session_with_dependents
 
@@ -78,7 +83,7 @@ class TestCliReportMode:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_report_mode_404_response(self, mock_deps, mock_session, mock_post, mock_get, cli_runner):
+    def test_cli_report_mode_404_response(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
         """Test report mode when report endpoint returns 404."""
         mock_get_response = Mock()
         mock_get_response.status_code = 404
@@ -94,7 +99,7 @@ class TestCliReportMode:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_report_mode_success(self, mock_deps, mock_session, mock_post, mock_get, cli_runner):
+    def test_cli_report_mode_success(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
         """Test report mode with successful response."""
         mock_get_response = Mock()
         mock_get_response.status_code = 200
@@ -114,7 +119,7 @@ class TestCliMinstFilter:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_cli_minstar_high_value(self, mock_deps, mock_session, cli_runner):
+    def test_cli_minstar_high_value(self, _mock_deps, _mock_session, cli_runner):
         """Test CLI with high minstar value."""
         with patch("ghtopdep.cli.CacheControl"):
             result = cli_runner.invoke(
@@ -126,7 +131,7 @@ class TestCliMinstFilter:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_cli_minstar_zero_value(self, mock_deps, mock_session, cli_runner):
+    def test_cli_minstar_zero_value(self, _mock_deps, _mock_session, cli_runner):
         """Test CLI with zero minstar value."""
         with patch("ghtopdep.cli.CacheControl"):
             result = cli_runner.invoke(
@@ -143,7 +148,7 @@ class TestCliSearchMode:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_cli_search_option_requires_token(self, mock_login, mock_deps, mock_session, cli_runner):
+    def test_cli_search_option_requires_token(self, _mock_login, _mock_deps, _mock_session, cli_runner):
         """Test that search requires token."""
         # Ensure GHTOPDEP_TOKEN is not set in environment
         with patch.dict(os.environ, {}, clear=True):
@@ -160,7 +165,7 @@ class TestCliModeSettings:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_packages_destination(self, mock_deps, mock_session, cli_runner):
+    def test_cli_packages_destination(self, _mock_deps, _mock_session, cli_runner):
         """Test packages destination type."""
         with patch("ghtopdep.cli.CacheControl"):
             with patch("ghtopdep.cli.HTMLParser"):
@@ -173,7 +178,7 @@ class TestCliModeSettings:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_repositories_destination(self, mock_deps, mock_session, cli_runner):
+    def test_cli_repositories_destination(self, _mock_deps, _mock_session, cli_runner):
         """Test repositories destination type (default)."""
         with patch("ghtopdep.cli.CacheControl"):
             with patch("ghtopdep.cli.HTMLParser"):
@@ -187,7 +192,7 @@ class TestCliModeSettings:
 
 @patch("ghtopdep.cli.requests.session")
 @patch("ghtopdep.cli.get_max_deps", return_value=30)
-def test_cli_rows_option_boundary(mock_deps, mock_session, cli_runner):
+def test_cli_rows_option_boundary(_mock_deps, _mock_session, cli_runner):
     """Test CLI with various rows values."""
     test_cases = ["1", "5", "10", "100", "1000"]
 
@@ -208,7 +213,7 @@ class TestEnvironmentConfiguration:
     @patch.dict(os.environ, {"GHTOPDEP_ENV": "development"})
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_cli_development_environment(self, mock_deps, mock_session, cli_runner):
+    def test_cli_development_environment(self, _mock_deps, _mock_session, cli_runner):
         """Test CLI in development environment."""
         with patch("ghtopdep.cli.CacheControl"):
             with patch("ghtopdep.cli.requests.get"):
@@ -223,10 +228,10 @@ class TestEnvironmentConfiguration:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_cli_token_from_environment(self, mock_login, mock_deps, mock_session, cli_runner):
+    def test_cli_token_from_environment(self, _mock_login, _mock_deps, _mock_session, cli_runner):
         """Test CLI uses token from environment variable."""
         with patch("ghtopdep.cli.CacheControl"):
-            mock_login.return_value = MagicMock()
+            _mock_login.return_value = MagicMock()
             result = cli_runner.invoke(
                 cli,
                 ["https://github.com/user/repo", "--description"]
