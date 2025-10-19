@@ -30,16 +30,15 @@ dependencies = [
     "requests>=2.22,<3.0.0",
     "github3-py>=4.0.1,<5.0.0",
     "appdirs>=1.4.4,<2.0.0",
-    "pipdate>=0.5.6,<0.6.0",
     "cachecontrol[filecache]>=0.14.0,<0.15.0",
     "tqdm>=4.66.4,<5.0.0",
 ]
 
 [project.urls]
-Source = "https://github.com/github-tooling/ghtopdep"
-"Bug Tracker" = "https://github.com/github-tooling/ghtopdep/issues"
-Homepage = "https://github.com/github-tooling/ghtopdep"
-Documentation = "https://github.com/github-tooling/ghtopdep#readme"
+Source = "https://github.com/j7an/ghtopdep"
+"Bug Tracker" = "https://github.com/j7an/ghtopdep/issues"
+Homepage = "https://github.com/j7an/ghtopdep"
+Documentation = "https://github.com/j7an/ghtopdep#readme"
 
 [project.scripts]
 ghtopdep = "ghtopdep.cli:cli"
@@ -100,7 +99,7 @@ explicit_package_bases = true
 namespace_packages = true
 
 [[tool.mypy.overrides]]
-module = ["appdirs", "github3", "pipdate"]
+module = ["appdirs", "github3"]
 ignore_missing_imports = true
 
 [build-system]

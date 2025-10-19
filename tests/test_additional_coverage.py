@@ -557,22 +557,3 @@ class TestFetchDescriptionException:
         # Should return empty string on error
         assert result == ""
 
-
-class TestPipdateVersionCheck:
-    """Tests for pipdate version checking."""
-
-    @patch("ghtopdep.cli.pipdate.needs_checking")
-    @patch("ghtopdep.cli.pipdate.check")
-    @patch("ghtopdep.cli.click.echo")
-    def test_pipdate_version_check_needed(self, mock_echo, mock_check, mock_needs_checking):
-        """Test when pipdate version check is needed."""
-        mock_needs_checking.return_value = True
-        mock_check.return_value = "Update available: version 1.0.0"
-
-        # Import cli to trigger module-level code
-        from importlib import reload
-        import ghtopdep.cli
-
-        with patch("ghtopdep.cli.pipdate.needs_checking", return_value=True):
-            with patch("ghtopdep.cli.pipdate.check", return_value="Update available"):
-                reload(ghtopdep.cli)

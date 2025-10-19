@@ -11,7 +11,6 @@ from typing import Optional, Dict, List, Any, Tuple, Union
 import appdirs
 import click
 import github3
-import pipdate
 import requests
 from urllib3.util.retry import Retry
 from cachecontrol.caches import FileCache
@@ -20,8 +19,6 @@ from cachecontrol import CacheControl, CacheControlAdapter
 from tqdm import tqdm
 from selectolax.parser import HTMLParser
 from tabulate import tabulate
-
-from .__version__ import __version__
 
 PACKAGE_NAME = "ghtopdep"
 CACHE_DIR = appdirs.user_cache_dir(PACKAGE_NAME)
@@ -33,10 +30,6 @@ GITHUB_URL = "https://github.com"
 REPOS_PER_PAGE = 30
 MAX_PAGES = 1000  # Safety limit to prevent infinite loops
 REQUEST_TIMEOUT = 30  # Timeout for requests in seconds
-
-if pipdate.needs_checking(PACKAGE_NAME):
-    msg = pipdate.check(PACKAGE_NAME, __version__)
-    click.echo(msg)
 
 
 class OneDayHeuristic(BaseHeuristic):
