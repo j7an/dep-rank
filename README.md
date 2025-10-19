@@ -1,10 +1,8 @@
 # GHTOPDEP
 
-[![image](https://img.shields.io/pypi/v/ghtopdep.svg)](https://pypi.org/project/ghtopdep/)
-[![image](https://img.shields.io/pypi/l/ghtopdep.svg)](https://pypi.org/project/ghtopdep/)
-[![image](https://img.shields.io/pypi/pyversions/ghtopdep.svg)](https://pypi.org/project/ghtopdep/)
-
 CLI tool for sorting dependents repo by stars
+
+> **Note:** This repository is a fork and independent continuation of the original [ghtopdep](https://github.com/andriyor/ghtopdep) by Andriy Orehov. This fork is **not published to PyPI** and is distributed via git-only installation.
 
 ## Requirements
 
@@ -13,22 +11,16 @@ CLI tool for sorting dependents repo by stars
 
 ## Installation
 
-### From PyPI
-
-```sh
-$ pip install ghtopdep
-```
-
 ### From git repository
 
 ```sh
-$ pip install git+https://github.com/github-tooling/ghtopdep.git#egg=ghtopdep
+$ pip install git+https://github.com/j7an/ghtopdep.git#egg=ghtopdep
 ```
 
 ### From source
 
 ```sh
-$ git clone https://github.com/github-tooling/ghtopdep
+$ git clone https://github.com/j7an/ghtopdep
 $ cd ghtopdep
 $ pip install .
 ```
@@ -36,7 +28,7 @@ $ pip install .
 Or using UV (recommended):
 
 ```sh
-$ git clone https://github.com/github-tooling/ghtopdep
+$ git clone https://github.com/j7an/ghtopdep
 $ cd ghtopdep
 $ uv pip install .
 ```
@@ -46,7 +38,7 @@ $ uv pip install .
 First `docker build` the image once:
 
 ```sh
-$ git clone https://github.com/github-tooling/ghtopdep
+$ git clone https://github.com/j7an/ghtopdep
 $ cd ghtopdep
 $ docker build . -t ghtopdep
 ```
@@ -74,7 +66,12 @@ sudo yum install python3-devel
 ## Version upgrade
 
 ```sh
-➜ pip install --upgrade ghtopdep
+# Navigate to your cloned repository
+$ cd ghtopdep
+# Pull latest changes
+$ git pull origin main
+# Reinstall with new updates
+$ pip install --upgrade .
 ```
 
 ## Usage
