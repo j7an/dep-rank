@@ -418,7 +418,8 @@ def cli(
     sess.mount("http://", adapter)
     sess.mount("https://", adapter)
 
-    page_url = "{0}/network/dependents?dependent_type={1}".format(url, destination.upper())
+    page_url: str | None = "{0}/network/dependents?dependent_type={1}".format(url, destination.upper())
+    assert page_url is not None  # Type guard: page_url is definitely a string at this point
 
     max_deps = get_max_deps(sess, page_url)
 
