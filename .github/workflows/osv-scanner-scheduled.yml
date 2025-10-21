@@ -1,0 +1,24 @@
+name: OSV-Scanner Scheduled Scan
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Run every Monday at 6 AM UTC (coordinated with CodeQL)
+    - cron: '0 6 * * 1'
+
+permissions:
+  actions: read
+  security-events: write
+  contents: read
+
+jobs:
+  scan-scheduled:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@e92b5d07338d4f0ba0981dffed17c48976ca4730  # v2.2.3
+    with:
+      # Scan pyproject.toml and any lockfiles for vulnerabilities
+      scan-args: --recursive ./
+      # Upload results to GitHub Code Scanning
+      upload-sarif: true
+      # Fail workflow if vulnerabilities found
+      fail-on-vuln: true
