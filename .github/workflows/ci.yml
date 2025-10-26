@@ -17,6 +17,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync
       - run: uv run pytest --cov
+      - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy ghtopdep/
 

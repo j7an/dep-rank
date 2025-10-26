@@ -1,26 +1,29 @@
 """Pytest configuration and fixtures for ghtopdep tests."""
 
-import pytest
 import os
+from collections.abc import Generator
+from typing import Any
 from unittest.mock import MagicMock
+
+import pytest
 
 
 @pytest.fixture
-def mock_github_client():
+def mock_github_client() -> MagicMock:
     """Create a mock GitHub client."""
     gh = MagicMock()
     return gh
 
 
 @pytest.fixture
-def mock_requests_session():
+def mock_requests_session() -> MagicMock:
     """Create a mock requests session."""
     session = MagicMock()
     return session
 
 
 @pytest.fixture
-def sample_repos():
+def sample_repos() -> list[dict[str, Any]]:
     """Sample repository data for testing."""
     return [
         {"url": "https://github.com/user1/repo1", "stars": 100},
@@ -30,19 +33,31 @@ def sample_repos():
 
 
 @pytest.fixture
-def sample_repos_with_description():
+def sample_repos_with_description() -> list[dict[str, Any]]:
     """Sample repository data with descriptions."""
     return [
-        {"url": "https://github.com/user1/repo1", "stars": 100, "description": "First repo"},
-        {"url": "https://github.com/user2/repo2", "stars": 500, "description": "Second repo"},
-        {"url": "https://github.com/user3/repo3", "stars": 250, "description": "Third repo"},
+        {
+            "url": "https://github.com/user1/repo1",
+            "stars": 100,
+            "description": "First repo",
+        },
+        {
+            "url": "https://github.com/user2/repo2",
+            "stars": 500,
+            "description": "Second repo",
+        },
+        {
+            "url": "https://github.com/user3/repo3",
+            "stars": 250,
+            "description": "Third repo",
+        },
     ]
 
 
 @pytest.fixture
-def html_response_dependents():
+def html_response_dependents() -> str:
     """Sample HTML response from GitHub dependents page."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -81,13 +96,13 @@ def html_response_dependents():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 @pytest.fixture
-def html_response_last_page():
+def html_response_last_page() -> str:
     """Sample HTML response from the last page of dependents."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -110,11 +125,11 @@ def html_response_last_page():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 @pytest.fixture(autouse=True)
-def env_setup():
+def env_setup() -> Generator[None, None, None]:
     """Set up environment variables for tests."""
     original_env = {}
 

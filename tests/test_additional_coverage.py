@@ -1,27 +1,25 @@
 """Additional tests to improve coverage of missing code paths in ghtopdep/cli.py."""
 
 import os
-import pytest
-from typing import cast
-from unittest.mock import Mock, MagicMock, patch
-from click import Command
-from click.testing import CliRunner
-from ghtopdep.cli import cli as _cli, OneDayHeuristic
+from typing import Any
+from unittest.mock import MagicMock, Mock, patch
 
-# Type cast to help type checkers understand cli is a Command
-cli = cast(Command, _cli)
+import pytest
+from click.testing import CliRunner
+
+from ghtopdep.cli import OneDayHeuristic, cli
 
 
 @pytest.fixture
-def cli_runner():
+def cli_runner() -> CliRunner:
     """Create a Click CLI runner."""
     return CliRunner()
 
 
 @pytest.fixture
-def html_response_with_private_repos():
+def html_response_with_private_repos() -> str:
     """HTML response with private/ghost packages (missing stars)."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -50,13 +48,13 @@ def html_response_with_private_repos():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 @pytest.fixture
-def html_response_with_empty_stars():
+def html_response_with_empty_stars() -> str:
     """HTML response with empty star text."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -79,13 +77,13 @@ def html_response_with_empty_stars():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 @pytest.fixture
-def html_response_with_invalid_stars():
+def html_response_with_invalid_stars() -> str:
     """HTML response with invalid star count."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -108,13 +106,13 @@ def html_response_with_invalid_stars():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 @pytest.fixture
-def html_response_missing_repo_selector():
+def html_response_missing_repo_selector() -> str:
     """HTML response missing repo selector."""
-    return '''
+    return """
     <html>
         <body>
             <div class="table-list-header-toggle">
@@ -134,7 +132,7 @@ def html_response_missing_repo_selector():
             </div>
         </body>
     </html>
-    '''
+    """
 
 
 class TestSearchFunctionality:
@@ -143,7 +141,13 @@ class TestSearchFunctionality:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_search_with_valid_results(self, mock_login, _mock_deps, _mock_session, cli_runner):
+    def test_search_with_valid_results(
+        self,
+        mock_login: Any,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test search mode with valid search results."""
         # Setup GitHub client mock
         gh = MagicMock()
@@ -164,7 +168,7 @@ class TestSearchFunctionality:
 
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/user/repo", "--search", "test_keyword"]
+                        ["https://github.com/user/repo", "--search", "test_keyword"],
                     )
                     # Should process search results
                     assert result.exit_code in [0, 1]
@@ -172,14 +176,20 @@ class TestSearchFunctionality:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_search_result_missing_html_url(self, mock_login, _mock_deps, _mock_session, cli_runner):
+    def test_search_result_missing_html_url(
+        self,
+        mock_login: Any,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test search result missing html_url attribute."""
         gh = MagicMock()
         mock_login.return_value = gh
 
         # Create search result without html_url
         search_result = MagicMock()
-        delattr(search_result, 'html_url')
+        delattr(search_result, "html_url")
 
         gh.search_code.return_value = [search_result]
 
@@ -192,7 +202,7 @@ class TestSearchFunctionality:
 
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/user/repo", "--search", "test_keyword"]
+                        ["https://github.com/user/repo", "--search", "test_keyword"],
                     )
                     # Should handle missing html_url gracefully
                     assert result.exit_code in [0, 1]
@@ -200,7 +210,13 @@ class TestSearchFunctionality:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_search_invalid_repo_url_parsing(self, mock_login, _mock_deps, _mock_session, cli_runner):
+    def test_search_invalid_repo_url_parsing(
+        self,
+        mock_login: Any,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test search with invalid URL parsing."""
         gh = MagicMock()
         mock_login.return_value = gh
@@ -219,7 +235,7 @@ class TestSearchFunctionality:
 
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/user/repo", "--search", "test_keyword"]
+                        ["https://github.com/user/repo", "--search", "test_keyword"],
                     )
                     # Should handle gracefully
                     assert result.exit_code in [0, 1]
@@ -227,7 +243,13 @@ class TestSearchFunctionality:
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
     @patch("ghtopdep.cli.github3.login")
-    def test_search_api_exception(self, mock_login, _mock_deps, _mock_session, cli_runner):
+    def test_search_api_exception(
+        self,
+        mock_login: Any,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test search API exception handling."""
         gh = MagicMock()
         mock_login.return_value = gh
@@ -244,7 +266,7 @@ class TestSearchFunctionality:
 
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/user/repo", "--search", "test_keyword"]
+                        ["https://github.com/user/repo", "--search", "test_keyword"],
                     )
                     # Should handle API exception
                     assert result.exit_code in [0, 1]
@@ -258,7 +280,14 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_report_mode_invalid_json_response(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
+    def test_report_mode_invalid_json_response(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        _mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test report mode with invalid JSON response (status 200)."""
         mock_response = Mock()
         mock_response.status_code = 200
@@ -266,7 +295,9 @@ class TestReportModeErrors:
         mock_get.return_value = mock_response
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle invalid JSON
             assert result.exit_code == 1
 
@@ -275,14 +306,23 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_report_mode_non_200_404_status(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
+    def test_report_mode_non_200_404_status(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        _mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test report mode with non-200/404 status code."""
         mock_response = Mock()
         mock_response.status_code = 500
         mock_get.return_value = mock_response
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle error status
             assert result.exit_code == 1
 
@@ -291,13 +331,23 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_report_mode_get_httperror(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
+    def test_report_mode_get_httperror(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        _mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test report mode GET with HTTPError."""
         import requests
+
         mock_get.side_effect = requests.exceptions.HTTPError("HTTP Error")
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle HTTP error
             assert result.exit_code == 1
 
@@ -306,13 +356,23 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=0)
-    def test_report_mode_get_request_exception(self, _mock_deps, _mock_session, _mock_post, mock_get, cli_runner):
+    def test_report_mode_get_request_exception(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        _mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+    ) -> None:
         """Test report mode GET with generic RequestException."""
         import requests
+
         mock_get.side_effect = requests.exceptions.RequestException("Request Error")
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle request exception
             assert result.exit_code == 1
 
@@ -321,7 +381,15 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_report_mode_post_error_status(self, _mock_deps, _mock_session, mock_post, mock_get, cli_runner, html_response_last_page):
+    def test_report_mode_post_error_status(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+        html_response_last_page: str,
+    ) -> None:
         """Test report mode POST with error status."""
         # Setup GET response
         mock_get_response = Mock()
@@ -341,7 +409,9 @@ class TestReportModeErrors:
         mock_post.return_value = mock_post_response
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle POST error
             assert result.exit_code == 1
 
@@ -350,7 +420,15 @@ class TestReportModeErrors:
     @patch("ghtopdep.cli.requests.post")
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_report_mode_post_timeout(self, _mock_deps, _mock_session, mock_post, mock_get, cli_runner, html_response_last_page):
+    def test_report_mode_post_timeout(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        mock_post: Any,
+        mock_get: Any,
+        cli_runner: CliRunner,
+        html_response_last_page: str,
+    ) -> None:
         """Test report mode POST timeout."""
         import requests
 
@@ -370,7 +448,9 @@ class TestReportModeErrors:
         mock_post.side_effect = requests.exceptions.Timeout("Timeout")
 
         with patch("ghtopdep.cli.CacheControl"):
-            result = cli_runner.invoke(cli, ["https://github.com/user/repo", "--report"])
+            result = cli_runner.invoke(
+                cli, ["https://github.com/user/repo", "--report"]
+            )
             # Should handle timeout
             assert result.exit_code == 1
 
@@ -380,7 +460,13 @@ class TestScrapingLoopEdgeCases:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_scraping_with_private_repos(self, _mock_deps, _mock_session, cli_runner, html_response_with_private_repos):
+    def test_scraping_with_private_repos(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+        html_response_with_private_repos: str,
+    ) -> None:
         """Test scraping with private/ghost packages (missing stars)."""
         mock_session = _mock_session.return_value
 
@@ -403,7 +489,13 @@ class TestScrapingLoopEdgeCases:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_scraping_with_empty_star_text(self, _mock_deps, _mock_session, cli_runner, html_response_with_empty_stars):
+    def test_scraping_with_empty_star_text(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+        html_response_with_empty_stars: str,
+    ) -> None:
         """Test scraping with empty star text."""
         mock_session = _mock_session.return_value
 
@@ -424,7 +516,13 @@ class TestScrapingLoopEdgeCases:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_scraping_with_invalid_star_count(self, _mock_deps, _mock_session, cli_runner, html_response_with_invalid_stars):
+    def test_scraping_with_invalid_star_count(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+        html_response_with_invalid_stars: str,
+    ) -> None:
         """Test scraping with invalid star count."""
         mock_session = _mock_session.return_value
 
@@ -445,7 +543,13 @@ class TestScrapingLoopEdgeCases:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_scraping_missing_repo_selector(self, _mock_deps, _mock_session, cli_runner, html_response_missing_repo_selector):
+    def test_scraping_missing_repo_selector(
+        self,
+        _mock_deps: Any,
+        _mock_session: Any,
+        cli_runner: CliRunner,
+        html_response_missing_repo_selector: str,
+    ) -> None:
         """Test scraping with missing repo selector."""
         mock_session = _mock_session.return_value
 
@@ -466,7 +570,9 @@ class TestScrapingLoopEdgeCases:
 
     @patch("ghtopdep.cli.requests.session")
     @patch("ghtopdep.cli.get_max_deps", return_value=30)
-    def test_scraping_http_error_on_page(self, _mock_deps, _mock_session, cli_runner):
+    def test_scraping_http_error_on_page(
+        self, _mock_deps: Any, _mock_session: Any, cli_runner: CliRunner
+    ) -> None:
         """Test scraping loop HTTP error on subsequent pages."""
         import requests
 
@@ -478,7 +584,9 @@ class TestScrapingLoopEdgeCases:
 
         # Second call raises HTTPError
         response2 = Mock()
-        response2.raise_for_status.side_effect = requests.exceptions.HTTPError("HTTP Error")
+        response2.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "HTTP Error"
+        )
 
         mock_session.get.side_effect = [response1, response2]
 
@@ -491,7 +599,7 @@ class TestScrapingLoopEdgeCases:
 class TestOneDayHeuristicErrors:
     """Tests for OneDayHeuristic exception handling."""
 
-    def test_one_day_heuristic_date_parse_typeerror(self):
+    def test_one_day_heuristic_date_parse_typeerror(self) -> None:
         """Test OneDayHeuristic with TypeError in date parsing."""
         heuristic = OneDayHeuristic()
 
@@ -504,7 +612,7 @@ class TestOneDayHeuristicErrors:
             # Should return empty dict on error
             assert result == {}
 
-    def test_one_day_heuristic_date_parse_valueerror(self):
+    def test_one_day_heuristic_date_parse_valueerror(self) -> None:
         """Test OneDayHeuristic with ValueError in date parsing."""
         heuristic = OneDayHeuristic()
 
@@ -517,7 +625,7 @@ class TestOneDayHeuristicErrors:
             # Should return empty dict on error
             assert result == {}
 
-    def test_one_day_heuristic_date_parse_overflowerror(self):
+    def test_one_day_heuristic_date_parse_overflowerror(self) -> None:
         """Test OneDayHeuristic with OverflowError in date parsing."""
         heuristic = OneDayHeuristic()
 
@@ -525,7 +633,9 @@ class TestOneDayHeuristicErrors:
         response.status = 200
         response.headers = {"date": "invalid_date"}
 
-        with patch("ghtopdep.cli.parsedate", side_effect=OverflowError("Overflow error")):
+        with patch(
+            "ghtopdep.cli.parsedate", side_effect=OverflowError("Overflow error")
+        ):
             result = heuristic.update_headers(response)
             # Should return empty dict on error
             assert result == {}
@@ -534,19 +644,23 @@ class TestOneDayHeuristicErrors:
 class TestURLValidationEdgeCases:
     """Tests for URL validation edge cases."""
 
-    def test_validate_url_parsing_exception(self, cli_runner):
+    def test_validate_url_parsing_exception(
+        self, cli_runner: CliRunner, capsys: Any
+    ) -> None:
         """Test URL validation with parsing exception."""
         from ghtopdep.cli import validate_github_url
 
         with patch("ghtopdep.cli.urlparse", side_effect=Exception("Parse error")):
             with pytest.raises(SystemExit):
                 validate_github_url("https://github.com/user/repo")
+            captured = capsys.readouterr()
+            assert "Error: Invalid URL format" in captured.err
 
 
 class TestFetchDescriptionException:
     """Tests for fetch_description exception handling."""
 
-    def test_fetch_description_unexpected_error(self):
+    def test_fetch_description_unexpected_error(self, capsys: Any) -> None:
         """Test fetch_description with unexpected exception."""
         from ghtopdep.cli import fetch_description
 
@@ -556,4 +670,5 @@ class TestFetchDescriptionException:
         result = fetch_description(gh, "/owner/repo")
         # Should return empty string on error
         assert result == ""
-
+        captured = capsys.readouterr()
+        assert "Warning: Failed to fetch repository" in captured.err

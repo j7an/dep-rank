@@ -1,45 +1,47 @@
 """Integration tests for error handling in ghtopdep API calls."""
 
-from typing import cast
-from unittest.mock import patch, MagicMock
-from click import Command
-from click.testing import CliRunner
-import requests
-from ghtopdep.cli import cli as _cli
+from typing import Any
+from unittest.mock import MagicMock, patch
 
-# Type cast to help type checkers understand cli is a Command
-cli = cast(Command, _cli)
+import requests
+from click.testing import CliRunner
+
+from ghtopdep.cli import cli
 
 
 class TestEndToEndErrorHandling:
     """Integration tests for end-to-end error scenarios."""
 
-    def test_cli_with_network_failure_on_scraping(self):
+    def test_cli_with_network_failure_on_scraping(self) -> None:
         """Test CLI handles network failure gracefully during scraping."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 30
 
             # Network fails on first scraping request
-            mock_session.get.side_effect = requests.exceptions.ConnectionError("Network down")
+            mock_session.get.side_effect = requests.exceptions.ConnectionError(
+                "Network down"
+            )
 
             result = runner.invoke(cli, ["https://github.com/test/repo"])
 
             # Should handle gracefully and exit with 0
             assert result.exit_code == 0
 
-    def test_cli_with_multiple_error_types(self):
+    def test_cli_with_multiple_error_types(self) -> None:
         """Test CLI handles various error types in sequence."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 100
@@ -47,7 +49,9 @@ class TestEndToEndErrorHandling:
             # Simulate multiple failures in sequence
             mock_session.get.side_effect = [
                 requests.exceptions.Timeout(),  # First timeout
-                requests.exceptions.ConnectionError("Connection reset"),  # Then connection error
+                requests.exceptions.ConnectionError(
+                    "Connection reset"
+                ),  # Then connection error
             ]
 
             result = runner.invoke(cli, ["https://github.com/test/repo"])
@@ -55,7 +59,7 @@ class TestEndToEndErrorHandling:
             # Should handle all gracefully
             assert result.exit_code == 0
 
-    def test_cli_invalid_url_handling(self):
+    def test_cli_invalid_url_handling(self) -> None:
         """Test CLI rejects invalid URLs."""
         runner = CliRunner()
 
@@ -65,14 +69,11 @@ class TestEndToEndErrorHandling:
         assert result.exit_code == 1
         assert "Error" in result.output or "Invalid" in result.output
 
-    def test_cli_report_mode_missing_base_url(self):
+    def test_cli_report_mode_missing_base_url(self) -> None:
         """Test CLI requires BASE_URL for report mode."""
         runner = CliRunner()
 
-        result = runner.invoke(cli, [
-            "https://github.com/test/repo",
-            "--report"
-        ])
+        result = runner.invoke(cli, ["https://github.com/test/repo", "--report"])
 
         # Should exit because BASE_URL is required
         assert result.exit_code == 1
@@ -82,14 +83,15 @@ class TestEndToEndErrorHandling:
 class TestAPIFailureRecovery:
     """Tests for API failure recovery mechanisms."""
 
-    def test_scraping_continues_after_parse_error(self):
+    def test_scraping_continues_after_parse_error(self) -> None:
         """Test scraping continues after HTML parse error."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps, \
-             patch("ghtopdep.cli.HTMLParser") as mock_parser_class:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+            patch("ghtopdep.cli.HTMLParser") as mock_parser_class,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 30
@@ -108,16 +110,17 @@ class TestAPIFailureRecovery:
             # Should handle gracefully without crashing
             assert "Warning" in result.output or result.exit_code == 0
 
-    def test_search_continues_after_api_error(self):
+    def test_search_continues_after_api_error(self) -> None:
         """Test search continues after API error on one repository."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps, \
-             patch("ghtopdep.cli.HTMLParser") as mock_parser_class, \
-             patch("ghtopdep.cli.github3.login") as mock_login, \
-             patch("ghtopdep.cli.CacheControl"):
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+            patch("ghtopdep.cli.HTMLParser") as mock_parser_class,
+            patch("ghtopdep.cli.github3.login") as mock_login,
+            patch("ghtopdep.cli.CacheControl"),
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 0
@@ -136,11 +139,16 @@ class TestAPIFailureRecovery:
             mock_login.return_value = mock_gh
             mock_gh.search_code.side_effect = Exception("Rate limit exceeded")
 
-            result = runner.invoke(cli, [
-                "https://github.com/test/repo",
-                "--search", "test",
-                "--token", "test-token"
-            ])
+            result = runner.invoke(
+                cli,
+                [
+                    "https://github.com/test/repo",
+                    "--search",
+                    "test",
+                    "--token",
+                    "test-token",
+                ],
+            )
 
             # Should handle gracefully
             assert result.exit_code == 0
@@ -149,7 +157,7 @@ class TestAPIFailureRecovery:
 class TestTimeoutHandling:
     """Tests for timeout handling across different scenarios."""
 
-    def test_get_max_deps_respects_timeout(self):
+    def test_get_max_deps_respects_timeout(self) -> None:
         """Test that get_max_deps respects timeout configuration."""
         from ghtopdep.cli import REQUEST_TIMEOUT, get_max_deps
 
@@ -174,13 +182,14 @@ class TestTimeoutHandling:
             call_kwargs = sess.get.call_args[1]
             assert call_kwargs.get("timeout") == REQUEST_TIMEOUT
 
-    def test_scraping_loop_respects_timeout(self):
+    def test_scraping_loop_respects_timeout(self) -> None:
         """Test that scraping loop respects timeout configuration."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             from ghtopdep.cli import REQUEST_TIMEOUT
 
             mock_session = MagicMock()
@@ -205,8 +214,7 @@ class TestTimeoutHandling:
                     # At least one call should include timeout
                     calls = mock_session.get.call_args_list
                     has_timeout = any(
-                        call[1].get("timeout") == REQUEST_TIMEOUT
-                        for call in calls
+                        call[1].get("timeout") == REQUEST_TIMEOUT for call in calls
                     )
                     assert has_timeout
 
@@ -214,13 +222,14 @@ class TestTimeoutHandling:
 class TestPaginationErrorHandling:
     """Tests for pagination-related error handling."""
 
-    def test_pagination_stops_at_max_pages(self):
+    def test_pagination_stops_at_max_pages(self) -> None:
         """Test that pagination stops at MAX_PAGES limit."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             from ghtopdep.cli import MAX_PAGES
 
             mock_session = MagicMock()
@@ -236,7 +245,9 @@ class TestPaginationErrorHandling:
             with patch("ghtopdep.cli.HTMLParser") as mock_parser:
                 mock_parser_instance = MagicMock()
                 mock_next = MagicMock()
-                mock_next.attributes = {"href": "https://github.com/test/repo/network/dependents?page=2"}
+                mock_next.attributes = {
+                    "href": "https://github.com/test/repo/network/dependents?page=2"
+                }
                 mock_parser_instance.css.return_value = [mock_next, mock_next]
                 mock_parser_instance.css_first.return_value = None
                 mock_parser.return_value = mock_parser_instance
@@ -245,15 +256,18 @@ class TestPaginationErrorHandling:
 
                 # Should complete even though pagination could continue infinitely
                 # Number of get calls should be approximately MAX_PAGES
-                assert mock_session.get.call_count <= MAX_PAGES + 10  # Allow small buffer
+                assert (
+                    mock_session.get.call_count <= MAX_PAGES + 10
+                )  # Allow small buffer
 
-    def test_pagination_handles_missing_href(self):
+    def test_pagination_handles_missing_href(self) -> None:
         """Test pagination handles missing href attribute."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 30
@@ -281,13 +295,14 @@ class TestPaginationErrorHandling:
 class TestDataValidationErrorHandling:
     """Tests for data validation error handling."""
 
-    def test_invalid_star_count_is_skipped(self):
+    def test_invalid_star_count_is_skipped(self) -> None:
         """Test that items with invalid star counts are skipped."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 30
@@ -305,9 +320,13 @@ class TestDataValidationErrorHandling:
                 mock_dep = MagicMock()
                 mock_star_elem = MagicMock()
                 mock_star_elem.text.return_value = "not-a-number"
-                mock_dep.css.side_effect = lambda sel: [mock_star_elem] if "STARS" in sel else []
+                mock_dep.css.side_effect = (
+                    lambda sel: [mock_star_elem] if "STARS" in sel else []
+                )
 
-                mock_parser_instance.css.side_effect = lambda sel: [mock_dep] if "ITEM" in sel else []
+                mock_parser_instance.css.side_effect = (
+                    lambda sel: [mock_dep] if "ITEM" in sel else []
+                )
                 mock_parser_instance.css_first.return_value = None
                 mock_parser.return_value = mock_parser_instance
 
@@ -316,13 +335,14 @@ class TestDataValidationErrorHandling:
                 # Should skip invalid item and continue
                 assert result.exit_code == 0
 
-    def test_missing_url_attribute_is_handled(self):
+    def test_missing_url_attribute_is_handled(self) -> None:
         """Test that missing URL attributes are handled gracefully."""
         runner = CliRunner()
 
-        with patch("ghtopdep.cli.requests.session") as mock_session_class, \
-             patch("ghtopdep.cli.get_max_deps") as mock_max_deps:
-
+        with (
+            patch("ghtopdep.cli.requests.session") as mock_session_class,
+            patch("ghtopdep.cli.get_max_deps") as mock_max_deps,
+        ):
             mock_session = MagicMock()
             mock_session_class.return_value = mock_session
             mock_max_deps.return_value = 30
@@ -341,7 +361,7 @@ class TestDataValidationErrorHandling:
                 mock_star_elem = MagicMock()
                 mock_star_elem.text.return_value = "100"
 
-                def css_side_effect(sel):
+                def css_side_effect(sel: Any) -> list[Any]:
                     if "STARS" in sel:
                         return [mock_star_elem]
                     elif "REPO" in sel:
@@ -351,7 +371,9 @@ class TestDataValidationErrorHandling:
 
                 mock_dep.css.side_effect = css_side_effect
 
-                mock_parser_instance.css.side_effect = lambda sel: [mock_dep] if "ITEM" in sel else []
+                mock_parser_instance.css.side_effect = (
+                    lambda sel: [mock_dep] if "ITEM" in sel else []
+                )
                 mock_parser_instance.css_first.return_value = None
                 mock_parser.return_value = mock_parser_instance
 

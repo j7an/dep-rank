@@ -69,6 +69,11 @@ addopts = "--cov=ghtopdep --cov-report=html --cov-report=term-missing --cov-fail
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+# Suppress DEBUG logs from dependencies when running with --log-cli-level
+log_cli_level = "INFO"
+log_level = "INFO"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+log_cli_format = "%(levelname)s %(message)s"
 
 [tool.coverage.run]
 branch = true
@@ -92,15 +97,57 @@ exclude_lines = [
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
+disallow_untyped_defs = true  # Require type hints on all functions
 ignore_missing_imports = false
-strict = false
+strict = false  # Keep false for now, enable individual checks incrementally
 explicit_package_bases = true
 namespace_packages = true
+# Incremental strict mode options
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+warn_no_return = true
+warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["appdirs", "github3"]
+module = ["appdirs", "github3", "vcr"]
 ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88  # Community standard (matches Black default)
+target-version = "py311"  # Match project's minimum Python version
+fix = true  # Auto-fix issues when possible
+show-fixes = true  # Show what was fixed
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes (undefined variables, unused imports)
+    "I",   # isort (import sorting)
+    "N",   # pep8-naming (naming conventions)
+    "UP",  # pyupgrade (modern Python syntax)
+    "S",   # flake8-bandit (security issues) - CRITICAL for ghtopdep
+    "B",   # flake8-bugbear (bug-prone patterns)
+    "A",   # flake8-builtins (shadowing built-in names)
+    "C4",  # flake8-comprehensions (better comprehensions)
+    "T20", # flake8-print (catch debug print statements)
+]
+
+# Ignore rules that conflict with ruff formatter or are not applicable
+ignore = [
+    "E501",  # line-too-long (formatter handles this)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]  # Allow assert statements in tests (pytest convention)
+
+[tool.ruff.lint.isort]
+known-first-party = ["ghtopdep"]
+
+[tool.ruff.format]
+quote-style = "double"  # Matches existing code style
+indent-style = "space"
+docstring-code-format = true  # Format code blocks in docstrings
 
 [build-system]
 requires = ["hatchling"]

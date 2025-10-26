@@ -1,17 +1,14 @@
 """End-to-end tests for ghtopdep using VCR.py for HTTP recording."""
 
-import pytest
 from pathlib import Path
-from typing import cast
-from unittest.mock import patch, MagicMock
-from click import Command
-from click.testing import CliRunner
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
 import vcr
-from ghtopdep.cli import cli as _cli
+from click.testing import CliRunner
 
-# Type cast to help type checkers understand cli is a Command
-cli = cast(Command, _cli)
-
+from ghtopdep.cli import cli
 
 # Define cassettes directory using absolute path
 CASSETTES_DIR = Path(__file__).parent / "cassettes"
@@ -26,14 +23,14 @@ my_vcr = vcr.VCR(
 
 
 @pytest.fixture
-def cli_runner():
+def cli_runner() -> CliRunner:
     """Create a Click CLI runner."""
     return CliRunner()
 
 
 # Create cassettes directory if it doesn't exist
 @pytest.fixture(scope="session", autouse=True)
-def setup_cassettes_dir():
+def setup_cassettes_dir() -> None:
     """Ensure cassettes directory exists."""
     CASSETTES_DIR.mkdir(exist_ok=True)
 
@@ -41,9 +38,9 @@ def setup_cassettes_dir():
 class TestE2EWithMocks:
     """E2E tests using mocked HTTP responses to simulate real workflows."""
 
-    def test_e2e_complete_workflow_mock(self, cli_runner):
+    def test_e2e_complete_workflow_mock(self, cli_runner: CliRunner) -> None:
         """Test complete workflow: validate URL, fetch dependents, parse, sort, display."""
-        html_page_1 = '''
+        html_page_1 = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -70,9 +67,9 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
-        html_page_2 = '''
+        html_page_2 = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -91,7 +88,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -114,7 +111,7 @@ class TestE2EWithMocks:
                 with patch("ghtopdep.cli.CacheControl"):
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/test/repo", "--json", "--minstar", "100"]
+                        ["https://github.com/test/repo", "--json", "--minstar", "100"],
                     )
 
                     # Should complete successfully
@@ -122,9 +119,9 @@ class TestE2EWithMocks:
                     # Should have made requests
                     assert mock_session.get.called
 
-    def test_e2e_with_description_mock(self, cli_runner):
+    def test_e2e_with_description_mock(self, cli_runner: CliRunner) -> None:
         """Test workflow with description fetching."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -143,7 +140,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -173,15 +170,15 @@ class TestE2EWithMocks:
                                 "--token",
                                 "test_token",
                                 "--json",
-                            ]
+                            ],
                         )
 
                         # Should complete successfully
                         assert result.exit_code in [0, 1]
 
-    def test_e2e_table_output_format_mock(self, cli_runner):
+    def test_e2e_table_output_format_mock(self, cli_runner: CliRunner) -> None:
         """Test workflow with table output format."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -204,7 +201,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -225,15 +222,15 @@ class TestE2EWithMocks:
                             "--table",
                             "--rows",
                             "10",
-                        ]
+                        ],
                     )
 
                     # Should complete successfully
                     assert result.exit_code in [0, 1]
 
-    def test_e2e_packages_mode_mock(self, cli_runner):
+    def test_e2e_packages_mode_mock(self, cli_runner: CliRunner) -> None:
         """Test workflow with packages mode."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -252,7 +249,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -272,15 +269,15 @@ class TestE2EWithMocks:
                             "https://github.com/test/package",
                             "--packages",
                             "--json",
-                        ]
+                        ],
                     )
 
                     # Should complete successfully
                     assert result.exit_code in [0, 1]
 
-    def test_e2e_high_star_filtering_mock(self, cli_runner):
+    def test_e2e_high_star_filtering_mock(self, cli_runner: CliRunner) -> None:
         """Test filtering repos by high star count."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -307,7 +304,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -328,15 +325,15 @@ class TestE2EWithMocks:
                             "--minstar",
                             "500",
                             "--json",
-                        ]
+                        ],
                     )
 
                     # Should complete successfully
                     assert result.exit_code in [0, 1]
 
-    def test_e2e_rows_limit_mock(self, cli_runner):
+    def test_e2e_rows_limit_mock(self, cli_runner: CliRunner) -> None:
         """Test limiting output rows."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -363,7 +360,7 @@ class TestE2EWithMocks:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -384,7 +381,7 @@ class TestE2EWithMocks:
                             "--rows",
                             "2",
                             "--json",
-                        ]
+                        ],
                     )
 
                     # Should complete successfully
@@ -395,7 +392,12 @@ class TestE2EErrorRecovery:
     """E2E tests for error handling and recovery."""
 
     @staticmethod
-    def _invoke_with_mocked_session(cli_runner, html_response, max_deps=0, cli_args=None):
+    def _invoke_with_mocked_session(
+        cli_runner: CliRunner,
+        html_response: str,
+        max_deps: int = 0,
+        cli_args: list[str] | None = None,
+    ) -> Any:
         """
         Helper method to invoke CLI with mocked session.
 
@@ -425,9 +427,9 @@ class TestE2EErrorRecovery:
                 with patch("ghtopdep.cli.CacheControl"):
                     return cli_runner.invoke(cli, cli_args)
 
-    def test_e2e_handle_empty_results_mock(self, cli_runner):
+    def test_e2e_handle_empty_results_mock(self, cli_runner: CliRunner) -> None:
         """Test handling when no dependents are found."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -441,15 +443,15 @@ class TestE2EErrorRecovery:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         result = self._invoke_with_mocked_session(cli_runner, html_response, max_deps=0)
         # Should handle empty results gracefully
         assert result.exit_code in [0, 1]
 
-    def test_e2e_handle_no_stars_repos_mock(self, cli_runner):
+    def test_e2e_handle_no_stars_repos_mock(self, cli_runner: CliRunner) -> None:
         """Test handling repos with zero stars."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -472,7 +474,7 @@ class TestE2EErrorRecovery:
                 </div>
             </body>
         </html>
-        '''
+        """
 
         from unittest.mock import Mock
 
@@ -488,15 +490,15 @@ class TestE2EErrorRecovery:
                 with patch("ghtopdep.cli.CacheControl"):
                     result = cli_runner.invoke(
                         cli,
-                        ["https://github.com/test/repo", "--minstar", "5", "--json"]
+                        ["https://github.com/test/repo", "--minstar", "5", "--json"],
                     )
 
                     # Should handle zero-star repos appropriately
                     assert result.exit_code in [0, 1]
 
-    def test_e2e_duplicate_repo_handling_mock(self, cli_runner):
+    def test_e2e_duplicate_repo_handling_mock(self, cli_runner: CliRunner) -> None:
         """Test handling of duplicate repository entries."""
-        html_response = '''
+        html_response = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -519,8 +521,10 @@ class TestE2EErrorRecovery:
                 </div>
             </body>
         </html>
-        '''
+        """
 
-        result = self._invoke_with_mocked_session(cli_runner, html_response, max_deps=30)
+        result = self._invoke_with_mocked_session(
+            cli_runner, html_response, max_deps=30
+        )
         # Should handle duplicates by filtering them out
         assert result.exit_code in [0, 1]

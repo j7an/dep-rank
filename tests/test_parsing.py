@@ -2,27 +2,32 @@
 
 import calendar
 import datetime
-from unittest.mock import Mock, MagicMock
 from email.utils import formatdate, parsedate
-from ghtopdep.cli import get_max_deps, fetch_description, OneDayHeuristic, show_result
+from unittest.mock import MagicMock, Mock
+
+import pytest
+
+from ghtopdep.cli import OneDayHeuristic, fetch_description, get_max_deps, show_result
 
 
 class TestGetMaxDeps:
     """Tests for the get_max_deps function."""
 
-    def test_get_max_deps_single_digit(self, html_response_dependents):
+    def test_get_max_deps_single_digit(self, html_response_dependents: str) -> None:
         """Test extracting max dependencies from HTML."""
         mock_session = Mock()
         mock_response = Mock()
         mock_response.text = html_response_dependents
         mock_session.get.return_value = mock_response
 
-        result = get_max_deps(mock_session, "https://github.com/test/repo/network/dependents")
+        result = get_max_deps(
+            mock_session, "https://github.com/test/repo/network/dependents"
+        )
         assert result == 30
 
-    def test_get_max_deps_large_number(self):
+    def test_get_max_deps_large_number(self) -> None:
         """Test with large number of dependencies."""
-        html = '''
+        html = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -30,18 +35,20 @@ class TestGetMaxDeps:
                 </div>
             </body>
         </html>
-        '''
+        """
         mock_session = Mock()
         mock_response = Mock()
         mock_response.text = html
         mock_session.get.return_value = mock_response
 
-        result = get_max_deps(mock_session, "https://github.com/test/repo/network/dependents")
+        result = get_max_deps(
+            mock_session, "https://github.com/test/repo/network/dependents"
+        )
         assert result == 10000
 
-    def test_get_max_deps_calls_session_get(self):
+    def test_get_max_deps_calls_session_get(self) -> None:
         """Test that get_max_deps calls session.get with correct URL."""
-        html = '''
+        html = """
         <html>
             <body>
                 <div class="table-list-header-toggle">
@@ -49,7 +56,7 @@ class TestGetMaxDeps:
                 </div>
             </body>
         </html>
-        '''
+        """
         mock_session = Mock()
         mock_response = Mock()
         mock_response.text = html
@@ -63,7 +70,7 @@ class TestGetMaxDeps:
 class TestFetchDescription:
     """Tests for the fetch_description function."""
 
-    def test_fetch_description_success(self):
+    def test_fetch_description_success(self) -> None:
         """Test successful description fetch."""
         gh = MagicMock()
         repo = MagicMock()
@@ -73,7 +80,7 @@ class TestFetchDescription:
         result = fetch_description(gh, "/owner/repo")
         assert "test repository" in result
 
-    def test_fetch_description_empty_description(self):
+    def test_fetch_description_empty_description(self) -> None:
         """Test when repository has no description."""
         gh = MagicMock()
         repo = MagicMock()
@@ -83,7 +90,7 @@ class TestFetchDescription:
         result = fetch_description(gh, "/owner/repo")
         assert result == " "
 
-    def test_fetch_description_long_description(self):
+    def test_fetch_description_long_description(self) -> None:
         """Test that long descriptions are truncated."""
         gh = MagicMock()
         repo = MagicMock()
@@ -94,7 +101,7 @@ class TestFetchDescription:
         # textwrap.shorten should truncate to 60 chars
         assert len(result) <= 63  # 60 + "..."
 
-    def test_fetch_description_parses_url_correctly(self):
+    def test_fetch_description_parses_url_correctly(self) -> None:
         """Test that URL is parsed correctly to extract owner and repo."""
         gh = MagicMock()
         repo = MagicMock()
@@ -109,7 +116,10 @@ class TestOneDayHeuristic:
     """Tests for the OneDayHeuristic cache control class."""
 
     @staticmethod
-    def _create_response_with_date(status=200, date_tuple=(2024, 1, 1, 12, 0, 0)):
+    def _create_response_with_date(
+        status: int = 200,
+        date_tuple: tuple[int, int, int, int, int, int] = (2024, 1, 1, 12, 0, 0),
+    ) -> Mock:
         """
         Helper method to create a mock response with date header.
 
@@ -122,10 +132,14 @@ class TestOneDayHeuristic:
         """
         response = Mock()
         response.status = status
-        response.headers = {"date": formatdate(calendar.timegm(datetime.datetime(*date_tuple).timetuple()))}
+        response.headers = {
+            "date": formatdate(
+                calendar.timegm(datetime.datetime(*date_tuple).timetuple())
+            )
+        }
         return response
 
-    def test_one_day_heuristic_cacheable_status(self):
+    def test_one_day_heuristic_cacheable_status(self) -> None:
         """Test that cacheable statuses are handled correctly."""
         heuristic = OneDayHeuristic()
         response = self._create_response_with_date(status=200)
@@ -135,7 +149,7 @@ class TestOneDayHeuristic:
         assert "cache-control" in result
         assert result["cache-control"] == "public"
 
-    def test_one_day_heuristic_non_cacheable_status(self):
+    def test_one_day_heuristic_non_cacheable_status(self) -> None:
         """Test that non-cacheable statuses are ignored."""
         heuristic = OneDayHeuristic()
 
@@ -146,7 +160,7 @@ class TestOneDayHeuristic:
         result = heuristic.update_headers(response)
         assert result == {}
 
-    def test_one_day_heuristic_cacheable_by_default_statuses(self):
+    def test_one_day_heuristic_cacheable_by_default_statuses(self) -> None:
         """Test all cacheable by default statuses."""
         heuristic = OneDayHeuristic()
         cacheable_statuses = {200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501}
@@ -158,7 +172,7 @@ class TestOneDayHeuristic:
             assert "expires" in result
             assert "cache-control" in result
 
-    def test_one_day_heuristic_sets_expiry_one_day_ahead(self):
+    def test_one_day_heuristic_sets_expiry_one_day_ahead(self) -> None:
         """Test that expiry is set to one day ahead."""
         heuristic = OneDayHeuristic()
 
@@ -174,13 +188,14 @@ class TestOneDayHeuristic:
 
         # Parse the expiry date
         expiry_tuple = parsedate(result["expires"])
+        assert expiry_tuple is not None
         expiry_date = datetime.datetime(*expiry_tuple[:6])
 
         # Should be exactly 1 day later
         expected_date = test_date + datetime.timedelta(days=1)
         assert expiry_date == expected_date
 
-    def test_one_day_heuristic_warning_message(self):
+    def test_one_day_heuristic_warning_message(self) -> None:
         """Test that warning message is returned."""
         heuristic = OneDayHeuristic()
 
@@ -193,62 +208,110 @@ class TestOneDayHeuristic:
 class TestShowResult:
     """Tests for the show_result function."""
 
-    def test_show_result_table_format(self, capsys):
+    def test_show_result_table_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test output in table format."""
         repos = [
             {"url": "https://github.com/user/repo1", "stars": 100},
             {"url": "https://github.com/user/repo2", "stars": 50},
         ]
 
-        show_result(repos, total_repos_count=2, more_than_zero_count=2, destinations="repositories", table=True)
+        show_result(
+            repos,
+            total_repos_count=2,
+            more_than_zero_count=2,
+            destinations="repositories",
+            table=True,
+        )
 
         captured = capsys.readouterr()
         assert "https://github.com/user/repo1" in captured.out
         assert "https://github.com/user/repo2" in captured.out
         assert "found 2 repositories" in captured.out
 
-    def test_show_result_json_format(self, capsys):
+    def test_show_result_json_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test output in JSON format."""
         repos = [
             {"url": "https://github.com/user/repo1", "stars": 100},
         ]
 
-        show_result(repos, total_repos_count=1, more_than_zero_count=1, destinations="repositories", table=False)
+        show_result(
+            repos,
+            total_repos_count=1,
+            more_than_zero_count=1,
+            destinations="repositories",
+            table=False,
+        )
 
         captured = capsys.readouterr()
         assert "https://github.com/user/repo1" in captured.out
         assert "100" in captured.out
 
-    def test_show_result_empty_list_table(self, capsys):
+    def test_show_result_empty_list_table(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test table output with empty results."""
-        show_result([], total_repos_count=0, more_than_zero_count=0, destinations="repositories", table=True)
+        show_result(
+            [],
+            total_repos_count=0,
+            more_than_zero_count=0,
+            destinations="repositories",
+            table=True,
+        )
 
         captured = capsys.readouterr()
         assert "Doesn't find any repositories" in captured.out
 
-    def test_show_result_empty_list_json(self, capsys):
+    def test_show_result_empty_list_json(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test JSON output with empty results."""
-        show_result([], total_repos_count=0, more_than_zero_count=0, destinations="repositories", table=False)
+        show_result(
+            [],
+            total_repos_count=0,
+            more_than_zero_count=0,
+            destinations="repositories",
+            table=False,
+        )
 
         captured = capsys.readouterr()
         assert "[]" in captured.out
 
-    def test_show_result_packages_singular(self, capsys):
+    def test_show_result_packages_singular(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test output with 'packages' destination."""
         repos = [{"url": "https://github.com/user/pkg", "stars": 50}]
 
-        show_result(repos, total_repos_count=1, more_than_zero_count=1, destinations="packages", table=True)
+        show_result(
+            repos,
+            total_repos_count=1,
+            more_than_zero_count=1,
+            destinations="packages",
+            table=True,
+        )
 
         captured = capsys.readouterr()
         assert "found 1 packages" in captured.out
 
-    def test_show_result_with_description(self, capsys):
+    def test_show_result_with_description(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Test output with repository descriptions."""
         repos = [
-            {"url": "https://github.com/user/repo1", "stars": 100, "description": "Test repo"},
+            {
+                "url": "https://github.com/user/repo1",
+                "stars": 100,
+                "description": "Test repo",
+            },
         ]
 
-        show_result(repos, total_repos_count=1, more_than_zero_count=1, destinations="repositories", table=True)
+        show_result(
+            repos,
+            total_repos_count=1,
+            more_than_zero_count=1,
+            destinations="repositories",
+            table=True,
+        )
 
         captured = capsys.readouterr()
         assert "Test repo" in captured.out
