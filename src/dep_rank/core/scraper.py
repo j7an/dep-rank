@@ -274,7 +274,7 @@ async def scrape_dependents(
         try:
             await prefetch_task
         except asyncio.CancelledError:
-            pass
+            pass  # Expected when scraping ends before prefetch completes
 
     all_repos.sort(key=lambda r: r.stars, reverse=True)
     return all_repos
