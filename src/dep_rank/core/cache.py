@@ -48,10 +48,8 @@ class SqliteCache:
             return None
 
         body, etag, expires_at = row
-        if time.time() < expires_at:
-            return {"body": body, "etag": etag}
-        # Expired — return etag for conditional request, but no body
-        return {"body": None, "etag": etag}
+        expired = time.time() >= expires_at
+        return {"body": body, "etag": etag, "expired": expired}
 
     async def put(self, url: str, body: bytes, etag: str | None, ttl: int) -> None:
         """Store a response in the cache."""

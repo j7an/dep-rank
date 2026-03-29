@@ -34,14 +34,16 @@ class TestSqliteCache:
         assert result is not None
         assert result["body"] == b"<html>hello</html>"
         assert result["etag"] == '"abc123"'
+        assert result["expired"] is False
 
     @pytest.mark.asyncio
-    async def test_expired_entry_returns_etag_only(self, cache: SqliteCache) -> None:
+    async def test_expired_entry_returns_body_and_expired_flag(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/old", body=b"old", etag='"old"', ttl=-1)
         result = await cache.get("https://example.com/old")
         assert result is not None
-        assert result["body"] is None
+        assert result["body"] == b"old"
         assert result["etag"] == '"old"'
+        assert result["expired"] is True
 
     @pytest.mark.asyncio
     async def test_put_overwrites(self, cache: SqliteCache) -> None:
