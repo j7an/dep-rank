@@ -263,7 +263,7 @@ def mcp_cmd(transport: str, port: int, host: str) -> None:
         )
         sys.exit(1)
 
-    mcp_server.run(transport=cast("Literal['stdio', 'http']", transport), host=host, port=port)
+    mcp_server.run(transport=cast(Literal["stdio", "http"], transport), host=host, port=port)
 
 
 @cli.group()
