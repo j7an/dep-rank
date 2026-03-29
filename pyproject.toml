@@ -27,7 +27,7 @@ dependencies = [
     "pydantic>=2.0,<3",
     "appdirs>=1.4,<2",
     "click>=8.1,<9",
-    "rich>=13.0,<14",
+    "rich>=13.0,<15",
     "fastmcp>=3.1,<4",
 ]
 

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
 
-class DependentType(str, Enum):
+class DependentType(StrEnum):
     """Type of dependent to search for."""
 
     REPOSITORY = "REPOSITORY"
