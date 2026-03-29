@@ -16,10 +16,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync
-      - run: uv run pytest --cov
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
-      - run: uv run mypy ghtopdep/
+      - run: uv run ruff format --check src/ tests/
+      - run: uv run ruff check src/ tests/
+      - run: uv run mypy src/dep_rank/
+      - run: uv run pytest
 
   dependency-review:
     runs-on: ubuntu-latest

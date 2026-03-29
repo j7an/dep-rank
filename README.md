@@ -1,269 +1,171 @@
-# GHTOPDEP
+# dep-rank
 
-CLI tool for sorting dependents repo by stars
+Rank GitHub dependents by stars.
 
-> **Note:** This repository is a fork and independent continuation of the original [ghtopdep](https://github.com/andriyor/ghtopdep) by Andriy Orehov. This fork is **not published to PyPI** and is distributed via git-only installation.
+[![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-## Requirements
+dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as both a CLI tool and an MCP server for LLM assistants.
 
-- Python 3.11 and up
-- Python development libraries
+## Quick Start
 
-## Installation
-
-### From git repository
-
-```sh
-$ pip install git+https://github.com/j7an/ghtopdep.git#egg=ghtopdep
+```bash
+pip install dep-rank
+dep-rank deps https://github.com/django/django
 ```
 
-### From source
+## CLI Reference
 
-```sh
-$ git clone https://github.com/j7an/ghtopdep
-$ cd ghtopdep
-$ pip install .
+### `dep-rank deps` — List top dependents
+
+```bash
+dep-rank deps https://github.com/django/django
+dep-rank deps https://github.com/django/django --rows 20 --min-stars 100
+dep-rank deps https://github.com/django/django --descriptions --format json
+dep-rank deps https://github.com/django/django --packages
 ```
 
-Or using UV (recommended):
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--rows` | 10 | Number of results |
+| `--min-stars` | 5 | Minimum star count filter |
+| `--format` | table | Output format: `table` or `json` |
+| `--descriptions` | off | Fetch descriptions via GitHub API (requires token) |
+| `--packages` | off | Search packages instead of repositories |
+| `--token` | `DEP_RANK_TOKEN` | GitHub token |
 
-```sh
-$ git clone https://github.com/j7an/ghtopdep
-$ cd ghtopdep
-$ uv pip install .
+### `dep-rank search` — Search code in dependents
+
+```bash
+dep-rank search https://github.com/django/django "from django.db import"
+dep-rank search https://github.com/django/django "middleware" --max-repos 20
 ```
 
-### Using docker (from source)
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--max-repos` | 10 | Maximum repos to search |
+| `--min-stars` | 50 | Only search repos with this many stars |
+| `--token` | `DEP_RANK_TOKEN` | GitHub token (required) |
 
-First `docker build` the image once:
+### `dep-rank mcp` — Start MCP server
 
-```sh
-$ git clone https://github.com/j7an/ghtopdep
-$ cd ghtopdep
-$ docker build . -t ghtopdep
+```bash
+dep-rank mcp                                # STDIO (default)
+dep-rank mcp --transport http --port 8000   # HTTP
 ```
 
-Then you can `docker run` it:
+### `dep-rank cache` — Manage cache
 
-```sh
-$ docker run --rm -it ghtopdep --help
+```bash
+dep-rank cache stats    # Show cache size
+dep-rank cache clear    # Clear all cached data
 ```
 
-## Python development Installation
+## MCP Server
 
-### Ubuntu/Debian
+dep-rank includes an MCP server for use with Claude Desktop, Claude Code, Cursor, and other MCP-compatible tools.
 
-```sh
-sudo apt install python3-dev
+### Tools
+
+| Tool | Description | Requires Token |
+|------|-------------|---------------|
+| `get_top_dependents` | List top dependents by stars | No |
+| `get_dependent_details` | Enrich with descriptions via GraphQL | Yes |
+| `search_dependent_code` | Search code across dependents | Yes |
+
+### Prompts
+
+| Prompt | Description |
+|--------|-------------|
+| `analyze_ecosystem` | Guided workflow for full ecosystem analysis |
+| `find_usage_patterns` | Find how dependents use a specific API |
+
+### Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "dep-rank": {
+      "command": "uvx",
+      "args": ["dep-rank-mcp"],
+      "env": {
+        "DEP_RANK_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
 ```
 
-### CentOS/RHEL
+### Claude Code
 
-```sh
-sudo yum install python3-devel
+Add to `.mcp.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "dep-rank": {
+      "command": "uvx",
+      "args": ["dep-rank-mcp"],
+      "env": {
+        "DEP_RANK_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
 ```
 
-## Version upgrade
+### HTTP Deployment
 
-```sh
-# Navigate to your cloned repository
-$ cd ghtopdep
-# Pull latest changes
-$ git pull origin main
-# Reinstall with new updates
-$ pip install --upgrade .
+```bash
+DEP_RANK_TOKEN=ghp_xxx dep-rank mcp --transport http --port 8000
 ```
 
-## Usage
+## Authentication
 
-If you want retrieve packages or repositories description you need pass token.
-To prevent rale limit being exceeded for unauthentIcated requests, ghtopdep needs an access token.
-For public repositories, [create a token](https://github.com/settings/tokens/new?scopes=public_repo&description=ghtopdep)
-with the public_repo permission.
+Set the `DEP_RANK_TOKEN` environment variable with a GitHub personal access token:
 
-### Environment Variables
-
-You can configure ghtopdep using environment variables in `~/.bashrc` or `~/.zshrc`:
-
-**GHTOPDEP_TOKEN** - GitHub personal access token for API requests:
-```sh
-export GHTOPDEP_TOKEN="********************"
+```bash
+export DEP_RANK_TOKEN=ghp_your_token_here
 ```
 
-**GHTOPDEP_BASE_URL** - Base URL for report mode (required when using `--report` flag):
-```sh
-export GHTOPDEP_BASE_URL="https://your-server.com"
+**What works without a token:**
+- `dep-rank deps` — core scraping and star ranking
+
+**What requires a token:**
+- `--descriptions` flag — fetches repo descriptions via GitHub GraphQL API
+- `dep-rank search` — code search across dependents
+- MCP tools: `get_dependent_details`, `search_dependent_code`
+
+Create a token at [github.com/settings/tokens](https://github.com/settings/tokens) with `public_repo` scope.
+
+## How It Works
+
+dep-rank uses a three-stage pipeline:
+
+1. **Scrape** — fetches GitHub's `/network/dependents` HTML pages to discover all dependents and their approximate star counts
+2. **Enrich** (optional) — one GraphQL batch query fetches accurate star counts and descriptions for the top N results (replaces 100 individual REST API calls)
+3. **Present** — returns structured results as a Rich table (CLI) or Pydantic model (MCP)
+
+Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag support for conditional requests.
+
+## Development
+
+```bash
+# Prerequisites: Python 3.11+, uv
+uv sync
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy dep_rank/
 ```
 
-**GHTOPDEP_ENV** - Set to "development" to use local development server (defaults to `http://127.0.0.1:3000`):
-```sh
-export GHTOPDEP_ENV="development"
-```
+## Acknowledgments
 
-Alternatively, you can pass the token as option --token
-
-```sh
-➜ ghtopdep --help
-Usage: ghtopdep [OPTIONS] URL
-
-Options:
-  --repositories / --packages  Sort repositories or packages (default
-                               repositories)
-  --table / --json             View mode
-  --description                Show description of packages or repositories
-                               (performs additional request per repository)
-  --rows INTEGER               Number of showing repositories (default=10)
-  --minstar INTEGER            Minimum number of stars (default=5)
-  --search TEXT                search code at dependents
-                               (repositories/packages)
-  --token TEXT
-  --help                       Show this message and exit.
-```
-
-### Table view (by default)
-
-```sh
-➜ ghtopdep https://github.com/pytest-dev/pytest
-| url                                               | stars   |
-|---------------------------------------------------|---------|
-| https://github.com/pallets/flask                  | 67K     |
-| https://github.com/encode/httpx                   | 13K     |
-| https://github.com/tiangolo/fastapi               | 75K     |
-| https://github.com/psf/black                      | 38K     |
-| https://github.com/python-poetry/poetry           | 31K     |
-| https://github.com/pre-commit/pre-commit          | 12K     |
-| https://github.com/pytest-dev/pytest-cov          | 1.7K    |
-| https://github.com/pytest-dev/pytest-asyncio      | 1.4K    |
-| https://github.com/pytest-dev/pytest-mock         | 1.8K    |
-| https://github.com/spulec/freezegun               | 4.0K    |
-found 1800 repositories others repositories are private
-found 950 repositories with more than zero star
-~ via 🐍 3.11.0 took 2m 15s
-```
-
-### JSON view
-
-```sh
-➜ ghtopdep https://github.com/pytest-dev/pytest --json
-[{"url": "https://github.com/tiangolo/fastapi", "stars": 75000}, {"url": "https://github.com/pallets/flask", "stars": 67000}, {"url": "https://github.com/psf/black", "stars": 38000}, {"url": "https://github.com/python-poetry/poetry", "stars": 31000}, {"url": "https://github.com/encode/httpx", "stars": 13000}, {"url": "https://github.com/pre-commit/pre-commit", "stars": 12000}, {"url": "https://github.com/spulec/freezegun", "stars": 4000}, {"url": "https://github.com/pytest-dev/pytest-mock", "stars": 1800}, {"url": "https://github.com/pytest-dev/pytest-cov", "stars": 1700}, {"url": "https://github.com/pytest-dev/pytest-asyncio", "stars": 1400}]
-```
-
-you can sort packages and fetch their description
-
-```sh
-➜ ghtopdep https://github.com/pytest-dev/pytest --description --packages
-| url                                            | stars   | description                                                  |
-|------------------------------------------------|---------|--------------------------------------------------------------|
-| https://github.com/pytest-dev/pytest-cov       | 1.7K    | Coverage plugin for pytest                                   |
-| https://github.com/pytest-dev/pytest-asyncio   | 1.4K    | Pytest support for asyncio                                   |
-| https://github.com/pytest-dev/pytest-mock      | 1.8K    | Thin-wrapper around the mock package for easier use with... |
-| https://github.com/pytest-dev/pytest-xdist     | 1.4K    | pytest plugin for distributed testing and loop-on-failures   |
-| https://github.com/pytest-dev/pytest-django    | 1.3K    | A Django plugin for pytest                                   |
-| https://github.com/Teemu/pytest-sugar          | 1.1K    | A plugin that changes the default look and feel of pytest    |
-| https://github.com/pytest-dev/pytest-timeout   | 567     | pytest plugin to abort hanging tests                         |
-| https://github.com/pytest-dev/pytest-html      | 724     | Plugin for generating HTML reports for pytest results        |
-| https://github.com/eisensheng/pytest-catchlog  | 89      | py.test plugin to catch log messages                         |
-| https://github.com/man-group/pytest-plugins    | 531     | A grab-bag of nifty pytest plugins                           |
-found 420 packages others packages are private
-found 280 packages with more than zero star
-```
-
-also ghtopdep support code searching at dependents (repositories/packages)
-
-```sh
-➜ ghtopdep https://github.com/rob-balfre/svelte-select --search=isMulti --minstar=0
-https://github.com/andriyor/linkorg-frontend/blob/7eed49c332f127c8541281b85def80e54c882920/src/App.svelte with 0 stars
-https://github.com/andriyor/linkorg-frontend/blob/7eed49c332f127c8541281b85def80e54c882920/src/providers/Post.svelte with 0 stars
-https://github.com/jdgaravito/bitagora_frontend/blob/776a23f5e848995d3eba90563d55c96429470c48/src/Events/AddEvent.svelte with 0 stars
-https://github.com/gopear/OlcsoSor/blob/b1fa1d877a59f7daf41a86fecb21137c91652d77/src/routes/index.svelte with 3 stars
-https://github.com/openstate/allmanak/blob/ff9ac0833e5e63f7c17f99c5c2355b4e46c48148/app/src/routes/index.svelte with 3 stars
-https://github.com/openstate/allmanak/blob/e6d7aa72a8878eefc6f63a27c983894de1cef294/app/src/components/ReportForm.svelte with 3 stars
-https://github.com/wolbodo/members/blob/d091f1e44b4e8cb8cc31f39ea6f6e9c36211d019/sapper/src/components/Member.html with 1 stars
-```
-
-## Development setup
-
-Using [UV](https://docs.astral.sh/uv/) - a fast Python package and project manager
-
-### Installing UV
-
-**macOS and Linux:**
-```sh
-$ curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**Windows:**
-```powershell
-$ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Alternative (via pip):**
-```sh
-$ pip install uv
-```
-
-### Basic Development Workflow
-
-**Install dependencies:**
-```sh
-$ uv sync
-```
-
-**Run the application:**
-```sh
-$ uv run ghtopdep https://github.com/pytest-dev/pytest
-```
-
-**Build the package:**
-```sh
-$ uv build
-```
-
-**Publish to PyPI:**
-```sh
-$ uv publish
-```
-
-### Common Development Tasks
-
-**Add a new dependency:**
-```sh
-$ uv add <package-name>
-```
-
-**Add a development dependency:**
-```sh
-$ uv add --dev <package-name>
-```
-
-**Remove a dependency:**
-```sh
-$ uv remove <package-name>
-```
-
-**Run tests:**
-```sh
-$ uv run pytest
-```
-
-**Run any Python script:**
-```sh
-$ uv run python script.py
-```
+dep-rank is a full rewrite of [ghtopdep](https://github.com/andriyor/ghtopdep) by [Andriy Orehov](https://github.com/andriyor). The original project is licensed under MIT.
 
 ## License
 
-[MIT](https://choosealicense.com/licenses/mit/)
-
-## Alternatives
-
-[ghtracker](https://github.com/zer0yu/ghtracker) - not provide full result https://github.com/zer0yu/ghtracker/issues/2
-
-[github-by-stars](https://github.com/hacker-DOM/github-by-stars) - complex setup
-
-
-## References
-
-[Allow dependents to be sorted by stars · Issue #1537 · isaacs/github](https://github.com/isaacs/github/issues/1537)
-
-[Sorting the insights dependency graph lists · community · Discussion #5575](https://github.com/orgs/community/discussions/5575)
+MIT — see [LICENSE](LICENSE) for details.
