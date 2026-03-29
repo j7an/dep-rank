@@ -10,6 +10,7 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeResult,
 )
 
 
@@ -76,6 +77,35 @@ class TestDependentsResult:
         assert "PACKAGE" in json_str
         restored = DependentsResult.model_validate_json(json_str)
         assert restored.dependent_type == DependentType.PACKAGE
+
+
+class TestScrapeResult:
+    def test_create(self) -> None:
+        repo = Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)
+        result = ScrapeResult(
+            repos=[repo],
+            pages_scraped=42,
+            max_pages=1000,
+            estimated_total_pages=76515,
+            estimated_total_dependents=2295450,
+        )
+        assert result.pages_scraped == 42
+        assert result.max_pages == 1000
+        assert result.estimated_total_pages == 76515
+        assert result.estimated_total_dependents == 2295450
+        assert len(result.repos) == 1
+
+    def test_json_round_trip(self) -> None:
+        result = ScrapeResult(
+            repos=[],
+            pages_scraped=0,
+            max_pages=1000,
+            estimated_total_pages=0,
+            estimated_total_dependents=0,
+        )
+        data = result.model_dump_json()
+        restored = ScrapeResult.model_validate_json(data)
+        assert restored == result
 
 
 class TestCodeSearchResult:
