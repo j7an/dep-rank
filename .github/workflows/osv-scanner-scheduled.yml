@@ -14,11 +14,32 @@ permissions:
 
 jobs:
   scan-scheduled:
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c51854704019a247608d928f370c98740469d4b5  # v2.3.5
-    with:
-      # Scan pyproject.toml and any lockfiles for vulnerabilities
-      scan-args: --recursive ./
-      # Upload results to GitHub Code Scanning
-      upload-sarif: true
-      # Fail workflow if vulnerabilities found
-      fail-on-vuln: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v5
+
+      - name: Install osv-scanner
+        run: |
+          curl -sSfL https://github.com/google/osv-scanner/releases/download/v2.3.5/osv-scanner_2.3.5_linux_amd64 -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: Run OSV scan
+        run: |
+          osv-scanner scan --recursive --format sarif --output results.sarif ./ || true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4.35.1
+        with:
+          sarif_file: results.sarif
+        if: always()
+
+      - name: Fail on vulnerabilities
+        run: |
+          osv-scanner scan --recursive ./
