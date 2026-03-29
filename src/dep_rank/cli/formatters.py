@@ -34,7 +34,7 @@ def print_dependents_table(result: DependentsResult) -> None:
 
     has_descriptions = any(r.description for r in result.repos)
     if has_descriptions:
-        table.add_column("Description", style="dim", max_width=60)
+        table.add_column("Description", style="dim")
 
     for repo in result.repos:
         row = [f"{repo.owner}/{repo.name}", humanize(repo.stars)]

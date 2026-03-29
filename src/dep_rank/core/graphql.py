@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import aiohttp
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import Repository
+
+logger = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://api.github.com/graphql"
 BATCH_SIZE = 100
@@ -50,9 +54,18 @@ async def enrich_with_graphql(
             json={"query": query},
             headers=headers,
         ) as resp:
+            if resp.status == 401:
+                logger.warning("GitHub API authentication failed — token may be expired or invalid")
+                return repos
+            if resp.status != 200:
+                logger.warning("GitHub API returned HTTP %d", resp.status)
+                enriched.extend(batch)
+                continue
             data = await resp.json()
 
         if "data" not in data:
+            message = data.get("message", "unknown error")
+            logger.warning("GitHub GraphQL error: %s", message)
             enriched.extend(batch)
             continue
 

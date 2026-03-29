@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import appdirs
 import click
-
-if TYPE_CHECKING:
-    from typing import Literal
+from rich.logging import RichHandler
 
 from dep_rank import __version__
 from dep_rank.core.models import DependentsResult, DependentType
 from dep_rank.core.validation import validate_github_url
+
+if TYPE_CHECKING:
+    from typing import Literal
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(message)s",
+    handlers=[RichHandler(show_time=False, show_path=False, markup=True)],
+)
 
 
 async def run_deps(
@@ -25,14 +33,18 @@ async def run_deps(
     descriptions: bool,
     packages: bool,
     token: str | None,
+    verbose: bool = False,
+    max_pages: int = 1000,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
+    from rich.console import Console
 
     from dep_rank.core.cache import SqliteCache
     from dep_rank.core.graphql import enrich_with_graphql
     from dep_rank.core.scraper import scrape_dependents
 
+    console = Console(stderr=True)
     cache_dir = appdirs.user_cache_dir("dep-rank")
     cache = SqliteCache(cache_dir)
     await cache.initialize()
@@ -43,13 +55,30 @@ async def run_deps(
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
-            repos = await scrape_dependents(
-                session,
-                url,
-                dependent_type=dep_type,
-                min_stars=min_stars,
-                cache=cache,
-            )
+            status = None if verbose else console.status("[bold green]Scraping dependents...")
+
+            async def on_progress(page: int, _total: int) -> None:
+                if status:
+                    status.update(f"[bold green]Scraping dependents... page {page}")
+
+            if status:
+                status.start()
+            try:
+                repos = await scrape_dependents(
+                    session,
+                    url,
+                    dependent_type=dep_type,
+                    min_stars=min_stars,
+                    cache=cache,
+                    on_progress=on_progress,
+                    token=token,
+                    max_pages=max_pages,
+                )
+            finally:
+                if status:
+                    status.stop()
+
+            console.print(f"[green]Found {len(repos)} dependents with ≥{min_stars} stars.")
 
             total_count = len(repos)
             repos = repos[:rows]
@@ -72,8 +101,14 @@ async def run_deps(
 
 @click.group()
 @click.version_option(version=__version__, prog_name="dep-rank")
-def cli() -> None:
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose/debug logging.")
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool) -> None:
     """Analyze GitHub repository dependents by star count."""
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    if verbose:
+        logging.getLogger("dep_rank").setLevel(logging.DEBUG)
 
 
 @cli.command()
@@ -94,7 +129,10 @@ def cli() -> None:
     "--packages/--repositories", default=False, help="Search packages instead of repositories."
 )
 @click.option("--token", envvar="DEP_RANK_TOKEN", default=None, help="GitHub token.")
+@click.option("--max-pages", default=1000, help="Maximum pages to scrape (default: 1000).")
+@click.pass_context
 def deps(
+    ctx: click.Context,
     url: str,
     rows: int,
     min_stars: int,
@@ -102,6 +140,7 @@ def deps(
     descriptions: bool,
     packages: bool,
     token: str | None,
+    max_pages: int,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars."""
     try:
@@ -117,7 +156,10 @@ def deps(
         )
         sys.exit(1)
 
-    result = asyncio.run(run_deps(url, rows, min_stars, descriptions, packages, token))
+    verbose = ctx.obj.get("verbose", False)
+    result = asyncio.run(
+        run_deps(url, rows, min_stars, descriptions, packages, token, verbose, max_pages)
+    )
 
     from dep_rank.cli.formatters import print_dependents_json, print_dependents_table
 
@@ -133,7 +175,10 @@ def deps(
 @click.option("--max-repos", default=10, help="Maximum repos to search.")
 @click.option("--min-stars", default=50, help="Only search repos with this many stars.")
 @click.option("--token", envvar="DEP_RANK_TOKEN", required=True, help="GitHub token (required).")
-def search(url: str, query: str, max_repos: int, min_stars: int, token: str) -> None:
+@click.pass_context
+def search(
+    ctx: click.Context, url: str, query: str, max_repos: int, min_stars: int, token: str
+) -> None:
     """Search code patterns across dependents of a GitHub repository."""
     try:
         validate_github_url(url)
@@ -141,14 +186,18 @@ def search(url: str, query: str, max_repos: int, min_stars: int, token: str) -> 
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
+    verbose = ctx.obj.get("verbose", False)
+
     async def _run() -> None:
         import aiohttp
+        from rich.console import Console
 
         from dep_rank.cli.formatters import print_search_results
         from dep_rank.core.cache import SqliteCache
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
+        console = Console(stderr=True)
         cache_dir = appdirs.user_cache_dir("dep-rank")
         cache = SqliteCache(cache_dir)
         await cache.initialize()
@@ -157,12 +206,29 @@ def search(url: str, query: str, max_repos: int, min_stars: int, token: str) -> 
             async with aiohttp.ClientSession(
                 headers={"User-Agent": "dep-rank/0.1"},
             ) as session:
-                repos = await scrape_dependents(
-                    session,
-                    url,
-                    min_stars=min_stars,
-                    cache=cache,
-                )
+                status = None if verbose else console.status("[bold green]Scraping dependents...")
+
+                async def on_progress(page: int, _total: int) -> None:
+                    if status:
+                        status.update(f"[bold green]Scraping dependents... page {page}")
+
+                if status:
+                    status.start()
+                try:
+                    repos = await scrape_dependents(
+                        session,
+                        url,
+                        min_stars=min_stars,
+                        cache=cache,
+                        on_progress=on_progress,
+                        token=token,
+                    )
+                finally:
+                    if status:
+                        status.stop()
+
+                console.print(f"[green]Found {len(repos)} dependents with ≥{min_stars} stars.")
+
                 result = await search_code(
                     session,
                     repos,
