@@ -191,14 +191,20 @@ class TestSearchCommandFull:
     ) -> None:
         from dep_rank.core.models import CodeSearchResult
 
-        mock_scrape.return_value = [
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=5000,
-            ),
-        ]
+        mock_scrape.return_value = ScrapeResult(
+            repos=[
+                Repository(
+                    owner="alpha",
+                    name="framework",
+                    url="https://github.com/alpha/framework",
+                    stars=5000,
+                ),
+            ],
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
         mock_search.return_value = CodeSearchResult(
             source="https://github.com/django/django",
             query="import os",

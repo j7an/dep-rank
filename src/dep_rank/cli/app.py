@@ -240,16 +240,45 @@ def search(
             async with aiohttp.ClientSession(
                 headers={"User-Agent": "dep-rank/0.1"},
             ) as session:
-                status = None if verbose else console.status("[bold green]Scraping dependents...")
+                from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-                async def on_progress(page: int, _total: int) -> None:
-                    if status:
-                        status.update(f"[bold green]Scraping dependents... page {page}")
+                from dep_rank.cli.formatters import format_scrape_summary
 
-                if status:
-                    status.start()
+                estimated_total_pages = 0
+
+                if verbose:
+                    progress_ctx = None
+                else:
+                    progress_ctx = Progress(
+                        TextColumn("[bold green]Scraping dependents..."),
+                        BarColumn(),
+                        TextColumn(
+                            "{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"
+                        ),
+                        TextColumn("·"),
+                        TextColumn("{task.fields[est_text]}"),
+                        TimeElapsedColumn(),
+                        console=console,
+                    )
+                    task_id = progress_ctx.add_task(
+                        "scraping", total=1000, est_text="estimating..."
+                    )
+
+                async def on_progress(page: int, est_total: int) -> None:
+                    nonlocal estimated_total_pages
+                    estimated_total_pages = est_total
+                    if progress_ctx is not None:
+                        est_text = (
+                            f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
+                            if est_total > 0
+                            else "estimating..."
+                        )
+                        progress_ctx.update(task_id, completed=page, est_text=est_text)
+
+                if progress_ctx is not None:
+                    progress_ctx.start()
                 try:
-                    repos = await scrape_dependents(
+                    scrape_result = await scrape_dependents(
                         session,
                         url,
                         min_stars=min_stars,
@@ -258,15 +287,22 @@ def search(
                         token=token,
                     )
                 finally:
-                    if status:
-                        status.stop()
+                    if progress_ctx is not None:
+                        progress_ctx.stop()
 
-                repos_list = repos.repos
-                console.print(f"[green]Found {len(repos_list)} dependents with ≥{min_stars} stars.")
+                repos = scrape_result.repos
+                summary = format_scrape_summary(
+                    pages_scraped=scrape_result.pages_scraped,
+                    max_pages=scrape_result.max_pages,
+                    estimated_total_pages=scrape_result.estimated_total_pages,
+                    found_count=len(repos),
+                    min_stars=min_stars,
+                )
+                console.print(f"[green]{summary}")
 
                 result = await search_code(
                     session,
-                    repos_list,
+                    repos,
                     query,
                     token=token,
                     max_repos=max_repos,
