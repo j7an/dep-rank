@@ -57,8 +57,6 @@ async def run_deps(
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
-            estimated_total_pages = 0
-
             if verbose:
                 progress_ctx = None
             else:
@@ -76,8 +74,6 @@ async def run_deps(
                 )
 
             async def on_progress(page: int, est_total: int) -> None:
-                nonlocal estimated_total_pages
-                estimated_total_pages = est_total
                 if progress_ctx is not None:
                     est_text = (
                         f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
@@ -243,8 +239,7 @@ def search(
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
                 from dep_rank.cli.formatters import format_scrape_summary
-
-                estimated_total_pages = 0
+                from dep_rank.core.scraper import MAX_PAGES
 
                 if verbose:
                     progress_ctx = None
@@ -261,12 +256,10 @@ def search(
                         console=console,
                     )
                     task_id = progress_ctx.add_task(
-                        "scraping", total=1000, est_text="estimating..."
+                        "scraping", total=MAX_PAGES, est_text="estimating..."
                     )
 
                 async def on_progress(page: int, est_total: int) -> None:
-                    nonlocal estimated_total_pages
-                    estimated_total_pages = est_total
                     if progress_ctx is not None:
                         est_text = (
                             f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
