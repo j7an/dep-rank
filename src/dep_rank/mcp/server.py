@@ -91,16 +91,17 @@ async def get_top_dependents(
         token=state.get("token"),
     )
 
-    total_count = len(repos)
-    repos = repos[:rows]
+    repos_list = repos.repos
+    total_count = len(repos_list)
+    repos_list = repos_list[:rows]
 
-    await ctx.set_state(f"deps:{url}", [r.model_dump() for r in repos])
+    await ctx.set_state(f"deps:{url}", [r.model_dump() for r in repos_list])
 
     return DependentsResult(
         source=url,
         total_count=total_count,
         filtered_count=total_count,
-        repos=repos,
+        repos=repos_list,
         dependent_type=dep_type,
         scraped_at=datetime.now(tz=UTC),
     )
@@ -144,12 +145,13 @@ async def get_dependent_details(
         repos = [Repository.model_validate(r) for r in cached]
     else:
         await ctx.info(f"No cached results — scraping dependents for {url}")
-        repos = await scrape_dependents(
+        scrape_result = await scrape_dependents(
             state["session"],
             url,
             cache=state["cache"],
             token=state.get("token"),
         )
+        repos = scrape_result.repos
 
     repos = repos[:rows]
 
@@ -205,13 +207,14 @@ async def search_dependent_code(
         repos = [Repository.model_validate(r) for r in cached]
     else:
         await ctx.info(f"Scraping dependents for {url}")
-        repos = await scrape_dependents(
+        scrape_result = await scrape_dependents(
             state["session"],
             url,
             min_stars=min_stars,
             cache=state["cache"],
             token=state.get("token"),
         )
+        repos = scrape_result.repos
 
     async def on_progress(current: int, total: int) -> None:
         await ctx.report_progress(progress=current, total=total)
