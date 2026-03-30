@@ -202,6 +202,10 @@ async def search_dependent_code(
         msg = "DEP_RANK_TOKEN environment variable is required"
         raise Exception(msg)  # noqa: TRY002
 
+    async def on_scrape_progress(current: int, total: int) -> None:
+        if total > 0:
+            await ctx.report_progress(progress=current, total=total)
+
     cached = await ctx.get_state(f"deps:{url}")
     if cached:
         repos = [Repository.model_validate(r) for r in cached]
@@ -212,6 +216,7 @@ async def search_dependent_code(
             url,
             min_stars=min_stars,
             cache=state["cache"],
+            on_progress=on_scrape_progress,
             token=state.get("token"),
         )
         repos = scrape_result.repos

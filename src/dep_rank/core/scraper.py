@@ -103,12 +103,12 @@ def parse_dependent_counts(html: str) -> dict[str, int]:
 
     for link in tree.css("div.table-list-header-toggle a.btn-link"):
         text = link.text(strip=True)
-        # Text is like "2,295,450 Repositories" or "44,317 Packages"
-        match = re.match(r"([\d,]+)\s+(Repositories|Packages)", text)
+        # Text is like "2,295,450 Repositories" or "44,317 Packages" (or singular forms)
+        match = re.match(r"([\d,]+)\s+(Repositor(?:ies|y)|Packages?)\s*$", text)
         if match:
             count = int(match.group(1).replace(",", ""))
             kind = match.group(2)
-            key = "REPOSITORY" if kind == "Repositories" else "PACKAGE"
+            key = "REPOSITORY" if kind.startswith("Repositor") else "PACKAGE"
             counts[key] = count
 
     return counts

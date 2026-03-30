@@ -13,6 +13,7 @@ from tests.conftest import (
     DEPENDENTS_HTML_NO_RESULTS,
     DEPENDENTS_HTML_PAGE_1,
     DEPENDENTS_HTML_WITH_COUNTS,
+    DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
 )
 
 
@@ -68,6 +69,24 @@ class TestParseDependentCounts:
         """
         counts = parse_dependent_counts(html)
         assert counts == {}
+
+    def test_parse_singular_forms(self) -> None:
+        html = """
+        <html><body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
+                1
+                Repository
+            </a>
+            <a class="btn-link " href="?dependent_type=PACKAGE">
+                1
+                Package
+            </a>
+        </div>
+        </body></html>
+        """
+        counts = parse_dependent_counts(html)
+        assert counts == {"REPOSITORY": 1, "PACKAGE": 1}
 
 
 class TestParseDependentsPage:
@@ -201,7 +220,10 @@ class TestScrapeDependents:
                     "https://github.com/owner/repo",
                     on_progress=on_progress,
                 )
-        assert len(progress_calls) >= 2
+        assert len(progress_calls) == 2
+        # 90 repos / 30 per page = 3 estimated total pages
+        assert progress_calls[0] == (1, 3)
+        assert progress_calls[1] == (2, 3)
 
 
 class TestScrapeDependentsEdgeCases:
@@ -415,12 +437,56 @@ class TestScrapeResultReturn:
 
     @pytest.mark.asyncio
     async def test_no_counts_in_html_defaults_to_zero(self) -> None:
+        """When the HTML has no parseable count header, estimated totals default to 0."""
+        html_no_counts = """
+        <html><body>
+        <div id="dependents"><div class="Box">
+            <div class="flex-items-center">
+                <span><a class="text-bold" href="/delta/app">delta/app</a></span>
+                <div><div><span>80</span></div></div>
+            </div>
+        </div>
+        <div class="paginate-container"><div>
+            <a href="/owner/repo/network/dependents?page=1">Previous</a>
+        </div></div>
+        </div>
+        </body></html>
+        """
         with aioresponses() as m:
             m.get(
                 "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-                body=DEPENDENTS_HTML_LAST_PAGE,
+                body=html_no_counts,
             )
             async with ClientSession() as session:
                 result = await scrape_dependents(session, "https://github.com/owner/repo")
         assert result.estimated_total_pages == 0
         assert result.estimated_total_dependents == 0
+
+    @pytest.mark.asyncio
+    async def test_multi_page_with_estimated_total(self) -> None:
+        """Multi-page scrape carries estimated_total_pages from page 1 through all callbacks."""
+        progress_calls: list[tuple[int, int]] = []
+
+        async def on_progress(current: int, total: int) -> None:
+            progress_calls.append((current, total))
+
+        with aioresponses() as m:
+            m.get(
+                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                body=DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
+            )
+            m.get(
+                "https://github.com/owner/repo/network/dependents?page=2",
+                body=DEPENDENTS_HTML_WITH_COUNTS,
+            )
+            async with ClientSession() as session:
+                result = await scrape_dependents(
+                    session,
+                    "https://github.com/owner/repo",
+                    on_progress=on_progress,
+                )
+        assert result.pages_scraped == 2
+        assert result.estimated_total_pages == 30  # 900 // 30
+        assert result.estimated_total_dependents == 900
+        # Both pages get the same estimated total (parsed from page 1)
+        assert progress_calls == [(1, 30), (2, 30)]

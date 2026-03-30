@@ -57,9 +57,9 @@ async def run_deps(
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
-            if verbose:
-                progress_ctx = None
-            else:
+            progress_ctx = None
+            task_id = None
+            if not verbose:
                 progress_ctx = Progress(
                     TextColumn("[bold green]Scraping dependents..."),
                     BarColumn(),
@@ -74,7 +74,7 @@ async def run_deps(
                 )
 
             async def on_progress(page: int, est_total: int) -> None:
-                if progress_ctx is not None:
+                if progress_ctx is not None and task_id is not None:
                     est_text = (
                         f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
                         if est_total > 0
@@ -241,9 +241,9 @@ def search(
                 from dep_rank.cli.formatters import format_scrape_summary
                 from dep_rank.core.scraper import MAX_PAGES
 
-                if verbose:
-                    progress_ctx = None
-                else:
+                progress_ctx = None
+                task_id = None
+                if not verbose:
                     progress_ctx = Progress(
                         TextColumn("[bold green]Scraping dependents..."),
                         BarColumn(),
@@ -260,7 +260,7 @@ def search(
                     )
 
                 async def on_progress(page: int, est_total: int) -> None:
-                    if progress_ctx is not None:
+                    if progress_ctx is not None and task_id is not None:
                         est_text = (
                             f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
                             if est_total > 0
