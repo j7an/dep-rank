@@ -7,12 +7,66 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import DependentType, Repository
-from dep_rank.core.scraper import parse_dependents_page, scrape_dependents
+from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
 from tests.conftest import (
     DEPENDENTS_HTML_LAST_PAGE,
     DEPENDENTS_HTML_NO_RESULTS,
     DEPENDENTS_HTML_PAGE_1,
 )
+
+
+class TestParseDependentCounts:
+    def test_parse_both_counts(self) -> None:
+        html = """
+        <html><body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                2,295,450
+                Repositories
+            </a>
+            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
+                44,317
+                Packages
+            </a>
+        </div>
+        </body></html>
+        """
+        counts = parse_dependent_counts(html)
+        assert counts == {"REPOSITORY": 2295450, "PACKAGE": 44317}
+
+    def test_parse_single_count(self) -> None:
+        html = """
+        <html><body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
+                500
+                Repositories
+            </a>
+        </div>
+        </body></html>
+        """
+        counts = parse_dependent_counts(html)
+        assert counts == {"REPOSITORY": 500}
+
+    def test_parse_missing_structure(self) -> None:
+        html = "<html><body><p>No dependents info</p></body></html>"
+        counts = parse_dependent_counts(html)
+        assert counts == {}
+
+    def test_parse_non_numeric(self) -> None:
+        html = """
+        <html><body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
+                NaN
+                Repositories
+            </a>
+        </div>
+        </body></html>
+        """
+        counts = parse_dependent_counts(html)
+        assert counts == {}
 
 
 class TestParseDependentsPage:

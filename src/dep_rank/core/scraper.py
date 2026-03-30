@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from collections.abc import Awaitable, Callable
 
 import aiohttp
@@ -26,6 +27,7 @@ MAX_PAGES = 1000
 MAX_RETRIES = 5
 REQUEST_TIMEOUT = 30
 CACHE_TTL = 86400  # 24 hours
+DEPENDENTS_PER_PAGE = 30  # Approximate dependents shown per GitHub page
 RETRY_BASE_SECONDS = 5
 RETRY_MAX_SECONDS = 120
 _RATE_LIMITER_UNAUTH = TokenBucketRateLimiter(rate=10, period=60.0)
@@ -87,6 +89,29 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
                 next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
 
     return repos, next_url
+
+
+def parse_dependent_counts(html: str) -> dict[str, int]:
+    """Parse Repository and Package dependent counts from the dependents page header.
+
+    Returns:
+        Dict mapping "REPOSITORY" and/or "PACKAGE" to their counts.
+        Returns empty dict if parsing fails.
+    """
+    tree = HTMLParser(html)
+    counts: dict[str, int] = {}
+
+    for link in tree.css("div.table-list-header-toggle a.btn-link"):
+        text = link.text(strip=True)
+        # Text is like "2,295,450 Repositories" or "44,317 Packages"
+        match = re.match(r"([\d,]+)\s+(Repositories|Packages)", text)
+        if match:
+            count = int(match.group(1).replace(",", ""))
+            kind = match.group(2)
+            key = "REPOSITORY" if kind == "Repositories" else "PACKAGE"
+            counts[key] = count
+
+    return counts
 
 
 def _retry_delay(attempt: int) -> float:
