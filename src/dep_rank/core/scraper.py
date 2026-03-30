@@ -12,7 +12,7 @@ import aiohttp
 from selectolax.parser import HTMLParser
 
 from dep_rank.core.cache import SqliteCache
-from dep_rank.core.models import DependentType, Repository
+from dep_rank.core.models import DependentType, Repository, ScrapeResult
 from dep_rank.core.rate_limiter import TokenBucketRateLimiter
 from dep_rank.core.validation import validate_github_url
 
@@ -206,7 +206,7 @@ async def scrape_dependents(
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
     max_pages: int = MAX_PAGES,
-) -> list[Repository]:
+) -> ScrapeResult:
     """Scrape GitHub dependents pages and return repositories sorted by stars.
 
     Uses a prefetch pipeline: while processing page N, page N+1 is already
@@ -234,6 +234,8 @@ async def scrape_dependents(
     source_url = f"{GITHUB_URL}/{owner}/{repo}"
     page = 0
     prefetch_task: asyncio.Task[tuple[str | None, str | None]] | None = None
+    estimated_total_pages = 0
+    estimated_total_dependents = 0
 
     while current_url and page < max_pages:
         page += 1
@@ -264,6 +266,12 @@ async def scrape_dependents(
             if html is None:
                 break
 
+        if page == 1:
+            counts = parse_dependent_counts(html)
+            dep_count = counts.get(dependent_type.value, 0)
+            estimated_total_dependents = dep_count
+            estimated_total_pages = dep_count // DEPENDENTS_PER_PAGE if dep_count > 0 else 0
+
         # Parse current page
         repos, next_url = parse_dependents_page(html)
 
@@ -289,7 +297,7 @@ async def scrape_dependents(
 
         logger.debug("Page %d: %s", page, "cache hit" if cache_hit else "network fetch")
         if on_progress:
-            await on_progress(page, 0)
+            await on_progress(page, estimated_total_pages)
 
         current_url = next_url
 
@@ -302,4 +310,10 @@ async def scrape_dependents(
             pass  # Expected when scraping ends before prefetch completes
 
     all_repos.sort(key=lambda r: r.stars, reverse=True)
-    return all_repos
+    return ScrapeResult(
+        repos=all_repos,
+        pages_scraped=page,
+        max_pages=max_pages,
+        estimated_total_pages=estimated_total_pages,
+        estimated_total_dependents=estimated_total_dependents,
+    )

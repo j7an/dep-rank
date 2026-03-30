@@ -6,12 +6,13 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.models import DependentType, Repository
+from dep_rank.core.models import DependentType, Repository, ScrapeResult
 from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
 from tests.conftest import (
     DEPENDENTS_HTML_LAST_PAGE,
     DEPENDENTS_HTML_NO_RESULTS,
     DEPENDENTS_HTML_PAGE_1,
+    DEPENDENTS_HTML_WITH_COUNTS,
 )
 
 
@@ -106,9 +107,9 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(session, "https://github.com/owner/repo")
-            assert len(repos) == 1
-            assert repos[0].owner == "delta"
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+            assert len(result.repos) == 1
+            assert result.repos[0].owner == "delta"
 
     @pytest.mark.asyncio
     async def test_pagination(self) -> None:
@@ -122,8 +123,8 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(session, "https://github.com/owner/repo")
-            assert len(repos) == 4
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+            assert len(result.repos) == 4
 
     @pytest.mark.asyncio
     async def test_min_stars_filter(self) -> None:
@@ -137,12 +138,12 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(
+                result = await scrape_dependents(
                     session,
                     "https://github.com/owner/repo",
                     min_stars=200,
                 )
-            assert all(r.stars >= 200 for r in repos)
+            assert all(r.stars >= 200 for r in result.repos)
 
     @pytest.mark.asyncio
     async def test_deduplication(self) -> None:
@@ -159,8 +160,8 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(session, "https://github.com/owner/repo")
-            urls = [r.url for r in repos]
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+            urls = [r.url for r in result.repos]
             assert len(urls) == len(set(urls))
 
     @pytest.mark.asyncio
@@ -171,12 +172,12 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(
+                result = await scrape_dependents(
                     session,
                     "https://github.com/owner/repo",
                     dependent_type=DependentType.PACKAGE,
                 )
-            assert len(repos) == 1
+            assert len(result.repos) == 1
 
     @pytest.mark.asyncio
     async def test_progress_callback(self) -> None:
@@ -273,8 +274,8 @@ class TestScrapeDependentsEdgeCases:
                 status=500,
             )
             async with ClientSession() as session:
-                repos = await scrape_dependents(session, "https://github.com/owner/repo")
-        assert len(repos) == 0
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+        assert len(result.repos) == 0
 
     @pytest.mark.asyncio
     async def test_304_without_cached_body_breaks(self) -> None:
@@ -300,11 +301,11 @@ class TestScrapeDependentsEdgeCases:
                         etag='"etag1"',
                         ttl=-1,
                     )
-                    repos = await scrape_dependents(
+                    result = await scrape_dependents(
                         session, "https://github.com/owner/repo", cache=cache
                     )
                     await cache.close()
-        assert len(repos) == 0
+        assert len(result.repos) == 0
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_network(self) -> None:
@@ -324,12 +325,12 @@ class TestScrapeDependentsEdgeCases:
             )
             # No aioresponses mock needed — if it tries to fetch, it will fail
             async with ClientSession() as session:
-                repos = await scrape_dependents(
+                result = await scrape_dependents(
                     session, "https://github.com/owner/repo", cache=cache
                 )
             await cache.close()
-        assert len(repos) == 1
-        assert repos[0].owner == "delta"
+        assert len(result.repos) == 1
+        assert result.repos[0].owner == "delta"
 
     @pytest.mark.asyncio
     async def test_200_response_stores_in_cache(self) -> None:
@@ -358,3 +359,68 @@ class TestScrapeDependentsEdgeCases:
             assert cached is not None
             assert cached["etag"] == '"new-etag"'
             await cache.close()
+
+
+class TestScrapeResultReturn:
+    @pytest.mark.asyncio
+    async def test_returns_scrape_result(self) -> None:
+        with aioresponses() as m:
+            m.get(
+                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                body=DEPENDENTS_HTML_WITH_COUNTS,
+            )
+            async with ClientSession() as session:
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+        assert isinstance(result, ScrapeResult)
+        assert result.pages_scraped == 1
+        assert result.max_pages == 1000  # default
+        assert result.estimated_total_pages == 900 // 30  # 30
+        assert result.estimated_total_dependents == 900
+        assert len(result.repos) == 1
+        assert result.repos[0].owner == "alpha"
+
+    @pytest.mark.asyncio
+    async def test_estimated_total_pages_with_max_pages(self) -> None:
+        with aioresponses() as m:
+            m.get(
+                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                body=DEPENDENTS_HTML_WITH_COUNTS,
+            )
+            async with ClientSession() as session:
+                result = await scrape_dependents(
+                    session, "https://github.com/owner/repo", max_pages=5
+                )
+        assert result.max_pages == 5
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_receives_estimated_total(self) -> None:
+        progress_calls: list[tuple[int, int]] = []
+
+        async def on_progress(current: int, total: int) -> None:
+            progress_calls.append((current, total))
+
+        with aioresponses() as m:
+            m.get(
+                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                body=DEPENDENTS_HTML_WITH_COUNTS,
+            )
+            async with ClientSession() as session:
+                await scrape_dependents(
+                    session,
+                    "https://github.com/owner/repo",
+                    on_progress=on_progress,
+                )
+        assert len(progress_calls) == 1
+        assert progress_calls[0] == (1, 30)  # page 1, estimated 900//30=30
+
+    @pytest.mark.asyncio
+    async def test_no_counts_in_html_defaults_to_zero(self) -> None:
+        with aioresponses() as m:
+            m.get(
+                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                body=DEPENDENTS_HTML_LAST_PAGE,
+            )
+            async with ClientSession() as session:
+                result = await scrape_dependents(session, "https://github.com/owner/repo")
+        assert result.estimated_total_pages == 0
+        assert result.estimated_total_dependents == 0
