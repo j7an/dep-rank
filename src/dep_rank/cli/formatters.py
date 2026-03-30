@@ -76,6 +76,25 @@ def print_search_results(result: CodeSearchResult) -> None:
     console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
 
 
+def format_scrape_summary(
+    pages_scraped: int,
+    max_pages: int,
+    estimated_total_pages: int,
+    found_count: int,
+    min_stars: int,
+) -> str:
+    """Format the scraping completion summary line."""
+    pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
+    parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
+
+    if estimated_total_pages > 0:
+        pct_est = pages_scraped / estimated_total_pages * 100
+        parts.append(f"{pages_scraped}/~{estimated_total_pages:,} estimated pages ({pct_est:.2f}%)")
+
+    parts.append(f"Found {found_count:,} dependents with ≥{min_stars} stars")
+    return " · ".join(parts)
+
+
 def make_progress_callback() -> tuple[Progress, Callable[[int, int], Awaitable[None]]]:
     """Create a Rich progress bar and an async callback to update it."""
     progress = Progress(

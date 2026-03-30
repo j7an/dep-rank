@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from dep_rank.cli.formatters import (
+    format_scrape_summary,
     humanize,
     make_progress_callback,
     print_dependents_table,
@@ -120,6 +121,54 @@ class TestPrintSearchResults:
         )
         # Should not raise — exercises the table building with hits
         print_search_results(result)
+
+
+class TestFormatScrapeSummary:
+    def test_with_estimated_total(self) -> None:
+        summary = format_scrape_summary(
+            pages_scraped=42,
+            max_pages=1000,
+            estimated_total_pages=76515,
+            found_count=387,
+            min_stars=5,
+        )
+        assert "42/1000 pages (4.2%)" in summary
+        assert "42/~76,515 estimated pages (0.05%)" in summary
+        assert "Found 387 dependents with ≥5 stars" in summary
+
+    def test_without_estimated_total(self) -> None:
+        summary = format_scrape_summary(
+            pages_scraped=42,
+            max_pages=1000,
+            estimated_total_pages=0,
+            found_count=387,
+            min_stars=5,
+        )
+        assert "42/1000 pages (4.2%)" in summary
+        assert "estimated" not in summary
+        assert "Found 387 dependents with ≥5 stars" in summary
+
+    def test_full_scrape(self) -> None:
+        summary = format_scrape_summary(
+            pages_scraped=1000,
+            max_pages=1000,
+            estimated_total_pages=76515,
+            found_count=5000,
+            min_stars=10,
+        )
+        assert "1000/1000 pages (100.0%)" in summary
+        assert "1000/~76,515 estimated pages (1.31%)" in summary
+
+    def test_zero_pages(self) -> None:
+        summary = format_scrape_summary(
+            pages_scraped=0,
+            max_pages=1000,
+            estimated_total_pages=0,
+            found_count=0,
+            min_stars=5,
+        )
+        assert "0/1000 pages (0.0%)" in summary
+        assert "Found 0 dependents" in summary
 
 
 class TestMakeProgressCallback:
