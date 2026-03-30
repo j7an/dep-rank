@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from dep_rank.cli.formatters import (
     format_scrape_summary,
     humanize,
-    make_progress_callback,
     print_dependents_table,
     print_search_results,
 )
@@ -169,15 +168,3 @@ class TestFormatScrapeSummary:
         )
         assert "0/1000 pages (0.0%)" in summary
         assert "Found 0 dependents" in summary
-
-
-class TestMakeProgressCallback:
-    async def test_callback_with_total(self) -> None:
-        progress, callback = make_progress_callback()
-        # Call with a positive total
-        await callback(5, 10)
-
-    async def test_callback_with_zero_total(self) -> None:
-        progress, callback = make_progress_callback()
-        # Call with zero total — exercises the else branch
-        await callback(1, 0)

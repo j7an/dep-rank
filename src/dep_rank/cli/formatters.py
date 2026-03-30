@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from dep_rank.core.models import CodeSearchResult, DependentsResult
@@ -93,23 +90,3 @@ def format_scrape_summary(
 
     parts.append(f"Found {found_count:,} dependents with ≥{min_stars} stars")
     return " · ".join(parts)
-
-
-def make_progress_callback() -> tuple[Progress, Callable[[int, int], Awaitable[None]]]:
-    """Create a Rich progress bar and an async callback to update it."""
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-    )
-    task_id = progress.add_task("Scraping dependents...", total=None)
-
-    async def callback(current: int, total: int) -> None:
-        if total > 0:
-            progress.update(task_id, total=total, completed=current)
-        else:
-            progress.update(task_id, advance=1)
-
-    return progress, callback
