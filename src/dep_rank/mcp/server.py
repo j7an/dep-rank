@@ -81,7 +81,7 @@ async def get_top_dependents(
 
     await ctx.info(f"Scraping dependents for {url}")
 
-    repos = await scrape_dependents(
+    scrape_result = await scrape_dependents(
         state["session"],
         url,
         dependent_type=dep_type,
@@ -91,17 +91,17 @@ async def get_top_dependents(
         token=state.get("token"),
     )
 
-    repos_list = repos.repos
-    total_count = len(repos_list)
-    repos_list = repos_list[:rows]
+    repos = scrape_result.repos
+    total_count = len(repos)
+    repos = repos[:rows]
 
-    await ctx.set_state(f"deps:{url}", [r.model_dump() for r in repos_list])
+    await ctx.set_state(f"deps:{url}", [r.model_dump() for r in repos])
 
     return DependentsResult(
         source=url,
         total_count=total_count,
         filtered_count=total_count,
-        repos=repos_list,
+        repos=repos,
         dependent_type=dep_type,
         scraped_at=datetime.now(tz=UTC),
     )
