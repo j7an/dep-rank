@@ -10,8 +10,12 @@ import pytest
 DEPENDENTS_HTML_PAGE_1 = """
 <html>
     <body>
-        <div class="table-list-header-toggle">
-            <button class="btn-link selected">90 Repositories</button>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                90
+                Repositories
+            </a>
         </div>
         <div id="dependents">
             <div class="Box">
@@ -53,8 +57,12 @@ DEPENDENTS_HTML_PAGE_1 = """
 DEPENDENTS_HTML_LAST_PAGE = """
 <html>
     <body>
-        <div class="table-list-header-toggle">
-            <button class="btn-link selected">90 Repositories</button>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                90
+                Repositories
+            </a>
         </div>
         <div id="dependents">
             <div class="Box">
@@ -80,11 +88,85 @@ DEPENDENTS_HTML_LAST_PAGE = """
 DEPENDENTS_HTML_NO_RESULTS = """
 <html>
     <body>
-        <div class="table-list-header-toggle">
-            <button class="btn-link selected">0 Repositories</button>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                0
+                Repositories
+            </a>
         </div>
         <div id="dependents">
             <div class="Box">
+            </div>
+        </div>
+    </body>
+</html>
+"""
+
+DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = """
+<html>
+    <body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                900
+                Repositories
+            </a>
+            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
+                150
+                Packages
+            </a>
+        </div>
+        <div id="dependents">
+            <div class="Box">
+                <div class="flex-items-center">
+                    <span>
+                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
+                    </span>
+                    <div>
+                        <span>12,500</span>
+                    </div>
+                </div>
+            </div>
+            <div class="paginate-container">
+                <div>
+                    <a href="/owner/repo/network/dependents?page=2">Next</a>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>
+"""
+
+DEPENDENTS_HTML_WITH_COUNTS = """
+<html>
+    <body>
+        <div class="table-list-header-toggle states flex-auto pl-0">
+            <a class="btn-link selected"
+               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
+                900
+                Repositories
+            </a>
+            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
+                150
+                Packages
+            </a>
+        </div>
+        <div id="dependents">
+            <div class="Box">
+                <div class="flex-items-center">
+                    <span>
+                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
+                    </span>
+                    <div>
+                        <span>12,500</span>
+                    </div>
+                </div>
+            </div>
+            <div class="paginate-container">
+                <div>
+                    <a href="/owner/repo/network/dependents?page=1">Previous</a>
+                </div>
             </div>
         </div>
     </body>

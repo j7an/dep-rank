@@ -25,6 +25,16 @@ class Repository(BaseModel):
     description: str | None = None
 
 
+class ScrapeResult(BaseModel):
+    """Result of scraping dependents, including progress metadata."""
+
+    repos: list[Repository]
+    pages_scraped: int
+    max_pages: int
+    estimated_total_pages: int
+    estimated_total_dependents: int
+
+
 class DependentsResult(BaseModel):
     """Result of scraping dependents for a repository."""
 

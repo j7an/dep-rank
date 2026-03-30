@@ -39,7 +39,9 @@ async def run_deps(
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
     from rich.console import Console
+    from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
+    from dep_rank.cli.formatters import format_scrape_summary
     from dep_rank.core.cache import SqliteCache
     from dep_rank.core.graphql import enrich_with_graphql
     from dep_rank.core.scraper import scrape_dependents
@@ -55,16 +57,35 @@ async def run_deps(
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
-            status = None if verbose else console.status("[bold green]Scraping dependents...")
+            progress_ctx = None
+            task_id = None
+            if not verbose:
+                progress_ctx = Progress(
+                    TextColumn("[bold green]Scraping dependents..."),
+                    BarColumn(),
+                    TextColumn("{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"),
+                    TextColumn("·"),
+                    TextColumn("{task.fields[est_text]}"),
+                    TimeElapsedColumn(),
+                    console=console,
+                )
+                task_id = progress_ctx.add_task(
+                    "scraping", total=max_pages, est_text="estimating..."
+                )
 
-            async def on_progress(page: int, _total: int) -> None:
-                if status:
-                    status.update(f"[bold green]Scraping dependents... page {page}")
+            async def on_progress(page: int, est_total: int) -> None:
+                if progress_ctx is not None and task_id is not None:
+                    est_text = (
+                        f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
+                        if est_total > 0
+                        else "estimating..."
+                    )
+                    progress_ctx.update(task_id, completed=page, est_text=est_text)
 
-            if status:
-                status.start()
+            if progress_ctx is not None:
+                progress_ctx.start()
             try:
-                repos = await scrape_dependents(
+                scrape_result = await scrape_dependents(
                     session,
                     url,
                     dependent_type=dep_type,
@@ -75,12 +96,21 @@ async def run_deps(
                     max_pages=max_pages,
                 )
             finally:
-                if status:
-                    status.stop()
+                if progress_ctx is not None:
+                    progress_ctx.stop()
 
-            console.print(f"[green]Found {len(repos)} dependents with ≥{min_stars} stars.")
-
+            repos = scrape_result.repos
             total_count = len(repos)
+
+            summary = format_scrape_summary(
+                pages_scraped=scrape_result.pages_scraped,
+                max_pages=scrape_result.max_pages,
+                estimated_total_pages=scrape_result.estimated_total_pages,
+                found_count=total_count,
+                min_stars=min_stars,
+            )
+            console.print(f"[green]{summary}")
+
             repos = repos[:rows]
 
             if descriptions and token and repos:
@@ -206,16 +236,42 @@ def search(
             async with aiohttp.ClientSession(
                 headers={"User-Agent": "dep-rank/0.1"},
             ) as session:
-                status = None if verbose else console.status("[bold green]Scraping dependents...")
+                from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-                async def on_progress(page: int, _total: int) -> None:
-                    if status:
-                        status.update(f"[bold green]Scraping dependents... page {page}")
+                from dep_rank.cli.formatters import format_scrape_summary
+                from dep_rank.core.scraper import MAX_PAGES
 
-                if status:
-                    status.start()
+                progress_ctx = None
+                task_id = None
+                if not verbose:
+                    progress_ctx = Progress(
+                        TextColumn("[bold green]Scraping dependents..."),
+                        BarColumn(),
+                        TextColumn(
+                            "{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"
+                        ),
+                        TextColumn("·"),
+                        TextColumn("{task.fields[est_text]}"),
+                        TimeElapsedColumn(),
+                        console=console,
+                    )
+                    task_id = progress_ctx.add_task(
+                        "scraping", total=MAX_PAGES, est_text="estimating..."
+                    )
+
+                async def on_progress(page: int, est_total: int) -> None:
+                    if progress_ctx is not None and task_id is not None:
+                        est_text = (
+                            f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
+                            if est_total > 0
+                            else "estimating..."
+                        )
+                        progress_ctx.update(task_id, completed=page, est_text=est_text)
+
+                if progress_ctx is not None:
+                    progress_ctx.start()
                 try:
-                    repos = await scrape_dependents(
+                    scrape_result = await scrape_dependents(
                         session,
                         url,
                         min_stars=min_stars,
@@ -224,10 +280,18 @@ def search(
                         token=token,
                     )
                 finally:
-                    if status:
-                        status.stop()
+                    if progress_ctx is not None:
+                        progress_ctx.stop()
 
-                console.print(f"[green]Found {len(repos)} dependents with ≥{min_stars} stars.")
+                repos = scrape_result.repos
+                summary = format_scrape_summary(
+                    pages_scraped=scrape_result.pages_scraped,
+                    max_pages=scrape_result.max_pages,
+                    estimated_total_pages=scrape_result.estimated_total_pages,
+                    found_count=len(repos),
+                    min_stars=min_stars,
+                )
+                console.print(f"[green]{summary}")
 
                 result = await search_code(
                     session,

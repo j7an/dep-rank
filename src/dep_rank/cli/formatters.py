@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from dep_rank.core.models import CodeSearchResult, DependentsResult
@@ -76,21 +73,20 @@ def print_search_results(result: CodeSearchResult) -> None:
     console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
 
 
-def make_progress_callback() -> tuple[Progress, Callable[[int, int], Awaitable[None]]]:
-    """Create a Rich progress bar and an async callback to update it."""
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-    )
-    task_id = progress.add_task("Scraping dependents...", total=None)
+def format_scrape_summary(
+    pages_scraped: int,
+    max_pages: int,
+    estimated_total_pages: int,
+    found_count: int,
+    min_stars: int,
+) -> str:
+    """Format the scraping completion summary line."""
+    pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
+    parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
 
-    async def callback(current: int, total: int) -> None:
-        if total > 0:
-            progress.update(task_id, total=total, completed=current)
-        else:
-            progress.update(task_id, advance=1)
+    if estimated_total_pages > 0:
+        pct_est = pages_scraped / estimated_total_pages * 100
+        parts.append(f"{pages_scraped}/~{estimated_total_pages:,} estimated pages ({pct_est:.2f}%)")
 
-    return progress, callback
+    parts.append(f"Found {found_count:,} dependents with ≥{min_stars} stars")
+    return " · ".join(parts)

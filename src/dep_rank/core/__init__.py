@@ -8,6 +8,7 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeResult,
 )
 from dep_rank.core.rate_limiter import TokenBucketRateLimiter
 from dep_rank.core.scraper import scrape_dependents
@@ -20,6 +21,7 @@ __all__ = [
     "DependentType",
     "DependentsResult",
     "Repository",
+    "ScrapeResult",
     "SqliteCache",
     "TokenBucketRateLimiter",
     "enrich_with_graphql",

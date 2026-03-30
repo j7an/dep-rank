@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from collections.abc import Awaitable, Callable
 
 import aiohttp
 from selectolax.parser import HTMLParser
 
 from dep_rank.core.cache import SqliteCache
-from dep_rank.core.models import DependentType, Repository
+from dep_rank.core.models import DependentType, Repository, ScrapeResult
 from dep_rank.core.rate_limiter import TokenBucketRateLimiter
 from dep_rank.core.validation import validate_github_url
 
@@ -26,6 +27,7 @@ MAX_PAGES = 1000
 MAX_RETRIES = 5
 REQUEST_TIMEOUT = 30
 CACHE_TTL = 86400  # 24 hours
+DEPENDENTS_PER_PAGE = 30  # Approximate dependents shown per GitHub page
 RETRY_BASE_SECONDS = 5
 RETRY_MAX_SECONDS = 120
 _RATE_LIMITER_UNAUTH = TokenBucketRateLimiter(rate=10, period=60.0)
@@ -87,6 +89,29 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
                 next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
 
     return repos, next_url
+
+
+def parse_dependent_counts(html: str) -> dict[str, int]:
+    """Parse Repository and Package dependent counts from the dependents page header.
+
+    Returns:
+        Dict mapping "REPOSITORY" and/or "PACKAGE" to their counts.
+        Returns empty dict if parsing fails.
+    """
+    tree = HTMLParser(html)
+    counts: dict[str, int] = {}
+
+    for link in tree.css("div.table-list-header-toggle a.btn-link"):
+        text = link.text(strip=True)
+        # Text is like "2,295,450 Repositories" or "44,317 Packages" (or singular forms)
+        match = re.match(r"([\d,]+)\s+(Repositor(?:ies|y)|Packages?)\s*$", text)
+        if match:
+            count = int(match.group(1).replace(",", ""))
+            kind = match.group(2)
+            key = "REPOSITORY" if kind.startswith("Repositor") else "PACKAGE"
+            counts[key] = count
+
+    return counts
 
 
 def _retry_delay(attempt: int) -> float:
@@ -181,7 +206,7 @@ async def scrape_dependents(
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
     max_pages: int = MAX_PAGES,
-) -> list[Repository]:
+) -> ScrapeResult:
     """Scrape GitHub dependents pages and return repositories sorted by stars.
 
     Uses a prefetch pipeline: while processing page N, page N+1 is already
@@ -209,6 +234,8 @@ async def scrape_dependents(
     source_url = f"{GITHUB_URL}/{owner}/{repo}"
     page = 0
     prefetch_task: asyncio.Task[tuple[str | None, str | None]] | None = None
+    estimated_total_pages = 0
+    estimated_total_dependents = 0
 
     while current_url and page < max_pages:
         page += 1
@@ -239,6 +266,12 @@ async def scrape_dependents(
             if html is None:
                 break
 
+        if page == 1:
+            counts = parse_dependent_counts(html)
+            dep_count = counts.get(dependent_type.value, 0)
+            estimated_total_dependents = dep_count
+            estimated_total_pages = dep_count // DEPENDENTS_PER_PAGE if dep_count > 0 else 0
+
         # Parse current page
         repos, next_url = parse_dependents_page(html)
 
@@ -264,7 +297,7 @@ async def scrape_dependents(
 
         logger.debug("Page %d: %s", page, "cache hit" if cache_hit else "network fetch")
         if on_progress:
-            await on_progress(page, 0)
+            await on_progress(page, estimated_total_pages)
 
         current_url = next_url
 
@@ -277,4 +310,10 @@ async def scrape_dependents(
             pass  # Expected when scraping ends before prefetch completes
 
     all_repos.sort(key=lambda r: r.stars, reverse=True)
-    return all_repos
+    return ScrapeResult(
+        repos=all_repos,
+        pages_scraped=page,
+        max_pages=max_pages,
+        estimated_total_pages=estimated_total_pages,
+        estimated_total_dependents=estimated_total_dependents,
+    )

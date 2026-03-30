@@ -10,7 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from dep_rank.cli.app import cli
-from dep_rank.core.models import DependentsResult, DependentType, Repository
+from dep_rank.core.models import DependentsResult, DependentType, Repository, ScrapeResult
 
 
 @pytest.fixture
@@ -104,14 +104,20 @@ class TestDepsCommandFull:
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        mock_scrape.return_value = [
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=12500,
-            ),
-        ]
+        mock_scrape.return_value = ScrapeResult(
+            repos=[
+                Repository(
+                    owner="alpha",
+                    name="framework",
+                    url="https://github.com/alpha/framework",
+                    stars=12500,
+                ),
+            ],
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
         result = runner.invoke(cli, ["deps", "https://github.com/django/django"])
         assert result.exit_code == 0
         assert "alpha" in result.output
@@ -139,7 +145,13 @@ class TestDepsCommandFull:
                 description="A framework",
             ),
         ]
-        mock_scrape.return_value = repos
+        mock_scrape.return_value = ScrapeResult(
+            repos=repos,
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
         mock_enrich.return_value = repos
         result = runner.invoke(
             cli,
@@ -179,14 +191,20 @@ class TestSearchCommandFull:
     ) -> None:
         from dep_rank.core.models import CodeSearchResult
 
-        mock_scrape.return_value = [
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=5000,
-            ),
-        ]
+        mock_scrape.return_value = ScrapeResult(
+            repos=[
+                Repository(
+                    owner="alpha",
+                    name="framework",
+                    url="https://github.com/alpha/framework",
+                    stars=5000,
+                ),
+            ],
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
         mock_search.return_value = CodeSearchResult(
             source="https://github.com/django/django",
             query="import os",

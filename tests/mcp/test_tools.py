@@ -7,11 +7,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp import Client
 
-from dep_rank.core.models import Repository
+from dep_rank.core.models import Repository, ScrapeResult
 
 
 def _make_repo(owner: str = "alpha", name: str = "framework", stars: int = 5000) -> Repository:
     return Repository(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars)
+
+
+def _make_scrape_result(repos: list[Repository] | None = None) -> ScrapeResult:
+    if repos is None:
+        repos = [_make_repo()]
+    return ScrapeResult(
+        repos=repos,
+        pages_scraped=1,
+        max_pages=1000,
+        estimated_total_pages=30,
+        estimated_total_dependents=900,
+    )
 
 
 class TestGetTopDependents:
@@ -27,7 +39,7 @@ class TestGetTopDependents:
     @pytest.mark.asyncio
     @patch("dep_rank.mcp.server.scrape_dependents", new_callable=AsyncMock)
     async def test_get_top_dependents_call(self, mock_scrape: AsyncMock) -> None:
-        mock_scrape.return_value = [_make_repo()]
+        mock_scrape.return_value = _make_scrape_result()
 
         from dep_rank.mcp.server import mcp
 
@@ -72,7 +84,7 @@ class TestGetDependentDetails:
         from dep_rank.mcp.server import get_dependent_details
 
         repos = [_make_repo()]
-        mock_scrape.return_value = repos
+        mock_scrape.return_value = _make_scrape_result(repos)
         enriched = [repos[0].model_copy(update={"stars": 6000, "description": "A framework"})]
         mock_enrich.return_value = enriched
 
@@ -137,7 +149,7 @@ class TestSearchDependentCode:
         from dep_rank.mcp.server import search_dependent_code
 
         repos = [_make_repo()]
-        mock_scrape.return_value = repos
+        mock_scrape.return_value = _make_scrape_result(repos)
         mock_search.return_value = CodeSearchResult(
             source="https://github.com/django/django",
             query="import os",

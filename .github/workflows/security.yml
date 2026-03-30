@@ -110,7 +110,14 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
 
-  osv-scanner-pr:
+  osv-scan:
+    name: OSV-Scanner
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c51854704019a247608d928f370c98740469d4b5 # v2.3.5
+    with:
+      scan-args: --recursive ./
+
+  osv-scan-pr:
     name: OSV-Scanner PR
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c51854704019a247608d928f370c98740469d4b5 # v2.3.5
