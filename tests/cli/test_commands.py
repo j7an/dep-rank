@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from click.testing import CliRunner
 
+from dep_rank import __version__
 from dep_rank.cli.app import cli
 from dep_rank.core.models import DependentsResult, DependentType, Repository, ScrapeResult
 
@@ -284,4 +285,4 @@ class TestVersionOption:
     def test_version(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert __version__ in result.output
