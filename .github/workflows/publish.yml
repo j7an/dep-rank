@@ -1,0 +1,195 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: CI gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+        with:
+          python-version: "3.11"
+      - run: uv sync
+      - run: uv run ruff check src/ tests/
+      - run: uv run mypy src/dep_rank/
+      - run: uv run pytest
+
+  build:
+    name: Build distributions
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "ERROR: Tagged commit $(git rev-parse --short HEAD) is not on main"
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify distributions
+        run: |
+          ls -la dist/
+          WHEEL=$(ls dist/*.whl 2>/dev/null | wc -l)
+          SDIST=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
+          if [ "$WHEEL" -eq 0 ] || [ "$SDIST" -eq 0 ]; then
+            echo "ERROR: Expected both a wheel and sdist in dist/"
+            ls dist/
+            exit 1
+          fi
+          echo "Build produced: $(ls dist/)"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/dep-rank
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Verify TestPyPI install
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Waiting for dep-rank==${VERSION} to appear on TestPyPI..."
+          for i in 1 2 3 4 5; do
+            sleep $((i * 30))
+            if pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "dep-rank==${VERSION}" 2>/dev/null; then
+              ACTUAL=$(dep-rank --version 2>&1)
+              echo "Installed version: ${ACTUAL}"
+              echo "${ACTUAL}" | grep -qF "${VERSION}" || {
+                echo "ERROR: Expected '${VERSION}' in dep-rank --version output"
+                exit 1
+              }
+              echo "TestPyPI install OK"
+              exit 0
+            fi
+            echo "Attempt $i: not yet available, retrying..."
+          done
+          echo "ERROR: dep-rank==${VERSION} not available on TestPyPI after 7.5 minutes"
+          exit 1
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, publish-testpypi]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dep-rank
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-pypi]
+    if: needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Classify tag (stable vs prerelease)
+        id: classify
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.post[0-9]+)?$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release with assets
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ steps.classify.outputs.prerelease }}
+          files: dist/*
