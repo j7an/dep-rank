@@ -47,7 +47,7 @@ jobs:
             exit 1
           fi
 
-      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+      - uses: ./.github/actions/setup-uv
 
       - name: Build sdist and wheel
         run: uv build
