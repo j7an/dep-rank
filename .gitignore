@@ -6,5 +6,5 @@ dist/
 *.pyc
 .vscode
 docs/
-.worktrees/
+.worktree/
 src/dep_rank/_version.py
