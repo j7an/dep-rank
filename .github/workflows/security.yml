@@ -14,15 +14,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-  security-events: write
-  actions: read
+permissions: {}
 
 jobs:
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -46,6 +47,8 @@ jobs:
   trufflehog:
     name: TruffleHog
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -76,6 +79,9 @@ jobs:
   zizmor:
     name: Zizmor
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
@@ -97,6 +103,9 @@ jobs:
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594 # v2.16.0
@@ -131,6 +140,10 @@ jobs:
   osv-scan:
     name: OSV-Scanner
     if: github.event_name == 'push' || github.event_name == 'schedule'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@c51854704019a247608d928f370c98740469d4b5 # v2.3.5
     with:
       scan-args: --recursive ./
@@ -138,6 +151,10 @@ jobs:
   osv-scan-pr:
     name: OSV-Scanner PR
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@c51854704019a247608d928f370c98740469d4b5 # v2.3.5
     with:
       scan-args: --recursive ./
