@@ -12,6 +12,36 @@ concurrency:
 permissions: {}
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./.github/actions/setup-uv
+      - name: Ruff format check
+        run: uv run ruff format --check src/ tests/
+      - name: Ruff check
+        run: uv run ruff check src/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: ./.github/actions/setup-uv
+      - name: Mypy
+        run: uv run mypy src/dep_rank/
+
   test:
     strategy:
       fail-fast: false
@@ -26,14 +56,12 @@ jobs:
         uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: ./.github/actions/setup-uv
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv run ruff format --check src/ tests/
-      - run: uv run ruff check src/ tests/
-      - run: uv run mypy src/dep_rank/
-      - run: uv run pytest
+      - name: Pytest
+        run: uv run pytest
 
   dependency-review:
     runs-on: ubuntu-latest
