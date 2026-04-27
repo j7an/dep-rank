@@ -15,9 +15,12 @@ updates:
       prefix: "deps"
       include: "scope"
     groups:
-      all-python:
-        patterns:
-          - "*"
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
