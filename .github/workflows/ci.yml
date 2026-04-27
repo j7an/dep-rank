@@ -12,7 +12,58 @@ concurrency:
 permissions: {}
 
 jobs:
+  update-lockfile:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      committed: ${{ steps.commit.outputs.committed }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+      - run: uv lock
+      - name: Commit updated lockfile
+        id: commit
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if git diff --quiet uv.lock; then
+            echo "No lockfile changes"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CONTENT=$(base64 -w0 uv.lock)
+          HEAD_OID=$(git rev-parse HEAD)
+          gh api graphql -f query='
+            mutation($input: CreateCommitOnBranchInput!) {
+              createCommitOnBranch(input: $input) {
+                commit { url }
+              }
+            }
+          ' -f "input[branchRef][repositoryNameWithOwner]=${{ github.repository }}" \
+            -f "input[branchRef][branchName]=${{ github.head_ref }}" \
+            -f "input[expectedHeadOid]=${HEAD_OID}" \
+            -f "input[message][headline]=deps: update uv.lock" \
+            -f "input[fileChanges][additions][0][path]=uv.lock" \
+            -f "input[fileChanges][additions][0][contents]=${CONTENT}"
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
   lint:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,6 +73,9 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
+          persist-credentials: false
       - uses: ./.github/actions/setup-uv
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
@@ -29,6 +83,8 @@ jobs:
         run: uv run ruff check src/ tests/
 
   typecheck:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,11 +94,16 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
+          persist-credentials: false
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src/dep_rank/
 
   test:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +118,9 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
+          persist-credentials: false
       - uses: ./.github/actions/setup-uv
         with:
           python-version: ${{ matrix.python-version }}
