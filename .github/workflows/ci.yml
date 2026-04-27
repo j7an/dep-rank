@@ -13,7 +13,7 @@ permissions: {}
 
 jobs:
   update-lockfile:
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     outputs:
       committed: ${{ steps.commit.outputs.committed }}
@@ -39,6 +39,8 @@ jobs:
         id: commit
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           if git diff --quiet uv.lock; then
             echo "No lockfile changes"
@@ -47,14 +49,15 @@ jobs:
           fi
           CONTENT=$(base64 -w0 uv.lock)
           HEAD_OID=$(git rev-parse HEAD)
+          # shellcheck disable=SC2016
           gh api graphql -f query='
             mutation($input: CreateCommitOnBranchInput!) {
               createCommitOnBranch(input: $input) {
                 commit { url }
               }
             }
-          ' -f "input[branchRef][repositoryNameWithOwner]=${{ github.repository }}" \
-            -f "input[branchRef][branchName]=${{ github.head_ref }}" \
+          ' -f "input[branchRef][repositoryNameWithOwner]=$REPOSITORY" \
+            -f "input[branchRef][branchName]=$HEAD_REF" \
             -f "input[expectedHeadOid]=${HEAD_OID}" \
             -f "input[message][headline]=deps: update uv.lock" \
             -f "input[fileChanges][additions][0][path]=uv.lock" \
