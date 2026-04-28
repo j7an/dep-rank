@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test suite provides comprehensive coverage (81%+) of the ghtopdep codebase with 99 test cases. The tests are organized into logical modules covering unit tests, integration tests, and CLI functionality tests.
+This test suite provides comprehensive coverage of the dep-rank codebase. The tests are organized into logical modules covering unit tests, integration tests, and CLI functionality tests.
 
 ## Running Tests
 
@@ -13,209 +13,71 @@ uv run pytest tests/ -v
 
 ### Run with coverage report
 ```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=html
+uv run pytest tests/
 ```
+Coverage runs automatically (see [Running Coverage Report](#running-coverage-report) below).
 
 ### Run specific test file
 ```bash
-uv run pytest tests/test_unit_functions.py -v
+uv run pytest tests/core/test_validation.py -v
 ```
 
 ### Run specific test class
 ```bash
-uv run pytest tests/test_validation.py::TestValidateGithubUrl -v
+uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v
 ```
 
 ## Test Structure
 
-### 1. `test_unit_functions.py` (40 tests)
-Unit tests for pure helper functions with no external dependencies.
+Tests are organized into three packages mirroring the `src/dep_rank/` layout. The authoritative test count and per-module breakdown is `uv run pytest tests/ --collect-only -q`.
 
-#### TestHumanize (4 tests)
-Tests for the `humanize()` function that formats star counts:
-- Numbers < 1,000 returned unchanged
-- Numbers 1,000-10,000 formatted as "X.XK"
-- Numbers 10,000-1,000,000 formatted as "XK"
-- Numbers > 1,000,000 returned unchanged
+### `tests/cli/` — CLI surface
 
-#### TestAlreadyAdded (4 tests)
-Tests for duplicate repository detection:
-- Empty list handling
-- Repository found in list
-- Repository not found in list
-- Case-sensitive URL matching
+- **`test_commands.py`**: Click command invocations for `deps`, `search`, `mcp`, `cache`, and `--version`. Covers help output, missing-token errors, table/JSON modes, and full-flow runs against mocked HTTP layers.
+- **`test_formatters.py`**: Pure formatter helpers — `humanize` star formatting, `print_dependents_table`, `print_search_results`, and `format_scrape_summary`.
 
-#### TestSortRepos (6 tests)
-Tests for repository sorting and row limiting:
-- Basic sorting by stars (descending)
-- Row limit enforcement
-- Empty list handling
-- Row limit greater than list size
-- Zero rows requested
-- Tied star counts
+### `tests/core/` — Pure logic
 
-#### TestReadableStars (4 tests)
-Tests for star count conversion using `humanize()`:
-- Number conversion
-- Preservation of other fields
-- Empty list handling
-- Multiple format conversions (1K, 5K, 500K, etc.)
+- **`test_validation.py`**: `validate_github_url` URL parsing and validation (https/http/www, trailing slashes, invalid characters, bare `owner/repo`, empty/whitespace edges).
+- **`test_models.py`**: Pydantic models — `Repository`, `DependentType`, `DependentsResult`, `ScrapeResult`, `CodeSearchResult` — including JSON round-trips.
+- **`test_scraper.py`**: HTML parsing (`parse_dependent_counts`, `parse_dependents_page`) and the async `scrape_dependents` flow including pagination, dedup, min-stars filtering, error/304 handling, cache integration, and progress callbacks.
+- **`test_graphql.py`**: GraphQL batch query construction and `enrich_with_graphql` star/description enrichment, including the 100-node batch boundary and fallback paths.
+- **`test_cache.py`**: SQLite cache get/put/expiry/clear/stats and the uninitialized-cache error contract.
+- **`test_rate_limiter.py`**: Token-bucket rate limiter — within-limit allow, over-limit block, and replenishment over time.
+- **`test_search.py`**: `search_code` over multiple repos with progress callbacks, max-repos limit, and non-200 / client-error skip behavior.
 
-### 2. `test_validation.py` (29 tests)
-Tests for GitHub URL validation and parsing.
+### `tests/mcp/` — MCP server surface
 
-#### TestValidateGithubUrl (29 tests)
-Comprehensive validation tests including:
-- Valid URLs (with/without www, http/https)
-- URL formatting (trailing slashes, special characters)
-- Invalid inputs (empty, None, wrong domain)
-- Path validation (too many segments, missing repo)
-- Character validation for owner/repo names
-- Edge cases (query parameters, fragments)
-
-### 3. `test_parsing.py` (21 tests)
-Tests for HTML parsing, API calls, and output formatting.
-
-#### TestGetMaxDeps (3 tests)
-Tests for extracting max dependency count from HTML:
-- Single digit counts
-- Large number parsing (10,000+)
-- Session.get() call verification
-
-#### TestFetchDescription (4 tests)
-Tests for GitHub API description fetching:
-- Successful fetch
-- Handling None description
-- Long description truncation
-- URL parsing correctness
-
-#### TestOneDayHeuristic (5 tests)
-Tests for HTTP cache control heuristic:
-- Cacheable status handling
-- Non-cacheable status exclusion
-- All cacheable statuses tested
-- Expiry time calculation (1 day ahead)
-- Warning message generation
-
-#### TestShowResult (5 tests)
-Tests for output formatting:
-- Table format output
-- JSON format output
-- Empty result handling (both formats)
-- Package/repository labels
-- Description field preservation
-
-### 4. `test_cli.py` (24 tests)
-Integration tests for CLI functionality.
-
-#### TestCLIBasic (3 tests)
-- Help output
-- Missing URL argument
-- Invalid URL format
-
-#### TestCLIURLValidation (5 tests)
-- Valid GitHub URL handling
-- Empty URL rejection
-- Non-GitHub domain rejection
-- URL path validation
-
-#### TestCLIOptions (6 tests)
-- --repositories/--packages flags
-- --table/--json flags
-- --rows option
-- --minstar option
-
-#### TestCLIEnvironmentVariables (5 tests)
-- Token requirement for --description
-- Token environment variable handling
-- BASE_URL requirement for --report
-- Development mode settings
-
-#### TestCLIErrorHandling (2 tests)
-- Connection error handling
-- Invalid token handling
-
-#### TestCLIOutputModes (2 tests)
-- Default table format
-- JSON output format
-
-#### TestCLIIntegration (1 test)
-- Multiple options combined
-
-### 5. `test_coverage_improvements.py` (14 tests)
-Additional coverage-focused tests for edge cases and complex workflows.
-
-#### TestHTMLParsing (3 tests)
-- HTML parsing with dependent items
-- Max dependency count extraction
-- Last page structure parsing
-
-#### TestCliReportMode (2 tests)
-- Report mode with 404 response
-- Report mode with successful response
-
-#### TestCliMinstFilter (2 tests)
-- High minstar value handling
-- Zero minstar value handling
-
-#### TestCliSearchMode (1 test)
-- Search option token requirement
-
-#### TestCliModeSettings (2 tests)
-- Packages destination mode
-- Repositories destination mode
-
-#### Additional tests (4 tests)
-- Row option boundary values
-- Development environment handling
-- Token from environment variable
-- Pagination handling
+- **`test_lifecycle.py`**: MCP server lifecycle (server starts cleanly).
+- **`test_prompts.py`**: Prompt registration for `analyze_ecosystem` and `find_usage_patterns`.
+- **`test_tools.py`**: MCP tool implementations (`get_top_dependents`, `get_dependent_details`, `search_dependent_code`), prompt body content, and tool annotations. Includes token-required error contracts and cached-state behavior.
 
 ## Test Fixtures
 
-### Defined in `conftest.py`
+### Defined in `tests/conftest.py`
 
-- `mock_github_client`: Mocked GitHub client
-- `mock_requests_session`: Mocked requests session
-- `sample_repos`: Sample repository data
-- `sample_repos_with_description`: Sample repos with descriptions
-- `html_response_dependents`: HTML fixture for dependents page (page 1)
-- `html_response_last_page`: HTML fixture for last page of dependents
-- `env_setup`: Manages environment variable cleanup (autouse)
+- **`clean_env`** (autouse): Snapshots `DEP_RANK_TOKEN` before each test and restores it after, so tests that set or unset the token do not leak state across the suite.
+
+Module-level HTML constants are also defined in `conftest.py` and imported directly by `tests/core/test_scraper.py`:
+
+- `DEPENDENTS_HTML_PAGE_1`: dependents page with three repos and a "Next" link.
+- `DEPENDENTS_HTML_LAST_PAGE`: terminal page with one repo and a "Previous" link.
+- `DEPENDENTS_HTML_NO_RESULTS`: empty dependents page (zero repositories).
+- `DEPENDENTS_HTML_WITH_COUNTS_PAGE_1`: page 1 with both "Repositories" and "Packages" tab counts visible.
+- `DEPENDENTS_HTML_WITH_COUNTS`: terminal page with both tab counts.
 
 ## Coverage Report
 
-Current coverage: **81.10%** (217 total statements, 34 missed)
-
-### Covered areas (100%)
-- `ghtopdep/__version__.py`
-
-### Covered areas (81%)
-- `ghtopdep/cli.py`
-
-### Coverage gaps
-The following lines are not covered:
-- Lines 35-36: Version check/update notification (external service)
-- Lines 136-138: GitHub repository retrieval error handling
-- Lines 165-167: HTTP adapter configuration retry fallback
-- Lines 223, 231-232: Connection error in report mode
-- Lines 273-292, 300, 302, 306: Complex pagination logic edge cases
-- Lines 311-314, 319-322: Search code execution and result filtering
-
-These gaps are primarily in error handling paths and edge cases that are difficult to test without live external services.
+Run `uv run pytest` to generate the current coverage report. The HTML report is written to `htmlcov/index.html`; the terminal output shows missing lines inline. Coverage activation, configuration file pointer, and report formats are all configured in `pytest.ini`'s `addopts`; measurement policy (source, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
 
 ## Running Coverage Report
 
-Generate HTML coverage report:
 ```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=html
+uv run pytest tests/
 open htmlcov/index.html
 ```
 
-View terminal coverage with missing lines:
-```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=term-missing
-```
+Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, and `--cov-report=term-missing`. No additional flags are needed at the command line.
 
 ## Best Practices
 
@@ -249,11 +111,10 @@ class TestMyFeature:
 
 ## Continuous Integration
 
-These tests are configured to run with minimum 80% coverage enforcement. The pytest configuration in `pyproject.toml` includes:
+These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
 
-- Coverage minimum threshold: 80%
+- Coverage minimum threshold: 90% (via `[tool.coverage.report] fail_under`)
 - Coverage report formats: html, term-missing
-- Branch coverage tracking enabled
 - Warnings filtered appropriately
 
-Failed tests or coverage drops below 80% will cause CI to fail.
+Failed tests or coverage drops below 90% will cause CI to fail.
