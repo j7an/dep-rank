@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test suite provides comprehensive coverage (81%+) of the ghtopdep codebase with 99 test cases. The tests are organized into logical modules covering unit tests, integration tests, and CLI functionality tests.
+This test suite provides comprehensive coverage of the dep-rank codebase. The tests are organized into logical modules covering unit tests, integration tests, and CLI functionality tests.
 
 ## Running Tests
 
@@ -13,8 +13,9 @@ uv run pytest tests/ -v
 
 ### Run with coverage report
 ```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=html
+uv run pytest tests/
 ```
+Coverage runs automatically (see [Running Coverage Report](#running-coverage-report) below).
 
 ### Run specific test file
 ```bash
@@ -185,37 +186,16 @@ Additional coverage-focused tests for edge cases and complex workflows.
 
 ## Coverage Report
 
-Current coverage: **81.10%** (217 total statements, 34 missed)
-
-### Covered areas (100%)
-- `ghtopdep/__version__.py`
-
-### Covered areas (81%)
-- `ghtopdep/cli.py`
-
-### Coverage gaps
-The following lines are not covered:
-- Lines 35-36: Version check/update notification (external service)
-- Lines 136-138: GitHub repository retrieval error handling
-- Lines 165-167: HTTP adapter configuration retry fallback
-- Lines 223, 231-232: Connection error in report mode
-- Lines 273-292, 300, 302, 306: Complex pagination logic edge cases
-- Lines 311-314, 319-322: Search code execution and result filtering
-
-These gaps are primarily in error handling paths and edge cases that are difficult to test without live external services.
+Run `uv run pytest` to generate the current coverage report. The HTML report is written to `htmlcov/index.html`; the terminal output shows missing lines inline. Coverage activation, configuration file pointer, and report formats are all configured in `pytest.ini`'s `addopts`; measurement policy (source, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
 
 ## Running Coverage Report
 
-Generate HTML coverage report:
 ```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=html
+uv run pytest tests/
 open htmlcov/index.html
 ```
 
-View terminal coverage with missing lines:
-```bash
-uv run pytest tests/ --cov=ghtopdep --cov-report=term-missing
-```
+Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, and `--cov-report=term-missing`. No additional flags are needed at the command line.
 
 ## Best Practices
 
@@ -249,11 +229,10 @@ class TestMyFeature:
 
 ## Continuous Integration
 
-These tests are configured to run with minimum 80% coverage enforcement. The pytest configuration in `pyproject.toml` includes:
+These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
 
-- Coverage minimum threshold: 80%
+- Coverage minimum threshold: 90% (via `[tool.coverage.report] fail_under`)
 - Coverage report formats: html, term-missing
-- Branch coverage tracking enabled
 - Warnings filtered appropriately
 
-Failed tests or coverage drops below 80% will cause CI to fail.
+Failed tests or coverage drops below 90% will cause CI to fail.
