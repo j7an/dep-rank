@@ -29,6 +29,7 @@ dependencies = [
     "click>=8.1,<9",
     "rich>=13.0,<15",
     "fastmcp>=3.1,<4",
+    "pretix",
 ]
 
 [project.scripts]
