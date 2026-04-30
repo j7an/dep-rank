@@ -8,3 +8,4 @@ dist/
 docs/
 .worktree/
 src/dep_rank/_version.py
+coverage.xml
