@@ -68,7 +68,7 @@ Module-level HTML constants are also defined in `conftest.py` and imported direc
 
 ## Coverage Report
 
-Run `uv run pytest` to generate the current coverage report. The HTML report is written to `htmlcov/index.html`; the terminal output shows missing lines inline. Coverage activation, configuration file pointer, and report formats are all configured in `pytest.ini`'s `addopts`; measurement policy (source, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
+Run `uv run pytest` to generate the current coverage report. The HTML report is written to `htmlcov/index.html`; the terminal output shows missing lines inline; `coverage.xml` is also written for `diff-cover` consumption (used by CI on PRs and available locally for the same gate). Coverage activation, configuration file pointer, and report formats are all configured in `pytest.ini`'s `addopts`; measurement policy (source, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
 
 ## Running Coverage Report
 
@@ -77,7 +77,22 @@ uv run pytest tests/
 open htmlcov/index.html
 ```
 
-Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, and `--cov-report=term-missing`. No additional flags are needed at the command line.
+Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, `--cov-report=term-missing`, and `--cov-report=xml`. No additional flags are needed at the command line.
+
+## Running Diff Coverage Locally
+
+CI enforces a minimum coverage threshold on changed lines via [`diff-cover`](https://github.com/Bachmann1234/diff_cover). The gate runs on PRs only, on a single matrix cell (`ubuntu-latest` + Python 3.11), with `--fail-under=80`. To check the same gate locally before pushing:
+
+```bash
+uv run pytest                                              # produces coverage.xml
+uv run diff-cover coverage.xml \
+  --fail-under=80 \
+  --compare-branch=origin/main
+```
+
+`diff-cover` reads `coverage.xml`, computes the git diff between `HEAD` and `origin/main`, and reports the percentage of changed lines covered by tests. If your branch is based off a base other than `main`, replace `origin/main` accordingly.
+
+The local gate uses the same threshold and inputs as CI. A PR that passes locally should pass in CI; if they disagree, the most likely cause is stale local state — re-run `git fetch origin` and re-check `coverage.xml` is current.
 
 ## Best Practices
 
@@ -114,7 +129,7 @@ class TestMyFeature:
 These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
 
 - Coverage minimum threshold: 90% (via `[tool.coverage.report] fail_under`)
-- Coverage report formats: html, term-missing
+- Coverage report formats: html, term-missing, xml (xml feeds the PR-only `diff-cover` gate at `--fail-under=80`)
 - Warnings filtered appropriately
 
-Failed tests or coverage drops below 90% will cause CI to fail.
+Failed tests, overall coverage below 90%, or diff coverage below 80% on changed lines (PRs only, on the `ubuntu-latest`/Python 3.11 cell) will cause CI to fail.
