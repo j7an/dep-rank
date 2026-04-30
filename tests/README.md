@@ -129,7 +129,7 @@ class TestMyFeature:
 These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
 
 - Coverage minimum threshold: 90% (via `[tool.coverage.report] fail_under`)
-- Coverage report formats: html, term-missing
+- Coverage report formats: html, term-missing, xml (xml feeds the PR-only `diff-cover` gate at `--fail-under=80`)
 - Warnings filtered appropriately
 
-Failed tests or coverage drops below 90% will cause CI to fail.
+Failed tests, overall coverage below 90%, or diff coverage below 80% on changed lines (PRs only, on the `ubuntu-latest`/Python 3.11 cell) will cause CI to fail.
