@@ -79,6 +79,7 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
@@ -100,6 +101,7 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src/dep_rank/
