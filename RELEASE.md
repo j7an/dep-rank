@@ -13,6 +13,8 @@ These are already configured. Verify once if something seems broken:
 - [ ] Both environments use OIDC — no API tokens needed
 - [ ] `Release Bot` GitHub App installed on this repo (needed to push signed
   tags; bypasses the recursion guard that blocks `GITHUB_TOKEN` tag pushes)
+- [ ] `RELEASE_BOT_APP_ID` repository variable set
+  (Settings → Secrets and variables → Actions → Variables tab)
 - [ ] `RELEASE_BOT_PRIVATE_KEY` secret stored at repo level
   (Settings → Secrets and variables → Actions → Repository secrets)
 
@@ -31,7 +33,7 @@ These are already configured. Verify once if something seems broken:
 3. Click **Run workflow**. The shared `tag-release.yml` reusable workflow
    computes the next version, creates and pushes a signed `vX.Y.Z` tag
    via the Release Bot App
-4. The `v*` tag push triggers `publish.yml` (test → build → TestPyPI →
+4. The `v*` tag push triggers `release.yml` (test → build → TestPyPI →
    PyPI → GitHub Release)
 
 The "auto" bump analyzer reads commit subjects since the last tag, so
@@ -42,7 +44,7 @@ otherwise-`fix:` PR will flip a patch release to minor.
 ### Pre-release (manual tag push)
 
 The UI only offers `auto/patch/minor/major`, so pre-releases use a manual
-tag push. The same `publish.yml` runs and the classifier flags the release
+tag push. The same `release.yml` runs and the classifier flags the release
 as prerelease automatically:
 
     git checkout main && git pull origin main
@@ -55,7 +57,7 @@ Use **PEP 440 canonical** forms (no hyphens): `a1` / `b1` / `rc1` / `.dev1`.
 
 ## What Happens Next (Automated)
 
-The `publish.yml` workflow runs five jobs in sequence:
+The `release.yml` workflow runs five jobs in sequence:
 
 | Job | What it does |
 |-----|--------------|
