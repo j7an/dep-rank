@@ -6,6 +6,6 @@ dist/
 *.pyc
 .vscode
 docs/
-.worktree/
+.worktrees/
 src/dep_rank/_version.py
 coverage.xml
