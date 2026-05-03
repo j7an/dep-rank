@@ -68,6 +68,7 @@ raw-options = { version_scheme = "no-guess-dev" }
 version-file = "src/dep_rank/_version.py"
 
 [tool.coverage.run]
+branch = true
 source = ["dep_rank"]
 relative_files = true
 omit = [
