@@ -18,6 +18,6 @@ permissions:
 
 jobs:
   rescan:
-    uses: j7an/shared-workflows/.github/workflows/cooldown-rescan.yml@365119edbe2b1c7339d7727d9e8d021784e5bc01 # v2.5.2
+    uses: j7an/shared-workflows/.github/workflows/cooldown-rescan.yml@f59942427bc49f29363f889f1365a77303f5a76f # v2.5.3
     with:
       dry_run: ${{ inputs.dry_run || false }}
