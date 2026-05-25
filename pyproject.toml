@@ -57,6 +57,13 @@ dev = [
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+exclude-newer = "1 week"
+# Exempt starlette so PYSEC-2026-161 fix (1.0.1, released within the cooldown
+# window) isn't reverted; remove this override once the advisory is older than
+# the global cooldown.
+exclude-newer-package = { starlette = "2030-01-01T00:00:00Z" }
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dep_rank"]
 
