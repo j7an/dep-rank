@@ -176,10 +176,13 @@ DEPENDENTS_HTML_WITH_COUNTS = """
 
 @pytest.fixture(autouse=True)
 def clean_env() -> Generator[None, None, None]:
-    """Ensure DEP_RANK_TOKEN is not leaked between tests."""
-    original = os.environ.get("DEP_RANK_TOKEN")
+    """Ensure DEP_RANK_TOKEN is not leaked between tests.
+
+    Uses ``pop`` (not ``get``) so the variable is actually removed from the
+    environment for the duration of the test, regardless of whether the
+    developer has it exported in their shell. See issue #70.
+    """
+    original = os.environ.pop("DEP_RANK_TOKEN", None)
     yield
-    if original is None:
-        os.environ.pop("DEP_RANK_TOKEN", None)
-    else:
+    if original is not None:
         os.environ["DEP_RANK_TOKEN"] = original

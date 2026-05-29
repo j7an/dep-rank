@@ -56,7 +56,7 @@ Tests are organized into three packages mirroring the `src/dep_rank/` layout. Th
 
 ### Defined in `tests/conftest.py`
 
-- **`clean_env`** (autouse): Snapshots `DEP_RANK_TOKEN` before each test and restores it after, so tests that set or unset the token do not leak state across the suite.
+- **`clean_env`** (autouse): Removes `DEP_RANK_TOKEN` from the environment before each test and restores its original value (if any) after, so a token exported in the developer's shell does not leak into tests and tests that set or unset the token do not leak state across the suite. Its regression guard lives in `tests/test_conftest.py`.
 
 Module-level HTML constants are also defined in `conftest.py` and imported directly by `tests/core/test_scraper.py`:
 
