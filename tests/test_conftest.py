@@ -5,10 +5,14 @@ snapshot (``os.environ.get``) that leaves ``DEP_RANK_TOKEN`` in the
 environment during the test body. See issue #70.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Generator
 
 import pytest
+
+from tests import conftest
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -42,3 +46,37 @@ def test_clean_env_clears_dep_rank_token() -> None:
     assertion, regardless of the developer's shell or CI environment.
     """
     assert os.environ.get("DEP_RANK_TOKEN") is None
+
+
+@pytest.mark.parametrize(
+    ("original", "set_in_body", "expected_after"),
+    [
+        # Absent originally, test body sets it -> teardown must clear it.
+        (None, "set-by-test", None),
+        # Present originally, test body changes it -> teardown restores original.
+        ("orig-token", "changed-by-test", "orig-token"),
+    ],
+)
+def test_clean_env_teardown_restores_environment(
+    original: str | None, set_in_body: str, expected_after: str | None
+) -> None:
+    """``clean_env`` teardown must restore the pre-test environment exactly.
+
+    A sibling test cannot observe teardown: the next test's autouse ``clean_env``
+    setup pops the variable before its body runs, masking any leak. So exercise
+    :func:`conftest.isolated_dep_rank_token` (the context manager ``clean_env``
+    delegates to) directly and inspect the environment after the block exits.
+    Guards the ``original is None`` teardown branch, which a naive
+    ``if original is not None: restore`` (no unconditional clear) would leave
+    leaking the test-set value.
+    """
+    if original is None:
+        os.environ.pop("DEP_RANK_TOKEN", None)
+    else:
+        os.environ["DEP_RANK_TOKEN"] = original
+
+    with conftest.isolated_dep_rank_token():
+        os.environ["DEP_RANK_TOKEN"] = set_in_body  # noqa: S105 (test value, not a real secret)
+
+    assert os.environ.get("DEP_RANK_TOKEN") == expected_after
+    os.environ.pop("DEP_RANK_TOKEN", None)  # leave env clean for the autouse fixture
