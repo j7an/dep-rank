@@ -29,11 +29,11 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v
 
 ## Test Structure
 
-Tests are organized into three packages mirroring the `src/dep_rank/` layout. The authoritative test count and per-module breakdown is `uv run pytest tests/ --collect-only -q`.
+Tests are organized into two packages mirroring the `src/dep_rank/` layout. The authoritative test count and per-module breakdown is `uv run pytest tests/ --collect-only -q`.
 
 ### `tests/cli/` — CLI surface
 
-- **`test_commands.py`**: Click command invocations for `deps`, `search`, `mcp`, `cache`, and `--version`. Covers help output, missing-token errors, table/JSON modes, and full-flow runs against mocked HTTP layers.
+- **`test_commands.py`**: Click command invocations for `deps`, `search`, `cache`, and `--version`. Covers help output, missing-token errors, table/JSON modes, and full-flow runs against mocked HTTP layers.
 - **`test_formatters.py`**: Pure formatter helpers — `humanize` star formatting, `print_dependents_table`, `print_search_results`, and `format_scrape_summary`.
 
 ### `tests/core/` — Pure logic
@@ -45,12 +45,6 @@ Tests are organized into three packages mirroring the `src/dep_rank/` layout. Th
 - **`test_cache.py`**: SQLite cache get/put/expiry/clear/stats and the uninitialized-cache error contract.
 - **`test_rate_limiter.py`**: Token-bucket rate limiter — within-limit allow, over-limit block, and replenishment over time.
 - **`test_search.py`**: `search_code` over multiple repos with progress callbacks, max-repos limit, and non-200 / client-error skip behavior.
-
-### `tests/mcp/` — MCP server surface
-
-- **`test_lifecycle.py`**: MCP server lifecycle (server starts cleanly).
-- **`test_prompts.py`**: Prompt registration for `analyze_ecosystem` and `find_usage_patterns`.
-- **`test_tools.py`**: MCP tool implementations (`get_top_dependents`, `get_dependent_details`, `search_dependent_code`), prompt body content, and tool annotations. Includes token-required error contracts and cached-state behavior.
 
 ## Test Fixtures
 
