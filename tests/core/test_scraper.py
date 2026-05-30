@@ -6,7 +6,7 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.models import DependentType, Repository, ScrapeResult
+from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
 from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
 from tests.conftest import (
     DEPENDENTS_HTML_LAST_PAGE,
@@ -224,6 +224,73 @@ class TestScrapeDependents:
         # 90 repos / 30 per page = 3 estimated total pages
         assert progress_calls[0] == (1, 3)
         assert progress_calls[1] == (2, 3)
+
+    @pytest.mark.asyncio
+    async def test_complete_scrape_sets_complete_true(self) -> None:
+        """A scrape that exhausts all pages reports complete=True, reason=None,
+        and matched_count equal to the number of repos that passed min_stars."""
+        async with ClientSession() as session:
+            with aioresponses() as m:
+                m.get(
+                    "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                    body=DEPENDENTS_HTML_LAST_PAGE,
+                )
+                result = await scrape_dependents(
+                    session,
+                    "https://github.com/owner/repo",
+                    min_stars=0,
+                    token="ghp_x",
+                )
+        assert result.complete is True
+        assert result.reason is None
+        assert result.matched_count == len(result.repos)
+
+    @pytest.mark.asyncio
+    async def test_cap_sets_max_pages_reached(self) -> None:
+        """Stopping at the page cap with a remaining next-page link reports
+        complete=False, reason=MAX_PAGES_REACHED."""
+        async with ClientSession() as session:
+            with aioresponses() as m:
+                m.get(
+                    "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                    body=DEPENDENTS_HTML_PAGE_1,
+                )
+                # Registered so the speculative prefetch has a body to resolve
+                # before it is cancelled when the cap halts the walk.
+                m.get(
+                    "https://github.com/owner/repo/network/dependents?page=2",
+                    body=DEPENDENTS_HTML_LAST_PAGE,
+                )
+                result = await scrape_dependents(
+                    session,
+                    "https://github.com/owner/repo",
+                    min_stars=0,
+                    token="ghp_x",
+                    max_pages=1,
+                )
+        assert result.pages_scraped == 1
+        assert result.complete is False
+        assert result.reason == ScrapeReason.MAX_PAGES_REACHED
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_sets_network_failure(self) -> None:
+        """A failed fetch (the loop's ``html is None`` break) reports
+        complete=False, reason=NETWORK_FAILURE."""
+        async with ClientSession() as session:
+            with aioresponses() as m:
+                m.get(
+                    "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+                    status=500,
+                )
+                result = await scrape_dependents(
+                    session,
+                    "https://github.com/owner/repo",
+                    min_stars=0,
+                    token="ghp_x",
+                )
+        assert result.complete is False
+        assert result.reason == ScrapeReason.NETWORK_FAILURE
+        assert result.pages_scraped == 0  # a failed first fetch consumed zero pages
 
 
 class TestScrapeDependentsEdgeCases:

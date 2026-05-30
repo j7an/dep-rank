@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from dep_rank.core.models import (
     CodeSearchHit,
     CodeSearchResult,
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeReason,
     ScrapeResult,
 )
 
@@ -125,3 +129,90 @@ class TestCodeSearchResult:
         )
         assert result.searched_repos == 5
         assert result.hits[0].matches == 3
+
+
+class TestScrapeReason:
+    def test_values(self) -> None:
+        assert ScrapeReason.MAX_PAGES_REACHED.value == "max_pages_reached"
+        assert ScrapeReason.TREND_CONVERGED.value == "trend_converged"
+        assert ScrapeReason.NETWORK_FAILURE.value == "network_failure"
+        assert ScrapeReason.RATE_LIMITED.value == "rate_limited"
+
+
+class TestScrapeResultContractFields:
+    def test_defaults_are_complete(self) -> None:
+        result = ScrapeResult(
+            repos=[],
+            pages_scraped=0,
+            max_pages=200,
+            estimated_total_pages=0,
+            estimated_total_dependents=0,
+        )
+        assert result.complete is True
+        assert result.reason is None
+        assert result.matched_count == 0
+
+    def test_incomplete_with_reason(self) -> None:
+        result = ScrapeResult(
+            repos=[],
+            pages_scraped=200,
+            max_pages=200,
+            estimated_total_pages=500,
+            estimated_total_dependents=15000,
+            complete=False,
+            reason=ScrapeReason.MAX_PAGES_REACHED,
+            matched_count=4200,
+        )
+        assert result.complete is False
+        assert result.reason == "max_pages_reached"
+        assert result.matched_count == 4200
+
+    def test_complete_must_equal_reason_absence(self) -> None:
+        """The terminal contract enforces ``complete == (reason is None)``."""
+        # complete=True but a reason is set -> invalid.
+        with pytest.raises(ValidationError):
+            ScrapeResult(
+                repos=[],
+                pages_scraped=1,
+                max_pages=200,
+                estimated_total_pages=0,
+                estimated_total_dependents=0,
+                complete=True,
+                reason=ScrapeReason.RATE_LIMITED,
+            )
+        # complete=False but no reason -> invalid.
+        with pytest.raises(ValidationError):
+            ScrapeResult(
+                repos=[],
+                pages_scraped=1,
+                max_pages=200,
+                estimated_total_pages=0,
+                estimated_total_dependents=0,
+                complete=False,
+                reason=None,
+            )
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            ScrapeReason.MAX_PAGES_REACHED,
+            ScrapeReason.TREND_CONVERGED,
+            ScrapeReason.NETWORK_FAILURE,
+            ScrapeReason.RATE_LIMITED,
+        ],
+    )
+    def test_every_reason_marks_incomplete(self, reason: ScrapeReason) -> None:
+        """All four terminal reasons construct cleanly and satisfy the invariant
+        (issue #74 acceptance: every documented stop reason is representable)."""
+        result = ScrapeResult(
+            repos=[],
+            pages_scraped=1,
+            max_pages=200,
+            estimated_total_pages=0,
+            estimated_total_dependents=0,
+            complete=False,
+            reason=reason,
+            matched_count=0,
+        )
+        assert result.complete is False
+        assert result.reason == reason
