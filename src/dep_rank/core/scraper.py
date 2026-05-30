@@ -12,7 +12,7 @@ import aiohttp
 from selectolax.parser import HTMLParser
 
 from dep_rank.core.cache import SqliteCache
-from dep_rank.core.models import DependentType, Repository, ScrapeResult
+from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
 from dep_rank.core.rate_limiter import TokenBucketRateLimiter
 from dep_rank.core.validation import validate_github_url
 
@@ -236,10 +236,9 @@ async def scrape_dependents(
     prefetch_task: asyncio.Task[tuple[str | None, str | None]] | None = None
     estimated_total_pages = 0
     estimated_total_dependents = 0
+    fetch_failed = False
 
     while current_url and page < max_pages:
-        page += 1
-
         # Check cache first
         html: str | None = None
         cache_hit = False
@@ -264,7 +263,10 @@ async def scrape_dependents(
                 )
 
             if html is None:
+                fetch_failed = True
                 break
+
+        page += 1
 
         if page == 1:
             counts = parse_dependent_counts(html)
@@ -309,6 +311,16 @@ async def scrape_dependents(
         except asyncio.CancelledError:
             pass  # Expected when scraping ends before prefetch completes
 
+    # Classify how the walk ended. `fetch_failed` is set only by the `html is None`
+    # break above; a clean exhaustion drops `current_url` to None, and hitting the cap
+    # leaves `current_url` pointing at an unfetched next page with `page == max_pages`.
+    if fetch_failed:
+        reason: ScrapeReason | None = ScrapeReason.NETWORK_FAILURE
+    elif current_url is not None and page >= max_pages:
+        reason = ScrapeReason.MAX_PAGES_REACHED
+    else:
+        reason = None
+
     all_repos.sort(key=lambda r: r.stars, reverse=True)
     return ScrapeResult(
         repos=all_repos,
@@ -316,4 +328,7 @@ async def scrape_dependents(
         max_pages=max_pages,
         estimated_total_pages=estimated_total_pages,
         estimated_total_dependents=estimated_total_dependents,
+        complete=reason is None,
+        reason=reason,
+        matched_count=len(all_repos),
     )
