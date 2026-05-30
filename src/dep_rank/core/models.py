@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class DependentType(StrEnum):
@@ -13,6 +13,19 @@ class DependentType(StrEnum):
 
     REPOSITORY = "REPOSITORY"
     PACKAGE = "PACKAGE"
+
+
+class ScrapeReason(StrEnum):
+    """Why a scrape terminated short of exhausting all pages.
+
+    ``None`` (absence of a reason) means the scrape was complete. The invariant
+    ``complete == (reason is None)`` holds across ScrapeResult and DependentsResult.
+    """
+
+    MAX_PAGES_REACHED = "max_pages_reached"
+    TREND_CONVERGED = "trend_converged"
+    NETWORK_FAILURE = "network_failure"
+    RATE_LIMITED = "rate_limited"
 
 
 class Repository(BaseModel):
@@ -33,6 +46,16 @@ class ScrapeResult(BaseModel):
     max_pages: int
     estimated_total_pages: int
     estimated_total_dependents: int
+    complete: bool = True
+    reason: ScrapeReason | None = None
+    matched_count: int = 0
+
+    @model_validator(mode="after")
+    def _check_complete_reason_invariant(self) -> ScrapeResult:
+        if self.complete != (self.reason is None):
+            msg = "ScrapeResult invariant violated: complete must equal (reason is None)"
+            raise ValueError(msg)
+        return self
 
 
 class DependentsResult(BaseModel):
