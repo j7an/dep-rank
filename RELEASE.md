@@ -15,8 +15,76 @@ These are already configured. Verify once if something seems broken:
   tags; bypasses the recursion guard that blocks `GITHUB_TOKEN` tag pushes)
 - [ ] `RELEASE_BOT_APP_ID` repository variable set
   (Settings → Secrets and variables → Actions → Variables tab)
-- [ ] `RELEASE_BOT_PRIVATE_KEY` secret stored at repo level
-  (Settings → Secrets and variables → Actions → Repository secrets)
+- [ ] `RELEASE_BOT_PRIVATE_KEY` stored in **all three** required stores (same
+  key value in each — see "Release Bot Credential Topology" below):
+  - Repo **Actions** secret
+    (Settings → Secrets and variables → Actions → Repository secrets)
+  - Repo **Dependabot** secret
+    (Settings → Secrets and variables → Dependabot → Repository secrets)
+  - **`release` environment** secret
+    (Settings → Environments → `release` → Environment secrets)
+- [ ] `release` environment restricted to `main`
+  (Settings → Environments → `release` → Deployment branches and tags →
+  "Selected branches and tags" → pattern `main`)
+
+---
+
+## Release Bot Credential Topology
+
+One GitHub App (`RELEASE_BOT_APP_ID`) signs tags and opens maintenance PRs. Its
+private key is stored in three places because three workflows run in contexts
+that cannot share a single store. **All three intentionally hold the same key
+value** — this duplication is an accepted trade-off (a separate app per trust
+level was considered and deferred).
+
+| Store | Used by | Why this store |
+|-------|---------|----------------|
+| `release` environment secret | `tag-release` (Actions → Tag Release) | The pinned shared `tag-release` reusable workflow declares `environment: release`. GitHub uses the **environment** secret instead of the caller-passed one, which is what scopes the release credential to the environment. |
+| Repo **Actions** secret | `pre-commit-autoupdate.yml` | Reads the secret directly in a normal scheduled job. |
+| Repo **Dependabot** secret | `ci.yml` → `update-lockfile` | Dependabot-triggered runs can read **only** Dependabot secrets. |
+
+**Access gating:**
+
+- The **`release` environment** restricts the release credential to the `main`
+  branch (deployment-branch policy, pattern `main`). This is the GitHub-enforced
+  guard that `tag-release` can only run from `main`.
+- The **`pypi` environment** remains the human publication-approval gate: it
+  requires a reviewer before `release.yml` publishes to PyPI. `tag-release` is
+  manually dispatched and intentionally has **no** reviewer/wait-timer on
+  `release` — the human checkpoint lives at `pypi`.
+
+> Note: the GitHub API can confirm each secret **exists** and when it was
+> updated, but not that the three values are equal. Treat equality as an
+> invariant you maintain during rotation (below), not something you can verify
+> after the fact.
+
+---
+
+## Rotating the Release Bot Private Key
+
+GitHub Apps support multiple active private keys, so rotation is zero-downtime:
+add the new key everywhere, verify, then remove the old one.
+
+1. **Generate** a new private key for the Release Bot App
+   (App settings → Private keys → Generate a private key → downloads a `.pem`).
+   Leave the existing key active for now.
+2. **Update all three stores** with the new key's full `.pem` contents
+   (they must stay equal — see topology table):
+   - Settings → Secrets and variables → **Actions** → `RELEASE_BOT_PRIVATE_KEY`
+   - Settings → Secrets and variables → **Dependabot** → `RELEASE_BOT_PRIVATE_KEY`
+   - Settings → Environments → **`release`** → `RELEASE_BOT_PRIVATE_KEY`
+3. **Verify each consumer** with the new key before deleting the old one:
+   - **pre-commit autoupdate** (Actions store): `gh workflow run pre-commit-autoupdate.yml`,
+     then confirm the run succeeds (it mints an app token early).
+   - **lockfile update** (Dependabot store): the `update-lockfile` job runs only
+     on Dependabot PRs and cannot be dispatched manually. Confirm via the next
+     Dependabot PR's `update-lockfile` job succeeding, or re-run that job on the
+     most recent open Dependabot PR's CI run. If no Dependabot PR is open, this
+     store is validated by the next one.
+   - **tag-release** (`release` env store): exercised by the next real release.
+     A failed mint surfaces as the "Mint GitHub App token" step failing.
+4. **Delete the old private key** in the App settings once all three consumers
+   have run successfully on the new key.
 
 ---
 
