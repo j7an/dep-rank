@@ -255,8 +255,8 @@ class TestScrapeDependents:
                     "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
                     body=DEPENDENTS_HTML_PAGE_1,
                 )
-                # Registered so the speculative prefetch has a body to resolve
-                # before it is cancelled when the cap halts the walk.
+                # Registered only to give page 1 a valid next-page link; with
+                # max_pages=1 the walk caps before page 2 is ever fetched.
                 m.get(
                     "https://github.com/owner/repo/network/dependents?page=2",
                     body=DEPENDENTS_HTML_LAST_PAGE,
@@ -355,8 +355,10 @@ class TestScrapeDependentsEdgeCases:
         assert len(repos) == 0
 
     @pytest.mark.asyncio
-    async def test_error_response_breaks_scraping(self) -> None:
-        """Non-200, non-304 response stops scraping."""
+    async def test_error_response_sets_network_failure(self) -> None:
+        """A non-200/304/429 response terminates with reason=network_failure."""
+        from dep_rank.core.models import ScrapeReason
+
         with aioresponses() as m:
             m.get(
                 "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
@@ -364,37 +366,42 @@ class TestScrapeDependentsEdgeCases:
             )
             async with ClientSession() as session:
                 result = await scrape_dependents(session, "https://github.com/owner/repo")
-        assert len(result.repos) == 0
+        assert result.repos == []
+        assert result.complete is False
+        assert result.reason == ScrapeReason.NETWORK_FAILURE
+        assert result.pages_scraped == 0  # first-page failure consumed no pages
 
     @pytest.mark.asyncio
-    async def test_304_without_cached_body_breaks(self) -> None:
-        """304 response when cache has no body results in empty results."""
-        from dep_rank.core.cache import SqliteCache
+    async def test_429_exhaustion_sets_rate_limited(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A persistent 429 (past the retry budget) terminates with reason=rate_limited."""
+        from unittest.mock import AsyncMock
 
+        from dep_rank.core.models import ScrapeReason
+
+        # Patch the scraper's sleep so the (growing) 429 backoff does not actually wait.
+        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+
+        url = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
         with aioresponses() as m:
-            m.get(
-                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-                status=304,
-            )
+            for _ in range(6):  # MAX_RETRIES + 1 attempts, all 429
+                m.get(url, status=429, headers={"Retry-After": "0"})
             async with ClientSession() as session:
-                # Create a real cache but with an expired entry (body=None after expiry)
-                import tempfile
+                result = await scrape_dependents(
+                    session, "https://github.com/owner/repo", token="ghp_x"
+                )
+        assert result.complete is False
+        assert result.reason == ScrapeReason.RATE_LIMITED
+        assert result.pages_scraped == 0  # never got a parseable page
 
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    cache = SqliteCache(tmpdir)
-                    await cache.initialize()
-                    # Put an expired entry so etag is returned but body is None
-                    await cache.put(
-                        "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-                        b"old-html",
-                        etag='"etag1"',
-                        ttl=-1,
+    @pytest.mark.asyncio
+    async def test_concurrency_out_of_range_raises(self) -> None:
+        """The library refuses concurrency <1 or >10 (avoids Semaphore(0) deadlock)."""
+        async with ClientSession() as session:
+            for bad in (0, 11):
+                with pytest.raises(ValueError, match="concurrency"):
+                    await scrape_dependents(
+                        session, "https://github.com/owner/repo", concurrency=bad
                     )
-                    result = await scrape_dependents(
-                        session, "https://github.com/owner/repo", cache=cache
-                    )
-                    await cache.close()
-        assert len(result.repos) == 0
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_network(self) -> None:
