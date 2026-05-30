@@ -1,4 +1,4 @@
-"""Core library for dep-rank. No CLI or MCP dependencies."""
+"""Core library for dep-rank. No CLI dependencies."""
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.graphql import enrich_with_graphql

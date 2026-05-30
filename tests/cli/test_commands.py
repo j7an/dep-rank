@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -74,13 +73,6 @@ class TestSearchCommand:
     def test_missing_token(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["search", "https://github.com/django/django", "import os"])
         assert result.exit_code != 0
-
-
-class TestMcpCommand:
-    def test_help(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["mcp", "--help"])
-        assert result.exit_code == 0
-        assert "transport" in result.output
 
 
 class TestCacheCommand:
@@ -225,24 +217,6 @@ class TestSearchCommandFull:
         )
         assert result.exit_code != 0
         assert "Error" in result.output
-
-
-class TestMcpCommandFull:
-    def test_mcp_import_error(self, runner: CliRunner) -> None:
-        """Test that mcp command handles ImportError gracefully."""
-        import builtins
-
-        real_import = builtins.__import__
-
-        def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            if name == "dep_rank.mcp.server":
-                raise ImportError("no fastmcp")
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", side_effect=mock_import):
-            result = runner.invoke(cli, ["mcp"])
-        assert result.exit_code != 0
-        assert "fastmcp" in result.output or "MCP" in result.output
 
 
 class TestCacheCommandsFull:

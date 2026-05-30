@@ -6,7 +6,7 @@ Rank GitHub dependents by stars.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as both a CLI tool and an MCP server for LLM assistants.
+dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as a command-line tool.
 
 ## Quick Start
 
@@ -48,79 +48,11 @@ dep-rank search https://github.com/django/django "middleware" --max-repos 20
 | `--min-stars` | 50 | Only search repos with this many stars |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token (required) |
 
-### `dep-rank mcp` — Start MCP server
-
-```bash
-dep-rank mcp                                # STDIO (default)
-dep-rank mcp --transport http --port 8000   # HTTP
-```
-
 ### `dep-rank cache` — Manage cache
 
 ```bash
 dep-rank cache stats    # Show cache size
 dep-rank cache clear    # Clear all cached data
-```
-
-## MCP Server
-
-dep-rank includes an MCP server for use with Claude Desktop, Claude Code, Cursor, and other MCP-compatible tools.
-
-### Tools
-
-| Tool | Description | Requires Token |
-|------|-------------|---------------|
-| `get_top_dependents` | List top dependents by stars | No |
-| `get_dependent_details` | Enrich with descriptions via GraphQL | Yes |
-| `search_dependent_code` | Search code across dependents | Yes |
-
-### Prompts
-
-| Prompt | Description |
-|--------|-------------|
-| `analyze_ecosystem` | Guided workflow for full ecosystem analysis |
-| `find_usage_patterns` | Find how dependents use a specific API |
-
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "dep-rank": {
-      "command": "uvx",
-      "args": ["dep-rank-mcp"],
-      "env": {
-        "DEP_RANK_TOKEN": "ghp_your_token_here"
-      }
-    }
-  }
-}
-```
-
-### Claude Code
-
-Add to `.mcp.json` in your project:
-
-```json
-{
-  "mcpServers": {
-    "dep-rank": {
-      "command": "uvx",
-      "args": ["dep-rank-mcp"],
-      "env": {
-        "DEP_RANK_TOKEN": "ghp_your_token_here"
-      }
-    }
-  }
-}
-```
-
-### HTTP Deployment
-
-```bash
-DEP_RANK_TOKEN=ghp_xxx dep-rank mcp --transport http --port 8000
 ```
 
 ## Authentication
@@ -137,7 +69,6 @@ export DEP_RANK_TOKEN=ghp_your_token_here
 **What requires a token:**
 - `--descriptions` flag — fetches repo descriptions via GitHub GraphQL API
 - `dep-rank search` — code search across dependents
-- MCP tools: `get_dependent_details`, `search_dependent_code`
 
 Create a token at [github.com/settings/tokens](https://github.com/settings/tokens) with `public_repo` scope.
 
@@ -147,7 +78,7 @@ dep-rank uses a three-stage pipeline:
 
 1. **Scrape** — fetches GitHub's `/network/dependents` HTML pages to discover all dependents and their approximate star counts
 2. **Enrich** (optional) — one GraphQL batch query fetches accurate star counts and descriptions for the top N results (replaces 100 individual REST API calls)
-3. **Present** — returns structured results as a Rich table (CLI) or Pydantic model (MCP)
+3. **Present** — returns structured results as a Rich table
 
 Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag support for conditional requests.
 

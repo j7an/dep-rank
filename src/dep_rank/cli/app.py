@@ -6,7 +6,6 @@ import asyncio
 import logging
 import sys
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
 
 import appdirs
 import click
@@ -15,9 +14,6 @@ from rich.logging import RichHandler
 from dep_rank import __version__
 from dep_rank.core.models import DependentsResult, DependentType
 from dep_rank.core.validation import validate_github_url
-
-if TYPE_CHECKING:
-    from typing import Literal
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -305,29 +301,6 @@ def search(
             await cache.close()
 
     asyncio.run(_run())
-
-
-@cli.command(name="mcp")
-@click.option(
-    "--transport",
-    type=click.Choice(["stdio", "http"]),
-    default="stdio",
-    help="MCP transport.",
-)
-@click.option("--port", default=8000, help="HTTP port (only for http transport).")
-@click.option("--host", default="127.0.0.1", help="HTTP host (only for http transport).")
-def mcp_cmd(transport: str, port: int, host: str) -> None:
-    """Start the MCP server."""
-    try:
-        from dep_rank.mcp.server import mcp as mcp_server
-    except ImportError:
-        click.echo(
-            "Error: MCP support requires fastmcp. Install with: pip install 'dep-rank[mcp]'",
-            err=True,
-        )
-        sys.exit(1)
-
-    mcp_server.run(transport=cast(Literal["stdio", "http"], transport), host=host, port=port)
 
 
 @cli.group()

@@ -1,14 +1,14 @@
 [project]
 name = "dep-rank"
 dynamic = ["version"]
-description = "Analyze GitHub repository dependents by star count. CLI + MCP server."
+description = "Analyze GitHub repository dependents by star count."
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
     {name = "j7an"}
 ]
 readme = "README.md"
-keywords = ["github", "dependencies", "cli", "stars", "ranking", "dependents", "mcp"]
+keywords = ["github", "dependencies", "cli", "stars", "ranking", "dependents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -28,12 +28,10 @@ dependencies = [
     "appdirs>=1.4,<2",
     "click>=8.1,<9",
     "rich>=13.0,<15",
-    "fastmcp>=3.1,<4",
 ]
 
 [project.scripts]
 dep-rank = "dep_rank.cli.app:cli"
-dep-rank-mcp = "dep_rank.mcp.server:main"
 
 [project.urls]
 Homepage = "https://github.com/j7an/dep-rank"
@@ -120,11 +118,3 @@ disallow_untyped_decorators = false
 [[tool.mypy.overrides]]
 module = "dep_rank.cli.app"
 disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
-module = "dep_rank.mcp.server"
-ignore_missing_imports = true
-disallow_untyped_decorators = false
-# FastMCP injects Context at runtime; ctx: Context = None is the idiomatic pattern
-no_implicit_optional = false
-disable_error_code = ["union-attr"]
