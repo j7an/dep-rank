@@ -274,8 +274,8 @@ class TestScrapeDependents:
 
     @pytest.mark.asyncio
     async def test_fetch_failure_sets_network_failure(self) -> None:
-        """A failed fetch (the loop's ``html is None`` break) reports
-        complete=False, reason=NETWORK_FAILURE."""
+        """A fetch that fails with an unexpected status (raising
+        ``NetworkFailureError``) reports complete=False, reason=NETWORK_FAILURE."""
         async with ClientSession() as session:
             with aioresponses() as m:
                 m.get(
