@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
+import itertools
 import logging
 import random
 import re
-from collections.abc import Awaitable, Callable
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import aiohttp
 from selectolax.parser import HTMLParser
 
 from dep_rank.core.cache import SqliteCache
-from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
-from dep_rank.core.rate_limiter import TokenBucketRateLimiter
+from dep_rank.core.models import (
+    DependentType,
+    Repository,
+    ScrapeReason,
+    ScrapeResult,
+    ScrapeSnapshot,
+)
+from dep_rank.core.rate_limiter import AdaptiveRateLimiter
 from dep_rank.core.validation import validate_github_url
 
 logger = logging.getLogger(__name__)
@@ -23,15 +32,30 @@ REPO_SELECTOR = "span > a.text-bold"
 STARS_SELECTOR = "div > div > span"
 NEXT_BUTTON_SELECTOR = "#dependents > div.paginate-container > div > a"
 GITHUB_URL = "https://github.com"
-MAX_PAGES = 1000
 MAX_RETRIES = 5
 REQUEST_TIMEOUT = 30
 CACHE_TTL = 86400  # 24 hours
 DEPENDENTS_PER_PAGE = 30  # Approximate dependents shown per GitHub page
 RETRY_BASE_SECONDS = 5
 RETRY_MAX_SECONDS = 120
-_RATE_LIMITER_UNAUTH = TokenBucketRateLimiter(rate=10, period=60.0)
-_RATE_LIMITER_AUTH = TokenBucketRateLimiter(rate=60, period=60.0)
+MAX_PAGES_CEILING = 1000
+DEFAULT_MAX_PAGES = 200
+DEFAULT_CONCURRENCY = 3
+ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
+ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
+MAX_PAGES = MAX_PAGES_CEILING  # back-compat: cli.app's search progress bar imports this
+
+
+class ScrapeError(Exception):
+    """Base class for terminal scrape failures."""
+
+
+class NetworkFailureError(ScrapeError):
+    """A page could not be fetched after the retry budget (or an unexpected status)."""
+
+
+class RateLimitedError(ScrapeError):
+    """The retry budget was exhausted on 429 responses."""
 
 
 def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
@@ -126,14 +150,15 @@ def _retry_delay(attempt: int) -> float:
 async def _fetch_page(
     session: aiohttp.ClientSession,
     url: str,
-    rate_limiter: TokenBucketRateLimiter,
+    limiter: AdaptiveRateLimiter,
+    semaphore: asyncio.Semaphore,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
-) -> tuple[str | None, str | None]:
-    """Fetch a single page with rate limiting, retries, and caching.
+) -> str:
+    """Fetch one page with bounded concurrency, rate limiting, retries, and caching.
 
-    Returns:
-        (html_content, etag) or (None, None) on failure.
+    Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
+    retry budget is exhausted or an unexpected status is returned.
     """
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     headers: dict[str, str] = {}
@@ -145,56 +170,241 @@ async def _fetch_page(
                 headers["If-None-Match"] = cached["etag"]
             cached_body = cached["body"]
 
+    rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
-        await rate_limiter.acquire()
-        try:
-            async with session.get(
-                url,
-                timeout=timeout,
-                headers={**auth_headers, **headers},
-            ) as resp:
-                if resp.status == 304 and cache and cached_body:
-                    await cache.put(
-                        url,
-                        cached_body,
-                        etag=headers.get("If-None-Match"),
-                        ttl=CACHE_TTL,
-                    )
-                    return cached_body.decode("utf-8"), headers.get("If-None-Match")
-                elif resp.status == 200:
-                    body = await resp.read()
-                    html = body.decode("utf-8")
-                    etag = resp.headers.get("ETag")
-                    if cache:
-                        await cache.put(url, body, etag=etag, ttl=CACHE_TTL)
-                    return html, etag
-                elif resp.status == 429:
-                    delay = _retry_delay(attempt)
-                    retry_after = resp.headers.get("Retry-After")
-                    if retry_after:
-                        delay = max(delay, float(retry_after))
-                    logger.warning(
-                        "Rate limited — retrying in %.1fs (%d/%d)",
-                        delay,
-                        attempt + 1,
-                        MAX_RETRIES,
-                    )
-                    await asyncio.sleep(delay)
-                else:
+        async with semaphore:
+            await limiter.acquire()
+            try:
+                async with session.get(
+                    url, timeout=timeout, headers={**auth_headers, **headers}
+                ) as resp:
+                    if resp.status == 304 and cache and cached_body:
+                        limiter.note_success()
+                        await cache.put(
+                            url, cached_body, etag=headers.get("If-None-Match"), ttl=CACHE_TTL
+                        )
+                        return cached_body.decode("utf-8")
+                    if resp.status == 200:
+                        limiter.note_success()
+                        body: bytes = await resp.read()
+                        if cache:
+                            await cache.put(url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL)
+                        return body.decode("utf-8")
+                    if resp.status == 429:
+                        rate_limited = True
+                        retry_after = resp.headers.get("Retry-After")
+                        delay = limiter.note_429(float(retry_after) if retry_after else None)
+                        logger.warning(
+                            "Rate limited — retrying in %.1fs (%d/%d)",
+                            delay,
+                            attempt + 1,
+                            MAX_RETRIES,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
                     logger.warning("Unexpected HTTP %d — stopping", resp.status)
-                    return None, None
-        except (TimeoutError, aiohttp.ClientError):
-            delay = _retry_delay(attempt)
-            logger.warning(
-                "Request failed — retrying in %.1fs (%d/%d)",
-                delay,
-                attempt + 1,
-                MAX_RETRIES,
-            )
-            await asyncio.sleep(delay)
+                    raise NetworkFailureError(f"HTTP {resp.status} for {url}")
+            except (TimeoutError, aiohttp.ClientError):
+                delay = _retry_delay(attempt)
+                logger.warning(
+                    "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
+                )
+                await asyncio.sleep(delay)
 
     logger.warning("Exhausted retries for %s", url)
-    return None, None
+    if rate_limited:
+        raise RateLimitedError(url)
+    raise NetworkFailureError(url)
+
+
+async def _read_page(
+    session: aiohttp.ClientSession,
+    url: str,
+    limiter: AdaptiveRateLimiter,
+    semaphore: asyncio.Semaphore,
+    auth_headers: dict[str, str],
+    cache: SqliteCache | None,
+) -> str:
+    """Return a page's HTML, skipping the network on a fresh cache hit.
+
+    Fresh hit -> cached body (no request). Expired-with-body or miss -> _fetch_page
+    (which revalidates via If-None-Match when an ETag is cached). Phase 3 extends the
+    expired branch with stale-while-revalidate.
+    """
+    if cache:
+        cached = await cache.get(url)
+        if cached and cached["body"] is not None and not cached.get("expired"):
+            body: bytes = cached["body"]
+            return body.decode("utf-8")
+    return await _fetch_page(session, url, limiter, semaphore, auth_headers, cache)
+
+
+def _heap_push(
+    heap: list[tuple[int, int, Repository]], repo: Repository, count: int, rows: int | None
+) -> None:
+    """Maintain a bounded min-heap of the top-``rows`` repos by stars.
+
+    ``rows is None`` keeps every repo (unbounded, back-compat). ``rows <= 0`` keeps none.
+
+    Tie-handling: ``count`` is the monotonically increasing arrival index, stored
+    **negated** so that among repos with equal stars the min-heap root (the eviction
+    candidate) is the *latest-seen* one. Combined with the strict ``>`` admission test
+    below — a new repo whose stars merely *tie* the current minimum is not admitted —
+    this guarantees "ties: earlier-seen wins" both on admission and on eviction.
+    """
+    entry = (repo.stars, -count, repo)
+    if rows is None:
+        heap.append(entry)
+    elif rows <= 0:
+        return
+    elif len(heap) < rows:
+        heapq.heappush(heap, entry)
+    elif repo.stars > heap[0][0]:
+        heapq.heapreplace(heap, entry)
+
+
+def _top_k(heap: list[tuple[int, int, Repository]]) -> list[Repository]:
+    """Return the heap's repos sorted by stars descending (ties: earlier-seen first).
+
+    Heap entries store the arrival index negated (``-count``), so to order ties
+    earliest-first we sort ascending on the *original* index ``-e[1]``.
+    """
+    return [r for _, _, r in sorted(heap, key=lambda e: (-e[0], -e[1]))]
+
+
+def _should_stop(
+    heap: list[tuple[int, int, Repository]],
+    rows: int | None,
+    recent_max: deque[int],
+    page: int,
+) -> bool:
+    """True when the trailing window can no longer plausibly change the saturated top-K."""
+    if rows is None or rows <= 0:
+        return False
+    if len(heap) < rows:  # heap not saturated -> kth_best undefined
+        return False
+    if page < ADAPTIVE_W_MIN:
+        return False
+    if len(recent_max) < ADAPTIVE_WINDOW:
+        return False
+    kth_best = heap[0][0]  # min of the size-rows heap == K-th best stars
+    return max(recent_max) < kth_best
+
+
+def _build_snapshot(
+    heap: list[tuple[int, int, Repository]],
+    page: int,
+    est_pages: int,
+    est_deps: int,
+    matched: int,
+    *,
+    done: bool,
+    reason: ScrapeReason | None = None,
+) -> ScrapeSnapshot:
+    return ScrapeSnapshot(
+        top_k=_top_k(heap),
+        pages_scraped=page,
+        estimated_total_pages=est_pages,
+        estimated_total_dependents=est_deps,
+        matched_count=matched,
+        done=done,
+        complete=(reason is None) if done else False,
+        reason=reason if done else None,
+    )
+
+
+async def stream_dependents(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    rows: int | None,
+    dependent_type: DependentType = DependentType.REPOSITORY,
+    min_stars: int = 5,
+    cache: SqliteCache | None = None,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+    token: str | None = None,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    adaptive_stop: bool = True,
+    rate_limiter: AdaptiveRateLimiter | None = None,
+) -> AsyncIterator[ScrapeSnapshot]:
+    """Stream top-K dependents page by page.
+
+    Yields one snapshot per consumed page (done=False) then exactly one terminal
+    snapshot (done=True) carrying complete/reason. ``rows is None`` keeps every
+    matched repo and disables adaptive stop (back-compat for the wrapper).
+    """
+    if not 1 <= concurrency <= 10:
+        msg = f"concurrency must be between 1 and 10, got {concurrency}"
+        raise ValueError(msg)
+    owner, repo = validate_github_url(url)
+    base_url = f"{GITHUB_URL}/{owner}/{repo}/network/dependents"
+    current_url: str | None = f"{base_url}?dependent_type={dependent_type.value}"
+    source_url = f"{GITHUB_URL}/{owner}/{repo}"
+
+    max_pages = min(max_pages, MAX_PAGES_CEILING)
+    limiter = rate_limiter or AdaptiveRateLimiter.for_token(token, concurrency)
+    semaphore = asyncio.Semaphore(concurrency)
+    auth_headers: dict[str, str] = {"Authorization": f"token {token}"} if token else {}
+
+    heap: list[tuple[int, int, Repository]] = []
+    counter = itertools.count()
+    seen: set[str] = set()
+    matched = 0
+    est_pages = 0
+    est_deps = 0
+    recent_max: deque[int] = deque(maxlen=ADAPTIVE_WINDOW)
+    bounded = rows is not None
+    page = 0
+    reason: ScrapeReason | None = None
+
+    while current_url and page < max_pages:
+        try:
+            html = await _read_page(session, current_url, limiter, semaphore, auth_headers, cache)
+        except RateLimitedError:
+            reason = ScrapeReason.RATE_LIMITED
+            break
+        except NetworkFailureError:
+            reason = ScrapeReason.NETWORK_FAILURE
+            break
+        page += 1  # increment only after a page is actually consumed (spec §2)
+
+        if page == 1:
+            counts = parse_dependent_counts(html)
+            est_deps = counts.get(dependent_type.value, 0)
+            est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps > 0 else 0
+
+        repos, next_url = parse_dependents_page(html)
+        page_max = 0
+        for repo_obj in repos:
+            if repo_obj.url in seen or repo_obj.url == source_url:
+                continue
+            if repo_obj.stars >= min_stars:
+                seen.add(repo_obj.url)
+                matched += 1
+                page_max = max(page_max, repo_obj.stars)
+                _heap_push(heap, repo_obj, next(counter), rows)
+        recent_max.append(page_max)
+
+        if on_progress:
+            await on_progress(page, est_pages)
+        yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=False)
+
+        if adaptive_stop and bounded and _should_stop(heap, rows, recent_max, page):
+            reason = ScrapeReason.TREND_CONVERGED
+            break
+        current_url = next_url
+    else:
+        # Loop exited via its condition (no break): exhausted, unless we stopped at the cap.
+        if current_url is not None and page >= max_pages:
+            reason = ScrapeReason.MAX_PAGES_REACHED
+
+    # `estimated_total_pages` is always the header-derived estimate (`est_pages`),
+    # matching the historical scraper (it returned the header estimate unconditionally).
+    # Actual pages consumed live in `pages_scraped`; do NOT overwrite the estimate with
+    # `page` on completion — Phase 4 summaries and existing header-estimate tests depend
+    # on the estimate staying the population projection, not the walked count.
+    yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=True, reason=reason)
 
 
 async def scrape_dependents(
@@ -205,130 +415,48 @@ async def scrape_dependents(
     cache: SqliteCache | None = None,
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
-    max_pages: int = MAX_PAGES,
+    max_pages: int = MAX_PAGES_CEILING,
+    *,
+    rows: int | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    adaptive_stop: bool = True,
+    rate_limiter: AdaptiveRateLimiter | None = None,
 ) -> ScrapeResult:
-    """Scrape GitHub dependents pages and return repositories sorted by stars.
+    """Compatibility wrapper: drain stream_dependents into a ScrapeResult.
 
-    Uses a prefetch pipeline: while processing page N, page N+1 is already
-    being fetched. Cache hits skip the network entirely.
-
-    Args:
-        session: aiohttp client session.
-        url: GitHub repository URL.
-        dependent_type: REPOSITORY or PACKAGE.
-        min_stars: Minimum star count to include.
-        cache: Optional SQLite cache for HTTP responses.
-        on_progress: Optional async callback(current_page, estimated_total_pages).
-        token: Optional GitHub token for authenticated scraping (higher rate limits).
-        max_pages: Maximum number of pages to scrape (default: 1000).
+    ``rows is None`` (default) returns every matched repo, sorted by stars, and
+    ``max_pages`` defaults to ``MAX_PAGES_CEILING`` (1000) — the historical
+    "return everything up to the ceiling" behavior, deliberately *overriding* the
+    bounded 200-page (`DEFAULT_MAX_PAGES`) default of ``stream_dependents``. This
+    keeps existing callers (the ``deps``/``search`` CLI in `app.py`, which pass no
+    ``max_pages`` or their own) unchanged until Phase 4 introduces a user-facing
+    ``--max-pages`` budget. Pass ``rows`` for a bounded top-K with adaptive stop.
     """
-    owner, repo = validate_github_url(url)
-    base_url = f"{GITHUB_URL}/{owner}/{repo}/network/dependents"
-    current_url: str | None = f"{base_url}?dependent_type={dependent_type.value}"
-
-    rate_limiter = _RATE_LIMITER_AUTH if token else _RATE_LIMITER_UNAUTH
-    auth_headers: dict[str, str] = {"Authorization": f"token {token}"} if token else {}
-
-    all_repos: list[Repository] = []
-    seen_urls: set[str] = set()
-    source_url = f"{GITHUB_URL}/{owner}/{repo}"
-    page = 0
-    prefetch_task: asyncio.Task[tuple[str | None, str | None]] | None = None
-    estimated_total_pages = 0
-    estimated_total_dependents = 0
-    fetch_failed = False
-
-    while current_url and page < max_pages:
-        # Check cache first
-        html: str | None = None
-        cache_hit = False
-        if cache:
-            cached = await cache.get(current_url)
-            if cached and cached["body"] is not None and not cached.get("expired"):
-                html = cached["body"].decode("utf-8")
-                cache_hit = True
-
-        if html is None:
-            # Use prefetched result if available, otherwise fetch now
-            if prefetch_task is not None:
-                html, _etag = await prefetch_task
-                prefetch_task = None
-            else:
-                html, _etag = await _fetch_page(
-                    session,
-                    current_url,
-                    rate_limiter,
-                    auth_headers,
-                    cache,
-                )
-
-            if html is None:
-                fetch_failed = True
-                break
-
-        page += 1
-
-        if page == 1:
-            counts = parse_dependent_counts(html)
-            dep_count = counts.get(dependent_type.value, 0)
-            estimated_total_dependents = dep_count
-            estimated_total_pages = dep_count // DEPENDENTS_PER_PAGE if dep_count > 0 else 0
-
-        # Parse current page
-        repos, next_url = parse_dependents_page(html)
-
-        # Start prefetching next page if it's not cached
-        if next_url and prefetch_task is None:
-            next_cached = False
-            if cache:
-                next_entry = await cache.get(next_url)
-                next_cached = bool(
-                    next_entry and next_entry["body"] is not None and not next_entry.get("expired")
-                )
-            if not next_cached:
-                prefetch_task = asyncio.create_task(
-                    _fetch_page(session, next_url, rate_limiter, auth_headers, cache)
-                )
-
-        for repo_obj in repos:
-            if repo_obj.url in seen_urls or repo_obj.url == source_url:
-                continue
-            if repo_obj.stars >= min_stars:
-                seen_urls.add(repo_obj.url)
-                all_repos.append(repo_obj)
-
-        logger.debug("Page %d: %s", page, "cache hit" if cache_hit else "network fetch")
-        if on_progress:
-            await on_progress(page, estimated_total_pages)
-
-        current_url = next_url
-
-    # Cancel any outstanding prefetch
-    if prefetch_task is not None:
-        prefetch_task.cancel()
-        try:
-            await prefetch_task
-        except asyncio.CancelledError:
-            pass  # Expected when scraping ends before prefetch completes
-
-    # Classify how the walk ended. `fetch_failed` is set only by the `html is None`
-    # break above; a clean exhaustion drops `current_url` to None, and hitting the cap
-    # leaves `current_url` pointing at an unfetched next page with `page == max_pages`.
-    if fetch_failed:
-        reason: ScrapeReason | None = ScrapeReason.NETWORK_FAILURE
-    elif current_url is not None and page >= max_pages:
-        reason = ScrapeReason.MAX_PAGES_REACHED
-    else:
-        reason = None
-
-    all_repos.sort(key=lambda r: r.stars, reverse=True)
-    return ScrapeResult(
-        repos=all_repos,
-        pages_scraped=page,
+    terminal: ScrapeSnapshot | None = None
+    async for snapshot in stream_dependents(
+        session,
+        url,
+        rows=rows,
+        dependent_type=dependent_type,
+        min_stars=min_stars,
+        cache=cache,
+        on_progress=on_progress,
+        token=token,
         max_pages=max_pages,
-        estimated_total_pages=estimated_total_pages,
-        estimated_total_dependents=estimated_total_dependents,
-        complete=reason is None,
-        reason=reason,
-        matched_count=len(all_repos),
+        concurrency=concurrency,
+        adaptive_stop=adaptive_stop,
+        rate_limiter=rate_limiter,
+    ):
+        terminal = snapshot
+
+    assert terminal is not None  # noqa: S101  # stream always yields a terminal snapshot
+    return ScrapeResult(
+        repos=terminal.top_k,
+        pages_scraped=terminal.pages_scraped,
+        max_pages=min(max_pages, MAX_PAGES_CEILING),
+        estimated_total_pages=terminal.estimated_total_pages,
+        estimated_total_dependents=terminal.estimated_total_dependents,
+        complete=terminal.complete,
+        reason=terminal.reason,
+        matched_count=terminal.matched_count,
     )

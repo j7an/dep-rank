@@ -58,6 +58,23 @@ class ScrapeResult(BaseModel):
         return self
 
 
+class ScrapeSnapshot(BaseModel):
+    """One emission from the streaming scraper.
+
+    Per-page emissions have ``done=False``; exactly one terminal emission has
+    ``done=True`` and carries the authoritative ``complete``/``reason``.
+    """
+
+    top_k: list[Repository]
+    pages_scraped: int
+    estimated_total_pages: int
+    estimated_total_dependents: int
+    matched_count: int
+    done: bool = False
+    complete: bool = False
+    reason: ScrapeReason | None = None
+
+
 class DependentsResult(BaseModel):
     """Result of scraping dependents for a repository."""
 
