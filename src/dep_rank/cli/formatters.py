@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
-from dep_rank.core.models import CodeSearchResult, DependentsResult
+from dep_rank.core.models import CodeSearchResult, DependentsResult, ScrapeReason
 
 console = Console()
 
@@ -71,6 +71,26 @@ def print_search_results(result: CodeSearchResult) -> None:
 
     console.print(table)
     console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
+
+
+def partial_warning(reason: ScrapeReason | None) -> str:
+    """Render a one-line caveat explaining why a result is partial."""
+    messages = {
+        ScrapeReason.MAX_PAGES_REACHED: (
+            "Stopped at the page cap — results are a partial top-K. "
+            "Raise --max-pages (ceiling 1000) for deeper coverage."
+        ),
+        ScrapeReason.TREND_CONVERGED: (
+            "Stopped early — the adaptive heuristic judged the top-K stable. "
+            "Use --no-adaptive-stop to scrape until exhaustion or the --max-pages cap."
+        ),
+        ScrapeReason.NETWORK_FAILURE: ("Scrape ended on a network error — results are partial."),
+        ScrapeReason.RATE_LIMITED: (
+            "Scrape ended on rate limiting — results are partial. A GitHub token raises the limit."
+        ),
+    }
+    text = messages.get(reason, "Results are partial.") if reason else "Results are partial."
+    return f"[yellow]⚠ {text}[/yellow]"
 
 
 def format_scrape_summary(

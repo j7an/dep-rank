@@ -168,3 +168,32 @@ class TestFormatScrapeSummary:
         )
         assert "0/1000 pages (0.0%)" in summary
         assert "Found 0 dependents" in summary
+
+
+class TestPartialWarning:
+    def test_reasons_have_distinct_messages(self) -> None:
+        from dep_rank.cli.formatters import partial_warning
+        from dep_rank.core.models import ScrapeReason
+
+        msgs = {
+            partial_warning(r)
+            for r in (
+                ScrapeReason.MAX_PAGES_REACHED,
+                ScrapeReason.TREND_CONVERGED,
+                ScrapeReason.NETWORK_FAILURE,
+                ScrapeReason.RATE_LIMITED,
+            )
+        }
+        assert len(msgs) == 4  # each reason renders a distinct line
+
+    def test_max_pages_mentions_flag(self) -> None:
+        from dep_rank.cli.formatters import partial_warning
+        from dep_rank.core.models import ScrapeReason
+
+        assert "--max-pages" in partial_warning(ScrapeReason.MAX_PAGES_REACHED)
+
+    def test_converged_mentions_opt_out(self) -> None:
+        from dep_rank.cli.formatters import partial_warning
+        from dep_rank.core.models import ScrapeReason
+
+        assert "--no-adaptive-stop" in partial_warning(ScrapeReason.TREND_CONVERGED)
