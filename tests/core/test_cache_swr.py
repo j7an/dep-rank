@@ -83,6 +83,20 @@ class TestSWRManager:
         assert entry["expired"] is False
 
     @pytest.mark.asyncio
+    async def test_refresh_bumps_ttl_on_304(self, cache: SqliteCache) -> None:
+        """A 304 revalidation keeps the stale body but refreshes its TTL (no longer expired)."""
+        await _seed_expired(cache, URL, b"stale", '"old"')
+        session = _FakeSession([_FakeResp(304)])
+        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr.schedule(URL)
+        await swr.drain()
+        assert session.calls == 1
+        entry = await cache.get(URL)
+        assert entry is not None
+        assert entry["body"] == b"stale"  # body unchanged on 304
+        assert entry["expired"] is False  # TTL bumped
+
+    @pytest.mark.asyncio
     async def test_429_feeds_aimd_then_suppresses(self, cache: SqliteCache) -> None:
         """A background 429 must update the shared limiter (AIMD halves concurrency),
         leave the stale body intact, and — once concurrency hits the floor — suppress
