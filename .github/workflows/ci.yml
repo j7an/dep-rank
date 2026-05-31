@@ -42,26 +42,36 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
           if git diff --quiet uv.lock; then
             echo "No lockfile changes"
             echo "committed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          CONTENT=$(base64 -w0 uv.lock)
+          base64 -w0 uv.lock > "$RUNNER_TEMP/uv.lock.b64"
           HEAD_OID=$(git rev-parse HEAD)
           # shellcheck disable=SC2016
-          gh api graphql -f query='
-            mutation($input: CreateCommitOnBranchInput!) {
-              createCommitOnBranch(input: $input) {
-                commit { url }
+          jq -n \
+            --arg repo "$REPOSITORY" \
+            --arg branch "$HEAD_REF" \
+            --arg oid "$HEAD_OID" \
+            --rawfile contents "$RUNNER_TEMP/uv.lock.b64" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid url } } }",
+              variables: {
+                input: {
+                  branch: { repositoryNameWithOwner: $repo, branchName: $branch },
+                  expectedHeadOid: $oid,
+                  message: { headline: "deps: update uv.lock" },
+                  fileChanges: { additions: [ { path: "uv.lock", contents: $contents } ] }
+                }
               }
-            }
-          ' -f "input[branchRef][repositoryNameWithOwner]=$REPOSITORY" \
-            -f "input[branchRef][branchName]=$HEAD_REF" \
-            -f "input[expectedHeadOid]=${HEAD_OID}" \
-            -f "input[message][headline]=deps: update uv.lock" \
-            -f "input[fileChanges][additions][0][path]=uv.lock" \
-            -f "input[fileChanges][additions][0][contents]=${CONTENT}"
+            }' > "$RUNNER_TEMP/commit.json"
+          RESPONSE=$(gh api graphql --input "$RUNNER_TEMP/commit.json")
+          if [ -z "$(printf '%s' "$RESPONSE" | jq -r '.data.createCommitOnBranch.commit.oid // empty')" ]; then
+            echo "::error::createCommitOnBranch did not create a commit. Response: $RESPONSE"
+            exit 1
+          fi
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
   lint:
@@ -75,6 +85,11 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+      - name: Block on lockfile repair failure
+        if: ${{ needs.update-lockfile.result == 'failure' }}
+        shell: bash
+        run: |
+          echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
@@ -97,6 +112,11 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+      - name: Block on lockfile repair failure
+        if: ${{ needs.update-lockfile.result == 'failure' }}
+        shell: bash
+        run: |
+          echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
@@ -122,6 +142,11 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
+      - name: Block on lockfile repair failure
+        if: ${{ needs.update-lockfile.result == 'failure' }}
+        shell: bash
+        run: |
+          echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
