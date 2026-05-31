@@ -8,6 +8,7 @@ import itertools
 import logging
 import random
 import re
+import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 
@@ -44,6 +45,11 @@ DEFAULT_CONCURRENCY = 3
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 MAX_PAGES = MAX_PAGES_CEILING  # back-compat: cli.app's search progress bar imports this
+
+SWR_COOLDOWN = 300.0  # seconds a URL serves stale without re-refreshing after a failure
+SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
+SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
+#                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
 
 
 class ScrapeError(Exception):
@@ -237,6 +243,136 @@ async def _read_page(
             body: bytes = cached["body"]
             return body.decode("utf-8")
     return await _fetch_page(session, url, limiter, semaphore, auth_headers, cache)
+
+
+class SWRManager:
+    """Owns background stale-while-revalidate refreshes for one scrape.
+
+    Disabled when unauthenticated (refresh would displace the foreground walk under
+    the 1/min budget). Refreshes are deduped per URL, capped at one in flight,
+    suppressed while AIMD has concurrency at its floor, gated *at refresh time* on
+    foreground token headroom (via ``try_acquire(reserve=...)``), cooled down on
+    failure, and drained before the generator completes (while the session is still
+    open) — never at cache.close(). Refresh outcomes feed the shared limiter
+    (``note_success`` on 200/304, ``note_429`` on 429), so background rate pressure
+    throttles both background and foreground work.
+    """
+
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        limiter: AdaptiveRateLimiter,
+        auth_headers: dict[str, str],
+        cache: SqliteCache | None,
+        *,
+        enabled: bool,
+        cooldown: float = SWR_COOLDOWN,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._session = session
+        self._limiter = limiter
+        self._auth_headers = auth_headers
+        self._cache = cache
+        self._enabled = enabled and cache is not None
+        self._cooldown = cooldown
+        self._now = now
+        self._semaphore = asyncio.Semaphore(1)
+        self._inflight: set[str] = set()
+        self._cooldown_until: dict[str, float] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def schedule(self, url: str) -> None:
+        """Schedule a background refresh if enabled, not deduped, off cooldown, and AIMD allows it.
+
+        Token headroom is deliberately **not** checked here. A schedule-time
+        ``tokens_available()`` read is lock-unaware and races the foreground walk
+        (tokens read here can be gone by the time the refresh runs). Instead the
+        token decision is made atomically at refresh time via
+        ``try_acquire(reserve=SWR_HEADROOM_TOKENS - 1)``, which both reserves
+        headroom for the foreground and consumes in one lock-aware step.
+        """
+        if not self._enabled or url in self._inflight:
+            return
+        until = self._cooldown_until.get(url)
+        if until is not None and self._now() < until:
+            return
+        if self._limiter.current_max_concurrency <= 1:
+            # AIMD has throttled concurrency to its floor on sustained 429s —
+            # suppress background work so it cannot compete with foreground retries.
+            return
+        self._inflight.add(url)
+        task = asyncio.create_task(self._refresh(url))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _refresh(self, url: str) -> None:
+        try:
+            async with self._semaphore:
+                # Atomically consume a token only if foreground headroom remains;
+                # if not (foreground drained the bucket), abort without making a request.
+                if not self._limiter.try_acquire(reserve=SWR_HEADROOM_TOKENS - 1):
+                    return
+                cached = await self._cache.get(url) if self._cache else None
+                headers = dict(self._auth_headers)
+                if cached and cached["etag"]:
+                    headers["If-None-Match"] = cached["etag"]
+                timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+                async with self._session.get(url, timeout=timeout, headers=headers) as resp:
+                    if resp.status == 200:
+                        self._limiter.note_success()
+                        body = await resp.read()
+                        if self._cache:
+                            await self._cache.put(
+                                url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL
+                            )
+                    elif resp.status == 304 and cached and cached["body"] is not None:
+                        self._limiter.note_success()
+                        if self._cache:
+                            await self._cache.put(
+                                url, cached["body"], etag=cached["etag"], ttl=CACHE_TTL
+                            )
+                    elif resp.status == 429:
+                        # Feed the *shared* limiter so AIMD halves concurrency — which
+                        # suppresses further background refreshes (the schedule gate) and
+                        # lengthens foreground backoff. Mirrors the foreground 429 path in
+                        # `_fetch_page`. The returned delay is unused: the background path
+                        # waits via the per-URL cooldown below, not an in-band sleep.
+                        retry_after = resp.headers.get("Retry-After")
+                        self._limiter.note_429(float(retry_after) if retry_after else None)
+                        self._cooldown_until[url] = self._now() + self._cooldown
+                        logger.warning(
+                            "SWR refresh rate-limited (429) for %s; cooling down %.0fs",
+                            url,
+                            self._cooldown,
+                        )
+                    else:
+                        self._cooldown_until[url] = self._now() + self._cooldown
+                        logger.warning(
+                            "SWR refresh got unexpected status %d for %s; cooling down %.0fs",
+                            resp.status,
+                            url,
+                            self._cooldown,
+                        )
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            self._cooldown_until[url] = self._now() + self._cooldown
+            logger.warning(
+                "SWR refresh failed for %s (%s); cooling down %.0fs",
+                url,
+                exc.__class__.__name__,
+                self._cooldown,
+            )
+        finally:
+            self._inflight.discard(url)
+
+    async def drain(self, timeout: float = SWR_DRAIN_TIMEOUT) -> None:
+        """Await outstanding refreshes up to ``timeout``, then cancel any stragglers."""
+        if not self._tasks:
+            return
+        _done, pending = await asyncio.wait(set(self._tasks), timeout=timeout)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _heap_push(
