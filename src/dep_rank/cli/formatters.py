@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
-from dep_rank.core.models import CodeSearchResult, DependentsResult, ScrapeReason
+from dep_rank.core.models import CodeSearchResult, DependentsResult, ScrapeReason, ScrapeSnapshot
 
 console = Console()
 
@@ -91,6 +91,30 @@ def partial_warning(reason: ScrapeReason | None) -> str:
     }
     text = messages.get(reason, "Results are partial.") if reason else "Results are partial."
     return f"[yellow]⚠ {text}[/yellow]"
+
+
+def build_topk_table(snapshot: ScrapeSnapshot) -> Table:
+    """Render the running top-K as a Rich table for the Live display during a scrape.
+
+    The title always carries progress context (page + matched count) so that an empty
+    top-K — high ``--min-stars``, ``rows=0``, or a genuinely no-match scrape — still
+    renders live progress instead of a blank frame. An empty top-K shows a placeholder
+    row rather than an empty table.
+    """
+    table = Table(
+        title=(
+            f"Top dependents so far "
+            f"(page {snapshot.pages_scraped}, {snapshot.matched_count} matched)"
+        )
+    )
+    table.add_column("Repository", style="cyan", no_wrap=True)
+    table.add_column("Stars", justify="right", style="yellow")
+    if snapshot.top_k:
+        for repo in snapshot.top_k:
+            table.add_row(f"{repo.owner}/{repo.name}", humanize(repo.stars))
+    else:
+        table.add_row("(no matching repositories yet)", "—")
+    return table
 
 
 def format_scrape_summary(

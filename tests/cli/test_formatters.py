@@ -197,3 +197,52 @@ class TestPartialWarning:
         from dep_rank.core.models import ScrapeReason
 
         assert "--no-adaptive-stop" in partial_warning(ScrapeReason.TREND_CONVERGED)
+
+
+class TestBuildTopKTable:
+    def test_lists_repos_with_humanized_stars(self) -> None:
+        from rich.console import Console
+
+        from dep_rank.cli.formatters import build_topk_table
+        from dep_rank.core.models import Repository, ScrapeSnapshot
+
+        snap = ScrapeSnapshot(
+            top_k=[
+                Repository(owner="a", name="b", url="https://github.com/a/b", stars=1500),
+            ],
+            pages_scraped=2,
+            estimated_total_pages=5,
+            estimated_total_dependents=100,
+            matched_count=10,
+        )
+        table = build_topk_table(snap)
+        console = Console()
+        with console.capture() as cap:
+            console.print(table)
+        out = cap.get()
+        assert "a/b" in out
+        assert "1.5K" in out
+        assert "10 matched" in out  # progress context in the title
+        assert "page 2" in out  # progress context: page number in the title
+
+    def test_empty_top_k_still_renders_progress(self) -> None:
+        """A snapshot with no top-K (e.g. high --min-stars early on) must still render
+        progress context and a placeholder row, never a blank frame."""
+        from rich.console import Console
+
+        from dep_rank.cli.formatters import build_topk_table
+        from dep_rank.core.models import ScrapeSnapshot
+
+        snap = ScrapeSnapshot(
+            top_k=[],
+            pages_scraped=3,
+            estimated_total_pages=5,
+            estimated_total_dependents=100,
+            matched_count=0,
+        )
+        console = Console()
+        with console.capture() as cap:
+            console.print(build_topk_table(snap))
+        out = cap.get()
+        assert "page 3" in out
+        assert "no matching repositories" in out.lower()
