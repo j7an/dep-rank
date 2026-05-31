@@ -7,6 +7,7 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
+from dep_rank.core.rate_limiter import AdaptiveRateLimiter
 from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
 from tests.conftest import (
     DEPENDENTS_HTML_LAST_PAGE,
@@ -15,6 +16,17 @@ from tests.conftest import (
     DEPENDENTS_HTML_WITH_COUNTS,
     DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
 )
+
+
+def _fast_limiter() -> AdaptiveRateLimiter:
+    """A non-throttling limiter for multi-page tests not about rate limiting.
+
+    A token-less scrape builds the unauthenticated 1/min limiter, whose lone token is
+    drained by page 1; page 2's ``acquire()`` would then ``asyncio.sleep(~60)``. These
+    tests exercise pagination/filtering/progress/estimates, not throttling, so inject a
+    high-capacity bucket that never blocks.
+    """
+    return AdaptiveRateLimiter(rate=100_000, period=1.0, concurrency=3)
 
 
 class TestParseDependentCounts:
@@ -142,7 +154,9 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                result = await scrape_dependents(session, "https://github.com/owner/repo")
+                result = await scrape_dependents(
+                    session, "https://github.com/owner/repo", rate_limiter=_fast_limiter()
+                )
             assert len(result.repos) == 4
 
     @pytest.mark.asyncio
@@ -161,6 +175,7 @@ class TestScrapeDependents:
                     session,
                     "https://github.com/owner/repo",
                     min_stars=200,
+                    rate_limiter=_fast_limiter(),
                 )
             assert all(r.stars >= 200 for r in result.repos)
 
@@ -179,7 +194,9 @@ class TestScrapeDependents:
                 body=DEPENDENTS_HTML_LAST_PAGE,
             )
             async with ClientSession() as session:
-                result = await scrape_dependents(session, "https://github.com/owner/repo")
+                result = await scrape_dependents(
+                    session, "https://github.com/owner/repo", rate_limiter=_fast_limiter()
+                )
             urls = [r.url for r in result.repos]
             assert len(urls) == len(set(urls))
 
@@ -219,6 +236,7 @@ class TestScrapeDependents:
                     session,
                     "https://github.com/owner/repo",
                     on_progress=on_progress,
+                    rate_limiter=_fast_limiter(),
                 )
         assert len(progress_calls) == 2
         # 90 repos / 30 per page = 3 estimated total pages
@@ -558,6 +576,7 @@ class TestScrapeResultReturn:
                     session,
                     "https://github.com/owner/repo",
                     on_progress=on_progress,
+                    rate_limiter=_fast_limiter(),
                 )
         assert result.pages_scraped == 2
         assert result.estimated_total_pages == 30  # 900 // 30
