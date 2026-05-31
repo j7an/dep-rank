@@ -260,3 +260,128 @@ class TestVersionOption:
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
         assert __version__ in result.output
+
+
+class TestDepsHardeningFlags:
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_flags_pass_through_and_counts_use_matched(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from dep_rank.core.models import ScrapeReason
+
+        mock_scrape.return_value = ScrapeResult(
+            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            pages_scraped=200,
+            max_pages=200,
+            estimated_total_pages=500,
+            estimated_total_dependents=15000,
+            complete=False,
+            reason=ScrapeReason.MAX_PAGES_REACHED,
+            matched_count=4200,
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "deps",
+                "https://github.com/django/django",
+                "--token",
+                "ghp_x",
+                "--concurrency",
+                "5",
+                "--no-adaptive-stop",
+                "--format",
+                "json",
+            ],
+        )
+        assert result.exit_code == 0
+        _, kwargs = mock_scrape.call_args
+        assert kwargs["concurrency"] == 5
+        assert kwargs["adaptive_stop"] is False
+        assert kwargs["rows"] == 10  # default --rows
+        import json
+
+        payload = json.loads(result.stdout)
+        assert payload["complete"] is False
+        assert payload["reason"] == "max_pages_reached"
+        assert payload["total_count"] == 4200
+        assert "Scraped" not in result.stdout
+        assert "Found" not in result.stdout
+        assert "⚠" not in result.stdout
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_table_mode_shows_summary(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_scrape.return_value = ScrapeResult(
+            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            pages_scraped=3,
+            max_pages=200,
+            estimated_total_pages=3,
+            estimated_total_dependents=90,
+            matched_count=1,
+        )
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/django/django", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0
+        assert "Found" in result.output  # summary shown in table mode
+
+    @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
+    def test_unauthenticated_warning(
+        self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
+    ) -> None:
+        mock_run.return_value = mock_result
+        result = runner.invoke(cli, ["deps", "https://github.com/django/django"])
+        assert result.exit_code == 0
+        assert "token" in result.stderr.lower()
+        assert "60" in result.stderr  # mentions the 60/hour limit
+
+    @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
+    def test_no_warning_with_token(
+        self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
+    ) -> None:
+        mock_run.return_value = mock_result
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/django/django", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0
+        assert "token" not in result.stderr.lower()
+
+    def test_concurrency_out_of_range_is_rejected(self, runner: CliRunner) -> None:
+        for bad in ("0", "11"):
+            result = runner.invoke(
+                cli,
+                ["deps", "https://github.com/x/y", "--token", "ghp_x", "--concurrency", bad],
+            )
+            assert result.exit_code != 0  # Click IntRange usage error
+            assert "concurrency" in result.output.lower() or "range" in result.output.lower()
+
+    @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
+    def test_max_pages_above_ceiling_warns_and_clamps(
+        self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
+    ) -> None:
+        mock_run.return_value = mock_result
+        result = runner.invoke(
+            cli,
+            ["deps", "https://github.com/x/y", "--token", "ghp_x", "--max-pages", "5000"],
+        )
+        assert result.exit_code == 0
+        assert "1000" in result.stderr  # warned about the cap
+        _, kwargs = mock_run.call_args
+        assert kwargs["max_pages"] == 1000

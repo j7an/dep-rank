@@ -30,7 +30,10 @@ async def run_deps(
     packages: bool,
     token: str | None,
     verbose: bool = False,
-    max_pages: int = 1000,
+    max_pages: int = 200,
+    concurrency: int = 3,
+    adaptive_stop: bool = True,
+    quiet: bool = False,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
@@ -55,7 +58,7 @@ async def run_deps(
         ) as session:
             progress_ctx = None
             task_id = None
-            if not verbose:
+            if not verbose and not quiet:
                 progress_ctx = Progress(
                     TextColumn("[bold green]Scraping dependents..."),
                     BarColumn(),
@@ -90,22 +93,30 @@ async def run_deps(
                     on_progress=on_progress,
                     token=token,
                     max_pages=max_pages,
+                    rows=rows,
+                    concurrency=concurrency,
+                    adaptive_stop=adaptive_stop,
                 )
             finally:
                 if progress_ctx is not None:
                     progress_ctx.stop()
 
             repos = scrape_result.repos
-            total_count = len(repos)
+            total_count = scrape_result.matched_count
 
-            summary = format_scrape_summary(
-                pages_scraped=scrape_result.pages_scraped,
-                max_pages=scrape_result.max_pages,
-                estimated_total_pages=scrape_result.estimated_total_pages,
-                found_count=total_count,
-                min_stars=min_stars,
-            )
-            console.print(f"[green]{summary}")
+            if not quiet:
+                summary = format_scrape_summary(
+                    pages_scraped=scrape_result.pages_scraped,
+                    max_pages=scrape_result.max_pages,
+                    estimated_total_pages=scrape_result.estimated_total_pages,
+                    found_count=total_count,
+                    min_stars=min_stars,
+                )
+                console.print(f"[green]{summary}")
+                if not scrape_result.complete:
+                    from dep_rank.cli.formatters import partial_warning
+
+                    console.print(partial_warning(scrape_result.reason))
 
             repos = repos[:rows]
 
@@ -120,6 +131,10 @@ async def run_deps(
                 repos=repos,
                 dependent_type=dep_type,
                 scraped_at=datetime.now(tz=UTC),
+                complete=scrape_result.complete,
+                reason=scrape_result.reason,
+                pages_scraped=scrape_result.pages_scraped,
+                estimated_total_pages=scrape_result.estimated_total_pages,
             )
     finally:
         await cache.close()
@@ -155,7 +170,20 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     "--packages/--repositories", default=False, help="Search packages instead of repositories."
 )
 @click.option("--token", envvar="DEP_RANK_TOKEN", default=None, help="GitHub token.")
-@click.option("--max-pages", default=1000, help="Maximum pages to scrape (default: 1000).")
+@click.option(
+    "--max-pages", default=200, help="Maximum pages to scrape (default: 200, ceiling 1000)."
+)
+@click.option(
+    "--concurrency",
+    type=click.IntRange(1, 10),
+    default=3,
+    help="Max concurrent page fetches (1-10, default: 3).",
+)
+@click.option(
+    "--adaptive-stop/--no-adaptive-stop",
+    default=True,
+    help="Stop early when recent pages can no longer change the top-K (default: on).",
+)
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -167,6 +195,8 @@ def deps(
     packages: bool,
     token: str | None,
     max_pages: int,
+    concurrency: int,
+    adaptive_stop: bool,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars."""
     try:
@@ -182,9 +212,33 @@ def deps(
         )
         sys.exit(1)
 
+    if max_pages > 1000:
+        click.echo("Warning: --max-pages capped at the 1000 ceiling.", err=True)
+        max_pages = 1000
+
+    if not token:
+        click.echo(
+            "Warning: no GitHub token configured (--token or DEP_RANK_TOKEN). "
+            "Unauthenticated scraping is limited to ~60 requests/hour; "
+            "large repositories will be slow or return partial results.",
+            err=True,
+        )
+
     verbose = ctx.obj.get("verbose", False)
     result = asyncio.run(
-        run_deps(url, rows, min_stars, descriptions, packages, token, verbose, max_pages)
+        run_deps(
+            url,
+            rows,
+            min_stars,
+            descriptions,
+            packages,
+            token,
+            verbose,
+            max_pages=max_pages,
+            concurrency=concurrency,
+            adaptive_stop=adaptive_stop,
+            quiet=(output_format == "json"),
+        )
     )
 
     from dep_rank.cli.formatters import print_dependents_json, print_dependents_table
