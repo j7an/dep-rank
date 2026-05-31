@@ -13,39 +13,38 @@ import pytest
 
 import dep_rank.scripts.drift_check as drift_check
 from dep_rank.core.models import Repository, ScrapeReason, ScrapeResult
-from dep_rank.scripts.drift_check import evaluate_drift
 
 
 def test_healthy_result_has_no_problems() -> None:
-    assert evaluate_drift(repos_count=5, total_dependents=15000) == []
+    assert drift_check.evaluate_drift(repos_count=5, total_dependents=15000) == []
 
 
 def test_zero_repos_flags_item_selectors() -> None:
-    problems = evaluate_drift(repos_count=0, total_dependents=15000)
+    problems = drift_check.evaluate_drift(repos_count=0, total_dependents=15000)
     assert any("selector" in p.lower() for p in problems)
 
 
 def test_zero_total_flags_header() -> None:
-    problems = evaluate_drift(repos_count=5, total_dependents=0)
+    problems = drift_check.evaluate_drift(repos_count=5, total_dependents=0)
     assert any("header" in p.lower() or "count" in p.lower() for p in problems)
 
 
 def test_both_broken_flags_both() -> None:
-    assert len(evaluate_drift(repos_count=0, total_dependents=0)) == 2
+    assert len(drift_check.evaluate_drift(repos_count=0, total_dependents=0)) == 2
 
 
 @pytest.mark.parametrize("reason", [ScrapeReason.NETWORK_FAILURE, ScrapeReason.RATE_LIMITED])
 def test_transport_failure_is_inconclusive_not_drift(reason: ScrapeReason) -> None:
     """A network/rate failure must not be reported as selector drift, even when the
     failed scrape returned zero repos and a zero header count."""
-    assert evaluate_drift(repos_count=0, total_dependents=0, reason=reason) == []
+    assert drift_check.evaluate_drift(repos_count=0, total_dependents=0, reason=reason) == []
 
 
 def test_max_pages_reached_still_evaluates_selectors() -> None:
     """MAX_PAGES_REACHED is expected on the multi-page canary; it does not suppress
     evaluation — healthy counts pass, and a zero-repo page still flags drift."""
-    assert evaluate_drift(5, 15000, ScrapeReason.MAX_PAGES_REACHED) == []
-    assert evaluate_drift(0, 15000, ScrapeReason.MAX_PAGES_REACHED) != []
+    assert drift_check.evaluate_drift(5, 15000, ScrapeReason.MAX_PAGES_REACHED) == []
+    assert drift_check.evaluate_drift(0, 15000, ScrapeReason.MAX_PAGES_REACHED) != []
 
 
 def test_missing_token_fails_before_scraping(
