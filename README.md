@@ -34,6 +34,9 @@ dep-rank deps https://github.com/django/django --packages
 | `--descriptions` | off | Fetch descriptions via GitHub API (requires token) |
 | `--packages` | off | Search packages instead of repositories |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token |
+| `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
+| `--concurrency` | 3 | Max concurrent page fetches (1–10) |
+| `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
 
 ### `dep-rank search` — Search code in dependents
 
@@ -47,6 +50,14 @@ dep-rank search https://github.com/django/django "middleware" --max-repos 20
 | `--max-repos` | 10 | Maximum repos to search |
 | `--min-stars` | 50 | Only search repos with this many stars |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token (required) |
+| `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
+| `--concurrency` | 3 | Max concurrent page fetches (1–10) |
+
+`search` always runs a bounded non-adaptive top-K scrape (`--no-adaptive-stop` is not exposed; adaptive early-stop is permanently disabled for this command).
+
+### Partial results
+
+A scrape result (`deps`, and the `search` pre-pass) reports whether it finished: results include a `complete` flag and a `reason`. `complete: false` means the scrape stopped early — `max_pages_reached` (raise `--max-pages`), `trend_converged` (the adaptive heuristic judged the top-K stable; use `--no-adaptive-stop` to scrape until exhaustion or `--max-pages`), `network_failure`, or `rate_limited`. `total_count`/`filtered_count` are then lower bounds across the pages actually scraped, not population totals.
 
 ### `dep-rank cache` — Manage cache
 
@@ -62,6 +73,8 @@ Set the `DEP_RANK_TOKEN` environment variable with a GitHub personal access toke
 ```bash
 export DEP_RANK_TOKEN=ghp_your_token_here
 ```
+
+A token is effectively required for non-trivial use: unauthenticated GitHub HTML scraping is limited to ~60 requests/hour per IP, so unauthenticated runs are suitable only for small one-off scrapes. Set `DEP_RANK_TOKEN` to raise the limit.
 
 **What works without a token:**
 - `dep-rank deps` — core scraping and star ranking
@@ -80,7 +93,7 @@ dep-rank uses a three-stage pipeline:
 2. **Enrich** (optional) — one GraphQL batch query fetches accurate star counts and descriptions for the top N results (replaces 100 individual REST API calls)
 3. **Present** — returns structured results as a Rich table
 
-Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag support for conditional requests.
+Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag support for conditional requests. Expired pages are served immediately and refreshed in the background (stale-while-revalidate) on authenticated runs.
 
 ## Development
 

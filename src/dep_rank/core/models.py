@@ -84,6 +84,17 @@ class DependentsResult(BaseModel):
     repos: list[Repository]
     dependent_type: DependentType
     scraped_at: datetime
+    complete: bool = True
+    reason: ScrapeReason | None = None
+    pages_scraped: int = 0
+    estimated_total_pages: int = 0
+
+    @model_validator(mode="after")
+    def _check_complete_reason_invariant(self) -> DependentsResult:
+        if self.complete != (self.reason is None):
+            msg = "DependentsResult invariant violated: complete must equal (reason is None)"
+            raise ValueError(msg)
+        return self
 
 
 class CodeSearchHit(BaseModel):

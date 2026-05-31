@@ -218,6 +218,87 @@ class TestScrapeResultContractFields:
         assert result.reason == reason
 
 
+class TestDependentsResultContractFields:
+    def test_defaults(self) -> None:
+        from datetime import UTC, datetime
+
+        result = DependentsResult(
+            source="https://github.com/x/y",
+            total_count=10,
+            filtered_count=10,
+            repos=[],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+        )
+        assert result.complete is True
+        assert result.reason is None
+        assert result.pages_scraped == 0
+        assert result.estimated_total_pages == 0
+
+
+class TestDependentsResultInvariant:
+    def test_complete_must_equal_reason_absence(self) -> None:
+        from datetime import datetime
+
+        import pytest
+        from pydantic import ValidationError
+
+        from dep_rank.core.models import DependentType, ScrapeReason
+
+        base_dt = datetime(2026, 1, 1)  # noqa: DTZ001
+        with pytest.raises(ValidationError):
+            DependentsResult(
+                source="https://github.com/x/y",
+                total_count=0,
+                filtered_count=0,
+                repos=[],
+                dependent_type=DependentType.REPOSITORY,
+                scraped_at=base_dt,
+                complete=False,
+                reason=None,
+            )
+        with pytest.raises(ValidationError):
+            DependentsResult(
+                source="https://github.com/x/y",
+                total_count=0,
+                filtered_count=0,
+                repos=[],
+                dependent_type=DependentType.REPOSITORY,
+                scraped_at=base_dt,
+                complete=True,
+                reason=ScrapeReason.NETWORK_FAILURE,
+            )
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            ScrapeReason.MAX_PAGES_REACHED,
+            ScrapeReason.TREND_CONVERGED,
+            ScrapeReason.NETWORK_FAILURE,
+            ScrapeReason.RATE_LIMITED,
+        ],
+    )
+    def test_every_reason_marks_incomplete(self, reason: ScrapeReason) -> None:
+        """All four terminal reasons construct cleanly on the user-facing model and
+        satisfy the invariant."""
+        from datetime import datetime
+
+        from dep_rank.core.models import DependentType
+
+        result = DependentsResult(
+            source="https://github.com/x/y",
+            total_count=0,
+            filtered_count=0,
+            repos=[],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime(2026, 1, 1),  # noqa: DTZ001
+            complete=False,
+            reason=reason,
+        )
+        assert result.complete is False
+        assert result.reason == reason
+
+
 class TestScrapeSnapshot:
     def test_per_page_snapshot_defaults(self) -> None:
         from dep_rank.core.models import ScrapeSnapshot
