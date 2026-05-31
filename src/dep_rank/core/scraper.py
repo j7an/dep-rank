@@ -230,18 +230,18 @@ async def _read_page(
     semaphore: asyncio.Semaphore,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
+    swr: SWRManager | None = None,
 ) -> str:
-    """Return a page's HTML, skipping the network on a fresh cache hit.
-
-    Fresh hit -> cached body (no request). Expired-with-body or miss -> _fetch_page
-    (which revalidates via If-None-Match when an ETag is cached). Phase 3 extends the
-    expired branch with stale-while-revalidate.
-    """
+    """Return a page's HTML; fresh-hit skips network, stale-hit serves stale + refreshes."""
     if cache:
         cached = await cache.get(url)
-        if cached and cached["body"] is not None and not cached.get("expired"):
+        if cached and cached["body"] is not None:
             body: bytes = cached["body"]
-            return body.decode("utf-8")
+            if not cached.get("expired"):
+                return body.decode("utf-8")
+            if swr is not None:
+                swr.schedule(url)
+                return body.decode("utf-8")
     return await _fetch_page(session, url, limiter, semaphore, auth_headers, cache)
 
 
@@ -483,6 +483,8 @@ async def stream_dependents(
     semaphore = asyncio.Semaphore(concurrency)
     auth_headers: dict[str, str] = {"Authorization": f"token {token}"} if token else {}
 
+    swr = SWRManager(session, limiter, auth_headers, cache, enabled=bool(token))
+
     heap: list[tuple[int, int, Repository]] = []
     counter = itertools.count()
     seen: set[str] = set()
@@ -494,53 +496,58 @@ async def stream_dependents(
     page = 0
     reason: ScrapeReason | None = None
 
-    while current_url and page < max_pages:
-        try:
-            html = await _read_page(session, current_url, limiter, semaphore, auth_headers, cache)
-        except RateLimitedError:
-            reason = ScrapeReason.RATE_LIMITED
-            break
-        except NetworkFailureError:
-            reason = ScrapeReason.NETWORK_FAILURE
-            break
-        page += 1  # increment only after a page is actually consumed (spec §2)
+    try:
+        while current_url and page < max_pages:
+            try:
+                html = await _read_page(
+                    session, current_url, limiter, semaphore, auth_headers, cache, swr=swr
+                )
+            except RateLimitedError:
+                reason = ScrapeReason.RATE_LIMITED
+                break
+            except NetworkFailureError:
+                reason = ScrapeReason.NETWORK_FAILURE
+                break
+            page += 1  # increment only after a page is actually consumed (spec §2)
 
-        if page == 1:
-            counts = parse_dependent_counts(html)
-            est_deps = counts.get(dependent_type.value, 0)
-            est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps > 0 else 0
+            if page == 1:
+                counts = parse_dependent_counts(html)
+                est_deps = counts.get(dependent_type.value, 0)
+                est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps > 0 else 0
 
-        repos, next_url = parse_dependents_page(html)
-        page_max = 0
-        for repo_obj in repos:
-            if repo_obj.url in seen or repo_obj.url == source_url:
-                continue
-            if repo_obj.stars >= min_stars:
-                seen.add(repo_obj.url)
-                matched += 1
-                page_max = max(page_max, repo_obj.stars)
-                _heap_push(heap, repo_obj, next(counter), rows)
-        recent_max.append(page_max)
+            repos, next_url = parse_dependents_page(html)
+            page_max = 0
+            for repo_obj in repos:
+                if repo_obj.url in seen or repo_obj.url == source_url:
+                    continue
+                if repo_obj.stars >= min_stars:
+                    seen.add(repo_obj.url)
+                    matched += 1
+                    page_max = max(page_max, repo_obj.stars)
+                    _heap_push(heap, repo_obj, next(counter), rows)
+            recent_max.append(page_max)
 
-        if on_progress:
-            await on_progress(page, est_pages)
-        yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=False)
+            if on_progress:
+                await on_progress(page, est_pages)
+            yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=False)
 
-        if adaptive_stop and bounded and _should_stop(heap, rows, recent_max, page):
-            reason = ScrapeReason.TREND_CONVERGED
-            break
-        current_url = next_url
-    else:
-        # Loop exited via its condition (no break): exhausted, unless we stopped at the cap.
-        if current_url is not None and page >= max_pages:
-            reason = ScrapeReason.MAX_PAGES_REACHED
+            if adaptive_stop and bounded and _should_stop(heap, rows, recent_max, page):
+                reason = ScrapeReason.TREND_CONVERGED
+                break
+            current_url = next_url
+        else:
+            # Loop exited via its condition (no break): exhausted, unless we stopped at the cap.
+            if current_url is not None and page >= max_pages:
+                reason = ScrapeReason.MAX_PAGES_REACHED
 
-    # `estimated_total_pages` is always the header-derived estimate (`est_pages`),
-    # matching the historical scraper (it returned the header estimate unconditionally).
-    # Actual pages consumed live in `pages_scraped`; do NOT overwrite the estimate with
-    # `page` on completion — Phase 4 summaries and existing header-estimate tests depend
-    # on the estimate staying the population projection, not the walked count.
-    yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=True, reason=reason)
+        # `estimated_total_pages` is always the header-derived estimate (`est_pages`),
+        # matching the historical scraper (it returned the header estimate unconditionally).
+        # Actual pages consumed live in `pages_scraped`; do NOT overwrite the estimate with
+        # `page` on completion — Phase 4 summaries and existing header-estimate tests depend
+        # on the estimate staying the population projection, not the walked count.
+        yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=True, reason=reason)
+    finally:
+        await swr.drain()
 
 
 async def scrape_dependents(

@@ -198,3 +198,91 @@ class TestSWRManager:
         entry = await cache.get(URL)
         assert entry is not None
         assert entry["body"] == b"stale"
+
+
+class TestSWRIntegration:
+    @pytest.mark.asyncio
+    async def test_read_page_serves_stale_and_schedules_refresh(self, cache: SqliteCache) -> None:
+        from dep_rank.core.scraper import _read_page
+
+        await _seed_expired(cache, URL, b"<html>stale</html>", '"old"')
+        session = _FakeSession([_FakeResp(200, body=b"<html>fresh</html>", etag='"new"')])
+        limiter = _auth_limiter()
+        swr = SWRManager(session, limiter, {}, cache, enabled=True)
+        import asyncio as _asyncio
+
+        html = await _read_page(
+            session,
+            URL,
+            limiter,
+            _asyncio.Semaphore(3),
+            {},
+            cache,
+            swr=swr,
+        )
+        assert html == "<html>stale</html>"  # stale served synchronously
+        await swr.drain()
+        entry = await cache.get(URL)
+        assert entry is not None
+        assert entry["body"] == b"<html>fresh</html>"  # refreshed in background
+
+    @pytest.mark.asyncio
+    async def test_stream_blocks_on_drain_before_returning(self, tmp_path: Any) -> None:
+        """`stream_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
+        not leave the refresh as a fire-and-forget task that merely happens to finish in
+        time.
+
+        The trap this avoids: with an immediate refresh response, the task can complete
+        opportunistically while the wrapper is still consuming snapshots, so a "is the
+        entry refreshed by the time scrape returns?" assertion passes *even if the
+        generator never drained*. So we make completion-without-drain impossible: the
+        background refresh response is **delayed**, while the foreground walk is a single
+        stale cache-hit (no foreground fetch) that would return near-instantly on its own.
+
+        - If the generator drains: the scrape return is BLOCKED until the delayed 304 lands
+          and bumps the TTL, so the entry is no longer expired when scrape returns.
+        - If it does NOT drain: scrape returns while the refresh is still mid-delay, the
+          entry is still expired, and this test fails — catching the exact lifecycle bug
+          (refresh deferred past the caller's `async with session` exit) the design fixes.
+        """
+        from dep_rank.core.scraper import scrape_dependents
+
+        cache = SqliteCache(str(tmp_path))
+        await cache.initialize()
+        first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+        stale = (
+            '<html><body><div class="table-list-header-toggle states flex-auto pl-0">'
+            '<a class="btn-link selected" '
+            'href="/owner/repo/network/dependents?dependent_type=REPOSITORY">30 Repositories</a>'
+            '</div><div id="dependents"><div class="Box">'
+            '<div class="flex-items-center"><span>'
+            '<a class="text-bold" href="/a/one">a/one</a></span><div><span>100</span></div></div>'
+            '</div><div class="paginate-container"><div>'
+            '<a href="/owner/repo/network/dependents?page=0">Previous</a></div></div></div>'
+            "</body></html>"
+        )
+        await cache.put(first, stale.encode(), etag='"old"', ttl=-1)  # expired
+        # Page 1 is served from the stale cache (no foreground fetch), so the ONLY
+        # session.get() is the delayed background refresh. The 0.3s delay (< the 10s drain
+        # timeout, so it is not cancelled) is what makes "completed by return" equivalent
+        # to "return was blocked on drain": on a single event loop the fast foreground walk
+        # cannot outrun a still-sleeping refresh task.
+        session = _FakeSession([_FakeResp(304, delay=0.3)])
+        try:
+            result = await scrape_dependents(
+                session,
+                "https://github.com/owner/repo",
+                rows=5,
+                token="ghp_x",
+                cache=cache,
+            )
+            assert result.complete is True
+            assert [r.name for r in result.repos] == ["one"]
+            assert session.calls == 1  # the background refresh actually ran
+            # Refreshed-by-return is only possible if the return blocked on drain; a
+            # fire-and-forget task would still be mid-delay at this point.
+            refreshed = await cache.get(first)
+            assert refreshed is not None
+            assert refreshed["expired"] is False
+        finally:
+            await cache.close()
