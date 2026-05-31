@@ -42,12 +42,13 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           REPOSITORY: ${{ github.repository }}
         run: |
+          set -euo pipefail
           if git diff --quiet uv.lock; then
             echo "No lockfile changes"
             echo "committed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          CONTENT=$(base64 -w0 uv.lock)
+          base64 -w0 uv.lock > "$RUNNER_TEMP/uv.lock.b64"
           HEAD_OID=$(git rev-parse HEAD)
           # shellcheck disable=SC2016
           gh api graphql -f query='
@@ -61,7 +62,7 @@ jobs:
             -f "input[expectedHeadOid]=${HEAD_OID}" \
             -f "input[message][headline]=deps: update uv.lock" \
             -f "input[fileChanges][additions][0][path]=uv.lock" \
-            -f "input[fileChanges][additions][0][contents]=${CONTENT}"
+            -F "input[fileChanges][additions][0][contents]=@$RUNNER_TEMP/uv.lock.b64"
           echo "committed=true" >> "$GITHUB_OUTPUT"
 
   lint:
