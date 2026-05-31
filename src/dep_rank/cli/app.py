@@ -38,11 +38,12 @@ async def run_deps(
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
     from rich.console import Console
-    from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
+    from rich.live import Live
 
-    from dep_rank.cli.formatters import format_scrape_summary
+    from dep_rank.cli.formatters import build_topk_table, format_scrape_summary
     from dep_rank.core.cache import SqliteCache
     from dep_rank.core.graphql import enrich_with_graphql
+    from dep_rank.core.models import ScrapeSnapshot
     from dep_rank.core.scraper import scrape_dependents
 
     console = Console(stderr=True)
@@ -56,33 +57,20 @@ async def run_deps(
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
-            progress_ctx = None
-            task_id = None
-            if not verbose and not quiet:
-                progress_ctx = Progress(
-                    TextColumn("[bold green]Scraping dependents..."),
-                    BarColumn(),
-                    TextColumn("{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"),
-                    TextColumn("·"),
-                    TextColumn("{task.fields[est_text]}"),
-                    TimeElapsedColumn(),
-                    console=console,
-                )
-                task_id = progress_ctx.add_task(
-                    "scraping", total=max_pages, est_text="estimating..."
-                )
+            show_live = not verbose and not quiet
+            live = (
+                Live(console=console, refresh_per_second=4, transient=True) if show_live else None
+            )
 
-            async def on_progress(page: int, est_total: int) -> None:
-                if progress_ctx is not None and task_id is not None:
-                    est_text = (
-                        f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
-                        if est_total > 0
-                        else "estimating..."
-                    )
-                    progress_ctx.update(task_id, completed=page, est_text=est_text)
+            async def on_partial(snapshot: ScrapeSnapshot) -> None:
+                # Update on EVERY snapshot, even when top_k is empty: high --min-stars,
+                # rows=0, or a no-match scrape must still show live progress.
+                # build_topk_table renders page/matched/empty-state for the empty case.
+                if live is not None:
+                    live.update(build_topk_table(snapshot))
 
-            if progress_ctx is not None:
-                progress_ctx.start()
+            if live is not None:
+                live.start()
             try:
                 scrape_result = await scrape_dependents(
                     session,
@@ -90,16 +78,16 @@ async def run_deps(
                     dependent_type=dep_type,
                     min_stars=min_stars,
                     cache=cache,
-                    on_progress=on_progress,
                     token=token,
                     max_pages=max_pages,
                     rows=rows,
                     concurrency=concurrency,
                     adaptive_stop=adaptive_stop,
+                    on_partial=on_partial,
                 )
             finally:
-                if progress_ctx is not None:
-                    progress_ctx.stop()
+                if live is not None:
+                    live.stop()
 
             repos = scrape_result.repos
             total_count = scrape_result.matched_count
