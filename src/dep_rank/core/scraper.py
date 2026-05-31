@@ -232,7 +232,13 @@ async def _read_page(
     cache: SqliteCache | None,
     swr: SWRManager | None = None,
 ) -> str:
-    """Return a page's HTML; fresh-hit skips network, stale-hit serves stale + refreshes."""
+    """Return a page's HTML; fresh-hit skips network, stale-hit serves stale + refreshes.
+
+    Fresh cache hit -> cached body (no request). Expired-with-body + an ``swr`` manager ->
+    serve stale immediately and schedule a background revalidation (Phase 3 SWR). Miss,
+    expired-without-``swr`` -> ``_fetch_page`` (revalidates via If-None-Match when an ETag
+    is cached).
+    """
     if cache:
         cached = await cache.get(url)
         if cached and cached["body"] is not None:
@@ -469,6 +475,10 @@ async def stream_dependents(
     Yields one snapshot per consumed page (done=False) then exactly one terminal
     snapshot (done=True) carrying complete/reason. ``rows is None`` keeps every
     matched repo and disables adaptive stop (back-compat for the wrapper).
+
+    Callers must fully iterate this generator (no early ``break``); the ``finally``
+    block awaits outstanding background SWR refreshes before completion, so abandoning
+    iteration early could let the session close while a refresh is still in flight.
     """
     if not 1 <= concurrency <= 10:
         msg = f"concurrency must be between 1 and 10, got {concurrency}"

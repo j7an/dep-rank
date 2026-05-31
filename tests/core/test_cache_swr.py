@@ -209,13 +209,11 @@ class TestSWRIntegration:
         session = _FakeSession([_FakeResp(200, body=b"<html>fresh</html>", etag='"new"')])
         limiter = _auth_limiter()
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
-        import asyncio as _asyncio
-
         html = await _read_page(
             session,
             URL,
             limiter,
-            _asyncio.Semaphore(3),
+            asyncio.Semaphore(3),
             {},
             cache,
             swr=swr,
