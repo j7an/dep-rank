@@ -255,9 +255,27 @@ def deps(
 @click.option("--max-repos", default=10, help="Maximum repos to search.")
 @click.option("--min-stars", default=50, help="Only search repos with this many stars.")
 @click.option("--token", envvar="DEP_RANK_TOKEN", required=True, help="GitHub token (required).")
+@click.option(
+    "--max-pages",
+    default=200,
+    help="Maximum pages to scrape (default: 200, ceiling 1000).",
+)
+@click.option(
+    "--concurrency",
+    type=click.IntRange(1, 10),
+    default=3,
+    help="Max concurrent page fetches (1-10, default: 3).",
+)
 @click.pass_context
 def search(
-    ctx: click.Context, url: str, query: str, max_repos: int, min_stars: int, token: str
+    ctx: click.Context,
+    url: str,
+    query: str,
+    max_repos: int,
+    min_stars: int,
+    token: str,
+    max_pages: int,
+    concurrency: int,
 ) -> None:
     """Search code patterns across dependents of a GitHub repository."""
     try:
@@ -265,6 +283,10 @@ def search(
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+    if max_pages > 1000:
+        click.echo("Warning: --max-pages capped at the 1000 ceiling.", err=True)
+        max_pages = 1000
 
     verbose = ctx.obj.get("verbose", False)
 
@@ -289,7 +311,6 @@ def search(
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
                 from dep_rank.cli.formatters import format_scrape_summary
-                from dep_rank.core.scraper import MAX_PAGES
 
                 progress_ctx = None
                 task_id = None
@@ -306,7 +327,7 @@ def search(
                         console=console,
                     )
                     task_id = progress_ctx.add_task(
-                        "scraping", total=MAX_PAGES, est_text="estimating..."
+                        "scraping", total=max_pages, est_text="estimating..."
                     )
 
                 async def on_progress(page: int, est_total: int) -> None:
@@ -328,6 +349,10 @@ def search(
                         cache=cache,
                         on_progress=on_progress,
                         token=token,
+                        max_pages=max_pages,
+                        rows=max_repos,
+                        concurrency=concurrency,
+                        adaptive_stop=False,
                     )
                 finally:
                     if progress_ctx is not None:
@@ -338,10 +363,14 @@ def search(
                     pages_scraped=scrape_result.pages_scraped,
                     max_pages=scrape_result.max_pages,
                     estimated_total_pages=scrape_result.estimated_total_pages,
-                    found_count=len(repos),
+                    found_count=scrape_result.matched_count,
                     min_stars=min_stars,
                 )
                 console.print(f"[green]{summary}")
+                if not scrape_result.complete:
+                    from dep_rank.cli.formatters import partial_warning
+
+                    console.print(partial_warning(scrape_result.reason))
 
                 result = await search_code(
                     session,

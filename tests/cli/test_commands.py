@@ -385,3 +385,141 @@ class TestDepsHardeningFlags:
         assert "1000" in result.stderr  # warned about the cap
         _, kwargs = mock_run.call_args
         assert kwargs["max_pages"] == 1000
+
+
+class TestSearchHardening:
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_search_uses_bounded_non_adaptive_topk(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from dep_rank.core.models import CodeSearchResult
+
+        mock_scrape.return_value = ScrapeResult(
+            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            pages_scraped=3,
+            max_pages=200,
+            estimated_total_pages=3,
+            estimated_total_dependents=90,
+            matched_count=1,
+        )
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/django/django", query="import os", hits=[], searched_repos=1
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "search",
+                "https://github.com/django/django",
+                "import os",
+                "--token",
+                "ghp_x",
+                "--max-repos",
+                "7",
+            ],
+        )
+        assert result.exit_code == 0
+        _, kwargs = mock_scrape.call_args
+        assert kwargs["rows"] == 7  # bounded to --max-repos
+        assert kwargs["adaptive_stop"] is False  # never heuristic on the search path
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_search_max_pages_above_ceiling_warns_and_clamps(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        """`search` mirrors `deps`: --max-pages above the ceiling warns and clamps."""
+        from dep_rank.core.models import CodeSearchResult
+
+        mock_scrape.return_value = ScrapeResult(
+            repos=[],
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=1,
+            estimated_total_dependents=0,
+            matched_count=0,
+        )
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/django/django", query="import os", hits=[], searched_repos=0
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "search",
+                "https://github.com/django/django",
+                "import os",
+                "--token",
+                "ghp_x",
+                "--max-pages",
+                "5000",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "1000" in result.stderr  # warned about the cap (mirrors deps)
+        _, kwargs = mock_scrape.call_args
+        assert kwargs["max_pages"] == 1000  # clamped before the scrape
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_search_summary_reports_matched_count_not_len_repos(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        """Once `search` bounds `repos` to top-K (`rows=max_repos`), the scrape
+        summary must report `matched_count`, not `len(repos)`."""
+        from dep_rank.core.models import CodeSearchResult
+
+        mock_scrape.return_value = ScrapeResult(
+            repos=[
+                Repository(owner="a", name="b", url="https://github.com/a/b", stars=900),
+                Repository(owner="c", name="d", url="https://github.com/c/d", stars=800),
+            ],
+            pages_scraped=200,
+            max_pages=200,
+            estimated_total_pages=200,
+            estimated_total_dependents=15000,
+            matched_count=4200,
+        )
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/django/django", query="import os", hits=[], searched_repos=2
+        )
+        result = runner.invoke(
+            cli,
+            [
+                "search",
+                "https://github.com/django/django",
+                "import os",
+                "--token",
+                "ghp_x",
+                "--max-repos",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "4,200" in result.output  # matched_count, not len(repos)==2
