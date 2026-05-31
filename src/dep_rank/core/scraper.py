@@ -574,6 +574,7 @@ async def scrape_dependents(
     concurrency: int = DEFAULT_CONCURRENCY,
     adaptive_stop: bool = True,
     rate_limiter: AdaptiveRateLimiter | None = None,
+    on_partial: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
 ) -> ScrapeResult:
     """Compatibility wrapper: drain stream_dependents into a ScrapeResult.
 
@@ -600,6 +601,8 @@ async def scrape_dependents(
         adaptive_stop=adaptive_stop,
         rate_limiter=rate_limiter,
     ):
+        if on_partial is not None:
+            await on_partial(snapshot)
         terminal = snapshot
 
     assert terminal is not None  # noqa: S101  # stream always yields a terminal snapshot

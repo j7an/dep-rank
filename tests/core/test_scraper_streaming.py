@@ -171,3 +171,25 @@ async def test_stream_emits_per_page_then_terminal() -> None:
     assert [s.done for s in snaps] == [False, False, True]
     assert snaps[-1].complete is True
     assert snaps[-1].reason is None
+
+
+@pytest.mark.asyncio
+async def test_on_partial_called_per_snapshot() -> None:
+    from dep_rank.core.models import ScrapeSnapshot
+
+    seen: list[ScrapeSnapshot] = []
+
+    async def on_partial(snap: ScrapeSnapshot) -> None:
+        seen.append(snap)
+
+    p1 = _page(_item("a", "one", 100) + _item("b", "two", 80), next_page=None)
+    with aioresponses() as m:
+        m.get(FIRST, body=p1)
+        async with ClientSession() as session:
+            await scrape_dependents(
+                session, BASE, rows=5, on_partial=on_partial, adaptive_stop=False
+            )
+    # one per-page snapshot (done=False) + one terminal snapshot (done=True)
+    assert len(seen) == 2
+    assert seen[0].done is False
+    assert seen[-1].done is True

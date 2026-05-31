@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -523,3 +523,44 @@ class TestSearchHardening:
         )
         assert result.exit_code == 0
         assert "4,200" in result.output  # matched_count, not len(repos)==2
+
+
+class TestDepsLiveTopK:
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.get", new_callable=AsyncMock, return_value=None)
+    @patch("dep_rank.core.cache.SqliteCache.put", new_callable=AsyncMock)
+    @patch("rich.live.Live.update")
+    def test_live_path_drives_and_renders(
+        self,
+        mock_live_update: MagicMock,
+        mock_put: AsyncMock,
+        mock_get: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from aioresponses import aioresponses
+
+        from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1
+
+        first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+        page2 = "https://github.com/owner/repo/network/dependents?page=2"
+        with aioresponses() as m:
+            # Two pages so the top-K refines across more than one snapshot: page 1 has
+            # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
+            m.get(first, body=DEPENDENTS_HTML_PAGE_1)
+            m.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
+            result = runner.invoke(
+                cli,
+                ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
+            )
+        assert result.exit_code == 0
+        # Repos from BOTH pages appear in the final (post-Live) summary table -> the walk
+        # consumed both pages.
+        assert "alpha/framework" in result.output
+        assert "delta/app" in result.output
+        # Live.update fired at least once per page snapshot (>=2).
+        assert mock_live_update.call_count >= 2
