@@ -16,5 +16,12 @@ jobs:
       - uses: ./.github/actions/setup-uv  # installs uv + runs `uv sync --locked`
       - name: Run drift check
         env:
-          DRIFT_CHECK_TOKEN: ${{ secrets.DRIFT_CHECK_TOKEN }}
+          # The drift canary only needs an *authenticated identity* to raise
+          # github.com's anonymous HTML rate limit (scraper.py sends it as
+          # `Authorization: token`). It needs no scopes and never touches private
+          # data, so the per-run, auto-rotated GITHUB_TOKEN is preferred over a
+          # hand-managed PAT — no expiry to track. If GitHub ever stops honoring
+          # GITHUB_TOKEN for HTML rate-limiting, the scrape degrades to
+          # RATE_LIMITED → exit 0 + `::warning::` (inconclusive), never a hard fail.
+          DRIFT_CHECK_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: uv run python -m dep_rank.scripts.drift_check
