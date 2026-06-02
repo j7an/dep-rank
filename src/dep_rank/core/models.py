@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class DependentType(StrEnum):
@@ -28,6 +28,39 @@ class ScrapeReason(StrEnum):
     RATE_LIMITED = "rate_limited"
 
 
+class TrustSignals(BaseModel):
+    """Raw repository metadata fetched for trust scoring.
+
+    Transient, pre-score carrier between the GraphQL fetch and the scorer; never
+    serialized (the field that holds it is excluded).
+    """
+
+    forks: int | None = None
+    issues: int | None = None  # total issues (all-time)
+    pull_requests: int | None = None  # total pull requests (all-time)
+    pushed_at: datetime | None = None
+
+
+class TrustComponents(BaseModel):
+    """Pool-normalized component scores, each 0.0-1.0."""
+
+    stars: float
+    forks: float
+    engagement: float  # issues + pull requests
+    recency: float
+
+
+class TrustScore(BaseModel):
+    """Final trust score plus raw signals and the component breakdown (serialized)."""
+
+    score: float  # 0-100, pool-relative
+    forks: int | None = None
+    issues: int | None = None
+    pull_requests: int | None = None
+    pushed_at: datetime | None = None
+    components: TrustComponents
+
+
 class Repository(BaseModel):
     """A GitHub repository that depends on the target repo."""
 
@@ -36,6 +69,8 @@ class Repository(BaseModel):
     url: str
     stars: int
     description: str | None = None
+    trust_signals: TrustSignals | None = Field(default=None, exclude=True)
+    trust: TrustScore | None = None
 
 
 class ScrapeResult(BaseModel):
@@ -88,6 +123,7 @@ class DependentsResult(BaseModel):
     reason: ScrapeReason | None = None
     pages_scraped: int = 0
     estimated_total_pages: int = 0
+    ranked_by: str = "stars"
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:
@@ -113,3 +149,16 @@ class CodeSearchResult(BaseModel):
     query: str
     hits: list[CodeSearchHit]
     searched_repos: int
+
+
+class TrustMetadataResult(BaseModel):
+    """Return type of the trust-metadata fetch, carrying fetch status.
+
+    ``failed=True`` means no usable metadata was obtained (a 401, or every batch
+    errored) and the caller should fall back to star ranking. ``complete`` is True
+    only when every requested repo received signals.
+    """
+
+    repos: list[Repository]
+    failed: bool
+    complete: bool

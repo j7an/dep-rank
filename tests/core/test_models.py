@@ -15,6 +15,10 @@ from dep_rank.core.models import (
     Repository,
     ScrapeReason,
     ScrapeResult,
+    TrustComponents,
+    TrustMetadataResult,
+    TrustScore,
+    TrustSignals,
 )
 
 
@@ -330,3 +334,57 @@ class TestScrapeSnapshot:
         assert snap.done is True
         assert snap.complete is False
         assert snap.reason == "max_pages_reached"
+
+
+class TestTrustModels:
+    def test_repository_trust_fields_default_none(self) -> None:
+        repo = Repository(owner="a", name="b", url="https://github.com/a/b", stars=1)
+        assert repo.trust is None
+        assert repo.trust_signals is None
+
+    def test_trust_signals_excluded_from_serialization(self) -> None:
+        repo = Repository(
+            owner="a",
+            name="b",
+            url="https://github.com/a/b",
+            stars=1,
+            trust_signals=TrustSignals(forks=5, issues=3, pull_requests=2, pushed_at=None),
+        )
+        assert "trust_signals" not in repo.model_dump_json()
+        assert "trust_signals" not in repo.model_dump()
+
+    def test_trust_score_serializes_with_components(self) -> None:
+        repo = Repository(
+            owner="a",
+            name="b",
+            url="https://github.com/a/b",
+            stars=1,
+            trust=TrustScore(
+                score=72.5,
+                forks=5,
+                issues=3,
+                pull_requests=2,
+                pushed_at=None,
+                components=TrustComponents(stars=0.5, forks=0.4, engagement=0.3, recency=0.0),
+            ),
+        )
+        data = repo.model_dump_json()
+        assert '"score":72.5' in data
+        assert '"components"' in data
+
+    def test_dependents_result_ranked_by_defaults_to_stars(self) -> None:
+        result = DependentsResult(
+            source="https://github.com/x/y",
+            total_count=0,
+            filtered_count=0,
+            repos=[],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+        )
+        assert result.ranked_by == "stars"
+
+    def test_trust_metadata_result_fields(self) -> None:
+        res = TrustMetadataResult(repos=[], failed=False, complete=True)
+        assert res.repos == []
+        assert res.failed is False
+        assert res.complete is True
