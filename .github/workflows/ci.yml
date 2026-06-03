@@ -124,7 +124,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - name: Mypy
-        run: uv run mypy src/dep_rank/
+        run: uv run mypy src tests
 
   test:
     needs: [update-lockfile]

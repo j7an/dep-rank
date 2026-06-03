@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 import pytest
+
+from aiohttp import ClientSession
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.rate_limiter import AdaptiveRateLimiter
@@ -64,7 +66,7 @@ URL = "https://github.com/o/r/network/dependents?page=5"
 class TestSWRManager:
     @pytest.mark.asyncio
     async def test_disabled_when_unauthenticated(self, cache: SqliteCache) -> None:
-        session = _FakeSession([])
+        session = cast(ClientSession, _FakeSession([]))
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=False)
         swr.schedule(URL)
         await swr.drain()
@@ -73,7 +75,7 @@ class TestSWRManager:
     @pytest.mark.asyncio
     async def test_refresh_updates_cache_on_200(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
-        session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
+        session = cast(ClientSession, _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
@@ -86,7 +88,7 @@ class TestSWRManager:
     async def test_refresh_bumps_ttl_on_304(self, cache: SqliteCache) -> None:
         """A 304 revalidation keeps the stale body but refreshes its TTL (no longer expired)."""
         await _seed_expired(cache, URL, b"stale", '"old"')
-        session = _FakeSession([_FakeResp(304)])
+        session = cast(ClientSession, _FakeSession([_FakeResp(304)])
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
@@ -106,7 +108,7 @@ class TestSWRManager:
         assert limiter.current_max_concurrency == 2
         resp = _FakeResp(429)
         resp.headers["Retry-After"] = "30"
-        session = _FakeSession([resp])
+        session = cast(ClientSession, _FakeSession([resp])
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
@@ -127,7 +129,7 @@ class TestSWRManager:
     @pytest.mark.asyncio
     async def test_dedup_one_refresh_per_url(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
-        session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=0.02)])
+        session = cast(ClientSession, _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=0.02)])
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         swr.schedule(URL)
         swr.schedule(URL)  # second call must be a no-op (already in flight)
@@ -142,7 +144,7 @@ class TestSWRManager:
 
         clock = {"t": 0.0}
         await _seed_expired(cache, URL, b"stale", '"old"')
-        session = _FakeSession([_FakeResp(500)])  # one failing response only
+        session = cast(ClientSession, _FakeSession([_FakeResp(500)])  # one failing response only
         swr = SWRManager(
             session,
             _auth_limiter(),
@@ -172,7 +174,7 @@ class TestSWRManager:
         # try_acquire(reserve=1)) but the foreground can still take its single token.
         while limiter.tokens_available() >= 2:
             limiter.try_acquire()
-        session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
+        session = cast(ClientSession, _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
 
         # Run the background refresh and a foreground acquire concurrently. The refresh
@@ -189,7 +191,7 @@ class TestSWRManager:
     @pytest.mark.asyncio
     async def test_drain_cancels_stragglers_past_timeout(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
-        session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=5.0)])
+        session = cast(ClientSession, _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=5.0)])
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         swr.schedule(URL)
         # Drain with a tiny timeout: must return promptly, cancelling the slow refresh.
@@ -206,11 +208,11 @@ class TestSWRIntegration:
         from dep_rank.core.scraper import _read_page
 
         await _seed_expired(cache, URL, b"<html>stale</html>", '"old"')
-        session = _FakeSession([_FakeResp(200, body=b"<html>fresh</html>", etag='"new"')])
+        session = cast(ClientSession, _FakeSession([_FakeResp(200, body=b"<html>fresh</html>", etag='"new"')])
         limiter = _auth_limiter()
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
         html = await _read_page(
-            session,
+            cast(ClientSession, session),
             URL,
             limiter,
             asyncio.Semaphore(3),
@@ -265,10 +267,10 @@ class TestSWRIntegration:
         # timeout, so it is not cancelled) is what makes "completed by return" equivalent
         # to "return was blocked on drain": on a single event loop the fast foreground walk
         # cannot outrun a still-sleeping refresh task.
-        session = _FakeSession([_FakeResp(304, delay=0.3)])
+        session = cast(ClientSession, _FakeSession([_FakeResp(304, delay=0.3)])
         try:
             result = await scrape_dependents(
-                session,
+                cast(ClientSession, session),
                 "https://github.com/owner/repo",
                 rows=5,
                 token="ghp_x",
