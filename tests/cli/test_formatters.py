@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from dep_rank.cli.formatters import (
+    console,
     format_scrape_summary,
     humanize,
+    print_dependents_json,
     print_dependents_table,
     print_search_results,
 )
@@ -279,11 +281,9 @@ class TestTrustTableAndJson:
         )
 
     def test_trust_table_renders_score_and_stars(self) -> None:
-        import dep_rank.cli.formatters as fmt
-
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
-        with fmt.console.capture() as cap:
-            fmt.print_dependents_table(result)
+        with console.capture() as cap:
+            print_dependents_table(result)
         out = cap.get()
         assert "alpha/framework" in out
         assert "87" in out  # rounded trust score
@@ -291,24 +291,20 @@ class TestTrustTableAndJson:
 
     def test_fallback_renders_star_table(self) -> None:
         # ranked_by == "stars" even though a star repo has no trust -> star layout.
-        import dep_rank.cli.formatters as fmt
-
         star_repo = Repository(
             owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
         )
         result = self._result(ranked_by="stars", repos=[star_repo])
-        with fmt.console.capture() as cap:
-            fmt.print_dependents_table(result)
+        with console.capture() as cap:
+            print_dependents_table(result)
         out = cap.get()
         assert "beta/toolkit" in out
         assert "Trust" not in out  # no trust column in star/fallback layout
 
     def test_json_star_mode_excludes_trust_and_ranked_by(self) -> None:
-        import dep_rank.cli.formatters as fmt
-
         result = self._result(ranked_by="stars", repos=[self._trust_repo()])
-        with fmt.console.capture() as cap:
-            fmt.print_dependents_json(result, include_rank_metadata=False)
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=False)
         out = cap.get()
         assert "ranked_by" not in out
         assert "trust" not in out
@@ -320,8 +316,6 @@ class TestTrustTableAndJson:
         # description (the field must remain present, not be dropped by exclude_none).
         import json
 
-        import dep_rank.cli.formatters as fmt
-
         repo = Repository(
             owner="alpha",
             name="framework",
@@ -330,8 +324,8 @@ class TestTrustTableAndJson:
             description=None,  # must serialize as "description": null, not vanish
         )
         result = self._result(ranked_by="stars", repos=[repo])
-        with fmt.console.capture() as cap:
-            fmt.print_dependents_json(result, include_rank_metadata=False)
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=False)
         out = cap.get()
         assert '"description": null' in out  # key present with explicit null
         payload = json.loads(out)
@@ -349,11 +343,9 @@ class TestTrustTableAndJson:
         assert "ranked_by" not in payload
 
     def test_json_trust_mode_includes_metadata(self) -> None:
-        import dep_rank.cli.formatters as fmt
-
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
-        with fmt.console.capture() as cap:
-            fmt.print_dependents_json(result, include_rank_metadata=True)
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=True)
         out = cap.get()
         assert '"ranked_by": "trust"' in out
         assert '"score": 87.4' in out
