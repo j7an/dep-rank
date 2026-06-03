@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from dep_rank.cli.formatters import (
     console,
@@ -269,7 +270,9 @@ class TestTrustTableAndJson:
             ),
         )
 
-    def _result(self, *, ranked_by: str, repos: list[Repository]) -> DependentsResult:
+    def _result(
+        self, *, ranked_by: Literal["stars", "trust"], repos: list[Repository]
+    ) -> DependentsResult:
         return DependentsResult(
             source="https://github.com/django/django",
             total_count=100,

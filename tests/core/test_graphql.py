@@ -181,6 +181,36 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.pushed_at is not None
 
     @pytest.mark.asyncio
+    async def test_malformed_pushed_at_degrades_recency_not_crash(self) -> None:
+        # A non-ISO pushedAt must not abort the run; recency degrades to "missing"
+        # (pushed_at=None) while the rest of the signals are still applied.
+        from dep_rank.core.graphql import enrich_with_trust_metadata
+
+        repos = [make_repo("django", "django", stars=80000)]
+        payload = {
+            "data": {
+                "repo_0": {
+                    "stargazerCount": 82400,
+                    "forkCount": 31000,
+                    "issues": {"totalCount": 500},
+                    "pullRequests": {"totalCount": 300},
+                    "pushedAt": "not-a-date",
+                }
+            }
+        }
+        with aioresponses() as m:
+            m.post("https://api.github.com/graphql", payload=payload)
+            async with ClientSession() as session:
+                result = await enrich_with_trust_metadata(
+                    session, repos, token="fake", include_description=False
+                )
+        assert result.failed is False
+        repo = result.repos[0]
+        assert repo.trust_signals is not None
+        assert repo.trust_signals.pushed_at is None  # unparseable -> missing recency
+        assert repo.trust_signals.forks == 31000  # other signals intact
+
+    @pytest.mark.asyncio
     async def test_401_short_circuits_to_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 

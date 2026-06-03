@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 from datetime import UTC, datetime
+from typing import Literal
 
 import appdirs
 import click
@@ -111,16 +112,18 @@ async def run_deps(
 
                     console.print(partial_warning(scrape_result.reason))
 
-            ranked_by = "stars"
-            if rank_by == "trust":
+            ranked_by: Literal["stars", "trust"] = "stars"
+            # ``and token`` makes the token precondition explicit (the CLI preflight
+            # already enforces it) and narrows the type for the enrich call. A direct
+            # caller passing rank_by="trust" without a token degrades to star ranking.
+            if rank_by == "trust" and token:
                 from dep_rank.core.graphql import enrich_with_trust_metadata
                 from dep_rank.core.trust import compute_trust_scores
 
-                # token presence guaranteed by the CLI preflight check.
                 meta = await enrich_with_trust_metadata(
                     session,
                     repos,
-                    token,  # type: ignore[arg-type]
+                    token,
                     include_description=descriptions,
                     cache=cache,
                 )
@@ -227,7 +230,7 @@ def deps(
     adaptive_stop: bool,
     rank_by: str,
 ) -> None:
-    """List top dependents of a GitHub repository, ranked by stars."""
+    """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
     try:
         validate_github_url(url)
     except ValueError as e:

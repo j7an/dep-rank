@@ -238,6 +238,21 @@ class TestDependentsResultContractFields:
         assert result.reason is None
         assert result.pages_scraped == 0
         assert result.estimated_total_pages == 0
+        assert result.ranked_by == "stars"  # default ranking strategy
+
+    def test_ranked_by_rejects_invalid_value(self) -> None:
+        # ranked_by is a Literal["stars", "trust"]; a typo fails fast at construction
+        # rather than silently rendering as the star branch downstream.
+        with pytest.raises(ValidationError):
+            DependentsResult(
+                source="https://github.com/x/y",
+                total_count=10,
+                filtered_count=10,
+                repos=[],
+                dependent_type=DependentType.REPOSITORY,
+                scraped_at=datetime.now(tz=UTC),
+                ranked_by="trsut",  # type: ignore[arg-type]
+            )
 
 
 class TestDependentsResultInvariant:

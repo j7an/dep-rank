@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -123,7 +124,7 @@ class DependentsResult(BaseModel):
     reason: ScrapeReason | None = None
     pages_scraped: int = 0
     estimated_total_pages: int = 0
-    ranked_by: str = "stars"
+    ranked_by: Literal["stars", "trust"] = "stars"
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

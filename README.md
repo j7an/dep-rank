@@ -102,8 +102,8 @@ Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag
 `dep-rank deps --rank-by trust` re-ranks dependents by a lightweight composite
 score instead of raw stars. Stars are useful but [gameable][starscout]; trust
 ranking blends stars with non-star signals — forks, total issues and pull
-requests, and recency of activity — fetched in a single low-cost GitHub GraphQL
-query.
+requests, and recency of activity — fetched via low-cost GitHub GraphQL queries
+(batched at 100 repositories per request, so a larger pool issues more than one).
 
 ```bash
 dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...

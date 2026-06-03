@@ -115,7 +115,19 @@ def _apply_trust_data(
 ) -> Repository:
     """Return a copy of ``repo`` updated with accurate stars + trust signals."""
     pushed_at_raw = repo_data.get("pushedAt")
-    pushed_at = datetime.fromisoformat(pushed_at_raw) if pushed_at_raw else None
+    pushed_at = None
+    if pushed_at_raw:
+        try:
+            pushed_at = datetime.fromisoformat(pushed_at_raw)
+        except ValueError:
+            # A malformed timestamp degrades recency to "missing" rather than aborting
+            # the whole trust run — consistent with the function's other partial handling.
+            logger.warning(
+                "Unparseable pushedAt %r for %s/%s — treating recency as missing",
+                pushed_at_raw,
+                repo.owner,
+                repo.name,
+            )
     signals = TrustSignals(
         forks=repo_data.get("forkCount"),
         issues=(repo_data.get("issues") or {}).get("totalCount"),
