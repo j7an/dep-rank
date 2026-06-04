@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from dep_rank.cli.formatters import (
+    console,
     format_scrape_summary,
     humanize,
+    print_dependents_json,
     print_dependents_table,
     print_search_results,
 )
@@ -16,6 +19,8 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    TrustComponents,
+    TrustScore,
 )
 
 
@@ -246,3 +251,105 @@ class TestBuildTopKTable:
         out = cap.get()
         assert "page 3" in out
         assert "no matching repositories" in out.lower()
+
+
+class TestTrustTableAndJson:
+    def _trust_repo(self) -> Repository:
+        return Repository(
+            owner="alpha",
+            name="framework",
+            url="https://github.com/alpha/framework",
+            stars=12500,
+            trust=TrustScore(
+                score=87.4,
+                forks=900,
+                issues=300,
+                pull_requests=120,
+                pushed_at=None,
+                components=TrustComponents(stars=0.9, forks=0.8, engagement=0.7, recency=0.5),
+            ),
+        )
+
+    def _result(
+        self, *, ranked_by: Literal["stars", "trust"], repos: list[Repository]
+    ) -> DependentsResult:
+        return DependentsResult(
+            source="https://github.com/django/django",
+            total_count=100,
+            filtered_count=50,
+            repos=repos,
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+            ranked_by=ranked_by,
+        )
+
+    def test_trust_table_renders_score_and_stars(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert "alpha/framework" in out
+        assert "87" in out  # rounded trust score
+        assert "12K" in out or "12.5K" in out  # humanized stars
+
+    def test_fallback_renders_star_table(self) -> None:
+        # ranked_by == "stars" even though a star repo has no trust -> star layout.
+        star_repo = Repository(
+            owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
+        )
+        result = self._result(ranked_by="stars", repos=[star_repo])
+        with console.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert "beta/toolkit" in out
+        assert "Trust" not in out  # no trust column in star/fallback layout
+
+    def test_json_star_mode_excludes_trust_and_ranked_by(self) -> None:
+        result = self._result(ranked_by="stars", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=False)
+        out = cap.get()
+        assert "ranked_by" not in out
+        assert "trust" not in out
+        assert "trust_signals" not in out
+
+    def test_json_star_mode_preserves_existing_fields_exactly(self) -> None:
+        # The printer — not raw model serialization — is the back-compat boundary.
+        # Prove pre-trust fields survive unchanged, including an explicit `null`
+        # description (the field must remain present, not be dropped by exclude_none).
+        import json
+
+        repo = Repository(
+            owner="alpha",
+            name="framework",
+            url="https://github.com/alpha/framework",
+            stars=12500,
+            description=None,  # must serialize as "description": null, not vanish
+        )
+        result = self._result(ranked_by="stars", repos=[repo])
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=False)
+        out = cap.get()
+        assert '"description": null' in out  # key present with explicit null
+        payload = json.loads(out)
+        assert payload["source"] == "https://github.com/django/django"
+        assert payload["total_count"] == 100
+        assert payload["filtered_count"] == 50
+        repo_json = payload["repos"][0]
+        assert repo_json == {
+            "owner": "alpha",
+            "name": "framework",
+            "url": "https://github.com/alpha/framework",
+            "stars": 12500,
+            "description": None,
+        }  # exact field set — no trust/trust_signals leakage, nothing dropped
+        assert "ranked_by" not in payload
+
+    def test_json_trust_mode_includes_metadata(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=True)
+        out = cap.get()
+        assert '"ranked_by": "trust"' in out
+        assert '"score": 87.4' in out
+        assert "trust_signals" not in out  # always excluded structurally

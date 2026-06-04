@@ -1,6 +1,6 @@
 # dep-rank
 
-Rank GitHub dependents by stars.
+Rank GitHub dependents by stars or trust.
 
 [![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -37,6 +37,7 @@ dep-rank deps https://github.com/django/django --packages
 | `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
 | `--concurrency` | 3 | Max concurrent page fetches (1–10) |
 | `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
+| `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
 
 ### `dep-rank search` — Search code in dependents
 
@@ -81,6 +82,7 @@ A token is effectively required for non-trivial use: unauthenticated GitHub HTML
 
 **What requires a token:**
 - `--descriptions` flag — fetches repo descriptions via GitHub GraphQL API
+- `--rank-by trust` — fetches engagement/recency metadata via GitHub GraphQL API
 - `dep-rank search` — code search across dependents
 
 Create a token at [github.com/settings/tokens](https://github.com/settings/tokens) with `public_repo` scope.
@@ -94,6 +96,39 @@ dep-rank uses a three-stage pipeline:
 3. **Present** — returns structured results as a Rich table
 
 Responses are cached in a local SQLite database (`~/.cache/dep-rank/`) with ETag support for conditional requests. Expired pages are served immediately and refreshed in the background (stale-while-revalidate) on authenticated runs.
+
+## Trust Ranking
+
+`dep-rank deps --rank-by trust` re-ranks dependents by a lightweight composite
+score instead of raw stars. Stars are useful but [gameable][starscout]; trust
+ranking blends stars with non-star signals — forks, total issues and pull
+requests, and recency of activity — fetched via low-cost GitHub GraphQL queries
+(batched at 100 repositories per request, so a larger pool issues more than one).
+
+```bash
+dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...
+```
+
+**Important caveats:**
+
+- The score is a **pool-relative ranking signal, not an absolute quality score** —
+  it min-max normalizes signals across the scraped candidate set.
+- It re-ranks **only the scraped candidate pool** (the star-top-N dependents), not
+  every dependent.
+- It is **heuristic and does not detect fake stars.** It does not fetch stargazer
+  history, GHArchive data, or external fraud datasets.
+- Trust ranking scrapes a **larger candidate pool and is therefore deeper and
+  slower** than star ranking.
+- `--rank-by trust` requires a GitHub token; trust scores appear in `--format json`
+  output under each repo's `trust` field.
+
+Motivation that stars are gameable comes from **StarScout** ([repo][starscout],
+[preprint](https://arxiv.org/abs/2412.13459),
+[ICSE 2026](https://conf.researchr.org/details/icse-2026/icse-2026-research-track/14/Six-Million-Suspected-Fake-Stars-on-GitHub-A-Growing-Spiral-of-Popularity-Contests)).
+The low-resource API basis is the
+[GitHub GraphQL rate-limit docs](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api).
+
+[starscout]: https://github.com/hehao98/StarScout
 
 ## Development
 

@@ -24,7 +24,14 @@ def humanize(num: int) -> str:
 
 
 def print_dependents_table(result: DependentsResult) -> None:
-    """Print a Rich table of dependents."""
+    """Print a Rich table of dependents, dispatching on the ranking actually applied."""
+    if result.ranked_by == "trust":
+        _print_trust_table(result)
+    else:
+        _print_star_table(result)
+
+
+def _print_star_table(result: DependentsResult) -> None:
     table = Table(title=f"Top dependents of {result.source}")
     table.add_column("Repository", style="cyan", no_wrap=True)
     table.add_column("Stars", justify="right", style="yellow")
@@ -46,9 +53,45 @@ def print_dependents_table(result: DependentsResult) -> None:
     )
 
 
-def print_dependents_json(result: DependentsResult) -> None:
-    """Print DependentsResult as JSON."""
-    console.print(result.model_dump_json(indent=2), highlight=False)
+def _print_trust_table(result: DependentsResult) -> None:
+    table = Table(title=f"Top dependents of {result.source} (by trust)")
+    table.add_column("Repository", style="cyan", no_wrap=True)
+    table.add_column("Trust", justify="right", style="magenta")
+    table.add_column("Stars", justify="right", style="yellow")
+
+    has_descriptions = any(r.description for r in result.repos)
+    if has_descriptions:
+        table.add_column("Description", style="dim")
+
+    for repo in result.repos:
+        score = round(repo.trust.score) if repo.trust else 0
+        row = [f"{repo.owner}/{repo.name}", str(score), humanize(repo.stars)]
+        if has_descriptions:
+            row.append(repo.description or "")
+        table.add_row(*row)
+
+    console.print(table)
+    console.print(
+        f"\n[dim]{result.total_count:,} total dependents, "
+        f"{result.filtered_count:,} with stars above threshold[/dim]"
+    )
+
+
+def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bool = False) -> None:
+    """Print DependentsResult as JSON.
+
+    Star mode (``include_rank_metadata=False``) excludes ``ranked_by`` and per-repo
+    ``trust`` so CLI output stays byte-identical to pre-trust-ranking releases. Trust
+    mode includes both. ``trust_signals`` is excluded structurally by the model field.
+    """
+    if include_rank_metadata:
+        payload = result.model_dump_json(indent=2)
+    else:
+        payload = result.model_dump_json(
+            indent=2,
+            exclude={"ranked_by": True, "repos": {"__all__": {"trust"}}},
+        )
+    console.print(payload, highlight=False)
 
 
 def print_search_results(result: CodeSearchResult) -> None:

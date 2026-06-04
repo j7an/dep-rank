@@ -1,7 +1,7 @@
 [project]
 name = "dep-rank"
 dynamic = ["version"]
-description = "Analyze GitHub repository dependents by star count."
+description = "Analyze GitHub repository dependents, ranked by stars or trust."
 requires-python = ">=3.11"
 license = "MIT"
 authors = [

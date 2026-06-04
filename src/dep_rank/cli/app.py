@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 from datetime import UTC, datetime
+from typing import Literal
 
 import appdirs
 import click
@@ -34,6 +35,7 @@ async def run_deps(
     concurrency: int = 3,
     adaptive_stop: bool = True,
     quiet: bool = False,
+    rank_by: str = "stars",
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
@@ -69,6 +71,10 @@ async def run_deps(
                 if live is not None:
                     live.update(build_topk_table(snapshot))
 
+            scrape_rows = rows
+            if rank_by == "trust":
+                scrape_rows = 0 if rows <= 0 else max(rows, min(100, rows * 10))
+
             if live is not None:
                 live.start()
             try:
@@ -80,7 +86,7 @@ async def run_deps(
                     cache=cache,
                     token=token,
                     max_pages=max_pages,
-                    rows=rows,
+                    rows=scrape_rows,
                     concurrency=concurrency,
                     adaptive_stop=adaptive_stop,
                     on_partial=on_partial,
@@ -106,11 +112,41 @@ async def run_deps(
 
                     console.print(partial_warning(scrape_result.reason))
 
-            repos = repos[:rows]
+            ranked_by: Literal["stars", "trust"] = "stars"
+            # ``and token`` makes the token precondition explicit (the CLI preflight
+            # already enforces it) and narrows the type for the enrich call. A direct
+            # caller passing rank_by="trust" without a token degrades to star ranking.
+            if rank_by == "trust" and token:
+                from dep_rank.core.graphql import enrich_with_trust_metadata
+                from dep_rank.core.trust import compute_trust_scores
 
-            if descriptions and token and repos:
-                repos = await enrich_with_graphql(session, repos, token, cache=cache)
+                meta = await enrich_with_trust_metadata(
+                    session,
+                    repos,
+                    token,
+                    include_description=descriptions,
+                    cache=cache,
+                )
+                if meta.failed:
+                    if not quiet:
+                        console.print(
+                            "[yellow]⚠ Trust metadata fetch failed — "
+                            "falling back to star ranking.[/yellow]"
+                        )
+                    repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
+                else:
+                    if not meta.complete and not quiet:
+                        console.print(
+                            "[yellow]⚠ Some trust metadata was missing — "
+                            "scores use partial data.[/yellow]"
+                        )
+                    repos = compute_trust_scores(meta.repos)[:rows]
+                    ranked_by = "trust"
+            else:
                 repos = repos[:rows]
+                if descriptions and token and repos:
+                    repos = await enrich_with_graphql(session, repos, token, cache=cache)
+                    repos = repos[:rows]
 
             return DependentsResult(
                 source=url,
@@ -123,6 +159,7 @@ async def run_deps(
                 reason=scrape_result.reason,
                 pages_scraped=scrape_result.pages_scraped,
                 estimated_total_pages=scrape_result.estimated_total_pages,
+                ranked_by=ranked_by,
             )
     finally:
         await cache.close()
@@ -133,7 +170,7 @@ async def run_deps(
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose/debug logging.")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:
-    """Analyze GitHub repository dependents by star count."""
+    """Analyze GitHub repository dependents, ranked by stars or trust."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     if verbose:
@@ -172,6 +209,12 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     default=True,
     help="Stop early when recent pages can no longer change the top-K (default: on).",
 )
+@click.option(
+    "--rank-by",
+    type=click.Choice(["stars", "trust"]),
+    default="stars",
+    help="Ranking strategy: stars (default) or trust (heuristic, requires token).",
+)
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -185,8 +228,9 @@ def deps(
     max_pages: int,
     concurrency: int,
     adaptive_stop: bool,
+    rank_by: str,
 ) -> None:
-    """List top dependents of a GitHub repository, ranked by stars."""
+    """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
     try:
         validate_github_url(url)
     except ValueError as e:
@@ -196,6 +240,13 @@ def deps(
     if descriptions and not token:
         click.echo(
             "Error: --descriptions requires a GitHub token (--token or DEP_RANK_TOKEN env var)",
+            err=True,
+        )
+        sys.exit(1)
+
+    if rank_by == "trust" and not token:
+        click.echo(
+            "Error: --rank-by trust requires a GitHub token (--token or DEP_RANK_TOKEN env var)",
             err=True,
         )
         sys.exit(1)
@@ -226,13 +277,14 @@ def deps(
             concurrency=concurrency,
             adaptive_stop=adaptive_stop,
             quiet=(output_format == "json"),
+            rank_by=rank_by,
         )
     )
 
     from dep_rank.cli.formatters import print_dependents_json, print_dependents_table
 
     if output_format == "json":
-        print_dependents_json(result)
+        print_dependents_json(result, include_rank_metadata=(rank_by == "trust"))
     else:
         print_dependents_table(result)
 

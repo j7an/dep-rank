@@ -564,3 +564,238 @@ class TestDepsLiveTopK:
         assert "delta/app" in result.output
         # Live.update fired at least once per page snapshot (>=2).
         assert mock_live_update.call_count >= 2
+
+
+class TestRankByTrust:
+    def _scrape_result(self, repos: list[Repository]) -> ScrapeResult:
+        return ScrapeResult(
+            repos=repos,
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+            matched_count=len(repos),
+        )
+
+    def test_trust_without_token_errors(self, runner: CliRunner) -> None:
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/django/django", "--rank-by", "trust"]
+        )
+        assert result.exit_code != 0
+        assert "requires a GitHub token" in result.output
+
+    @pytest.mark.parametrize(
+        ("rows", "expected_pool"),
+        [(0, 0), (5, 50), (10, 100), (50, 100), (200, 200)],
+    )
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_trust_pool_size_formula(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+        rows: int,
+        expected_pool: int,
+    ) -> None:
+        # pool_size = 0 if rows <= 0 else max(rows, min(100, rows * 10))
+        from dep_rank.core.models import TrustMetadataResult
+
+        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        mock_scrape.return_value = self._scrape_result(repos)
+        with patch(
+            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+        ) as mock_trust:
+            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=True)
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/django/django",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                    "--rows",
+                    str(rows),
+                ],
+            )
+        assert result.exit_code == 0
+        _, kwargs = mock_scrape.call_args
+        assert kwargs["rows"] == expected_pool
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_trust_json_includes_metadata(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        import json
+
+        from dep_rank.core.models import TrustMetadataResult
+
+        repos = [
+            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
+            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
+        ]
+        mock_scrape.return_value = self._scrape_result(repos)
+        with patch(
+            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+        ) as mock_trust:
+            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=True)
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/django/django",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                    "--format",
+                    "json",
+                ],
+            )
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["ranked_by"] == "trust"
+        assert payload["repos"][0]["trust"] is not None
+        assert "score" in payload["repos"][0]["trust"]
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_trust_fetch_failure_falls_back_to_stars(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        import json
+
+        from dep_rank.core.models import TrustMetadataResult
+
+        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        mock_scrape.return_value = self._scrape_result(repos)
+        with patch(
+            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+        ) as mock_trust:
+            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/django/django",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                    "--format",
+                    "json",
+                ],
+            )
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["ranked_by"] == "stars"  # honest fallback
+        assert payload["repos"][0]["trust"] is None
+
+    def test_star_json_unchanged_has_no_rank_metadata(self, runner: CliRunner) -> None:
+        import json
+
+        with patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = DependentsResult(
+                source="https://github.com/django/django",
+                total_count=1,
+                filtered_count=1,
+                repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)],
+                dependent_type=DependentType.REPOSITORY,
+                scraped_at=datetime.now(tz=UTC),
+            )
+            result = runner.invoke(
+                cli, ["deps", "https://github.com/django/django", "--format", "json"]
+            )
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert "ranked_by" not in payload
+        assert "trust" not in result.stdout
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_fallback_emits_warning_in_table_mode(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from dep_rank.core.models import TrustMetadataResult
+
+        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        mock_scrape.return_value = self._scrape_result(repos)
+        with patch(
+            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+        ) as mock_trust:
+            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/django/django",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                ],  # table mode (no --format json)
+            )
+        assert result.exit_code == 0
+        assert "falling back to star ranking" in result.output
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_partial_metadata_emits_warning_in_table_mode(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from dep_rank.core.models import TrustMetadataResult
+
+        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        mock_scrape.return_value = self._scrape_result(repos)
+        with patch(
+            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+        ) as mock_trust:
+            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=False)
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/django/django",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                ],  # table mode
+            )
+        assert result.exit_code == 0
+        assert "partial data" in result.output
