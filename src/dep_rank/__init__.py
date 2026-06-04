@@ -1,4 +1,4 @@
-"""dep-rank: Analyze GitHub repository dependents by star count."""
+"""dep-rank: Analyze GitHub repository dependents, ranked by stars or trust."""
 
 from importlib.metadata import version
 

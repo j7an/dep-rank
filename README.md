@@ -1,6 +1,6 @@
 # dep-rank
 
-Rank GitHub dependents by stars.
+Rank GitHub dependents by stars or trust.
 
 [![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

@@ -170,7 +170,7 @@ async def run_deps(
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose/debug logging.")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool) -> None:
-    """Analyze GitHub repository dependents by star count."""
+    """Analyze GitHub repository dependents, ranked by stars or trust."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     if verbose:
