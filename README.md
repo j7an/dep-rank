@@ -148,3 +148,4 @@ dep-rank is a full rewrite of [ghtopdep](https://github.com/andriyor/ghtopdep) b
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
