@@ -21,6 +21,6 @@ jobs:
     # dependency-safety-non-bot-gate.yml. `pull_request.user.login` is the
     # spoofing-resistant actor field (zizmor bot-conditions).
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@522610f12d08a8fe358569d6c533c21af6ac8ec0 # v3.0.1
+    uses: j7an/shared-workflows/.github/workflows/dependency-safety.yml@29bcd576f856e85042ab699dce66523711a44b48 # v3.0.2
     with:
       auto_merge: true
