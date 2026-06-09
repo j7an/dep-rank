@@ -29,11 +29,11 @@ jobs:
         with:
           client-id: ${{ vars.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.head_ref }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv lock
       - name: Commit updated lockfile
         id: commit
@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
@@ -117,7 +117,7 @@ jobs:
         shell: bash
         run: |
           echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
@@ -147,7 +147,7 @@ jobs:
         shell: bash
         run: |
           echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
@@ -175,7 +175,7 @@ jobs:
         with:
           egress-policy: audit
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
 
       - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
