@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
+
+from aiohttp import ClientSession
 
 from dep_rank.core.rate_limiter import AdaptiveRateLimiter
 from dep_rank.core.scraper import _fetch_page
@@ -54,14 +57,14 @@ class _FakeSession:
 async def test_fetch_window_never_exceeds_concurrency() -> None:
     concurrency = 3
     counter = _Counter()
-    session = _FakeSession(counter)
+    session = cast(ClientSession, _FakeSession(counter))
     # Fast, generous limiter so the semaphore is the only bound under test.
     limiter = AdaptiveRateLimiter(1000, 0.001, concurrency)
     semaphore = asyncio.Semaphore(concurrency)
 
     async def fetch(i: int) -> str:
-        return await _fetch_page(  # type: ignore[no-any-return]
-            session,
+        return await _fetch_page(
+            cast(ClientSession, session),
             f"https://github.com/o/r/network/dependents?page={i}",
             limiter,
             semaphore,

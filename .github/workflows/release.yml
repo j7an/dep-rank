@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - run: uv run ruff check src/ tests/
-      - run: uv run mypy src/dep_rank/
+      - run: uv run mypy src tests
       - run: uv run pytest
 
   build:
