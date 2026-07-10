@@ -40,3 +40,43 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
         actual_callers[match["reusable"]] = caller
 
     assert actual_callers == EXPECTED_CALLERS
+
+
+def test_release_workflow_retains_v4_2_2_contract() -> None:
+    release = (WORKFLOWS_DIR / "release.yml").read_text()
+
+    required_lines = (
+        'VERIFY_PYTHON: "3.13"',
+        "needs: test",
+        "needs: build",
+        "needs: publish-testpypi",
+        "needs: verify-testpypi",
+        "needs: publish-pypi",
+        r"grep -qE '^[0-9]+(\.[0-9]+){1,2}$'",
+        r"grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$'",
+        "for SLEEP_SECONDS in 30 60 90 120 150; do",
+        "rm -rf .verify",
+        "mkdir -p .verify",
+        ".verify/pyproject.toml",
+        'requires-python = ">=${VERIFY_PYTHON}"',
+        '"${PACKAGE_NAME}==${VERSION}",',
+        "[tool.uv.sources]",
+        '"${PACKAGE_NAME}" = { index = "testpypi" }',
+        "[[tool.uv.index]]",
+        'url = "https://test.pypi.org/simple/"',
+        "explicit = true",
+        'uv sync --python "$VERIFY_PYTHON" --refresh-package "$PACKAGE_NAME"',
+        'uv run --no-sync bash -euo pipefail -c "$VERIFY_COMMAND"',
+        'git merge-base --is-ancestor "$TAG_SHA" origin/main',
+        "name: testpypi",
+        "name: pypi",
+        "skip-existing: false",
+        "if: env.ATTACH_ASSETS == 'true'",
+        'if [ "$DRAFT_RELEASE" = "true" ]; then',
+    )
+
+    for line in required_lines:
+        assert line in release
+
+    assert "--index-url" not in release
+    assert "--extra-index-url" not in release
