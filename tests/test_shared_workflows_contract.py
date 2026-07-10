@@ -80,3 +80,20 @@ def test_release_workflow_retains_v4_2_2_contract() -> None:
 
     assert "--index-url" not in release
     assert "--extra-index-url" not in release
+
+
+def test_testpypi_verifier_disables_setup_uv_cache() -> None:
+    workflow = (WORKFLOWS_DIR / "release.yml").read_text()
+
+    job_start = workflow.index("  verify-testpypi:")
+    next_job = workflow.index("\n  publish-pypi:", job_start)
+    verify_job = workflow[job_start:next_job]
+
+    setup_start = verify_job.index("      - name: Set up uv")
+    next_step = verify_job.index("\n      - name:", setup_start + 1)
+    setup_step = verify_job[setup_start:next_step]
+
+    assert "uses: astral-sh/setup-uv@" in setup_step
+    assert "with:" in setup_step
+    assert "enable-cache: false" in setup_step
+    assert "ignore-empty-workdir: true" in setup_step
