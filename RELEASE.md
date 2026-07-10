@@ -11,8 +11,9 @@ These are already configured. Verify once if something seems broken:
   (Settings → Environments → `pypi` → required reviewer set)
 - [ ] TestPyPI Trusted Publisher configured for the `testpypi` environment
 - [ ] Both environments use OIDC — no API tokens needed
-- [ ] `Release Bot` GitHub App installed on this repo (needed to push signed
-  tags; bypasses the recursion guard that blocks `GITHUB_TOKEN` tag pushes)
+- [ ] `Release Bot` GitHub App installed on this repo (needed to create
+  lightweight tag refs with a non-`GITHUB_TOKEN` identity, so tag pushes
+  trigger the downstream release workflow)
 - [ ] `RELEASE_BOT_APP_ID` repository variable set
   (Settings → Secrets and variables → Actions → Variables tab)
 - [ ] `RELEASE_BOT_PRIVATE_KEY` stored in **all three** required stores (same
@@ -31,11 +32,11 @@ These are already configured. Verify once if something seems broken:
 
 ## Release Bot Credential Topology
 
-One GitHub App (`RELEASE_BOT_APP_ID`) signs tags and opens maintenance PRs. Its
-private key is stored in three places because three workflows run in contexts
-that cannot share a single store. **All three intentionally hold the same key
-value** — this duplication is an accepted trade-off (a separate app per trust
-level was considered and deferred).
+One GitHub App (`RELEASE_BOT_APP_ID`) creates release tags and opens maintenance
+PRs. Its private key is stored in three places because three workflows run in
+contexts that cannot share a single store. **All three intentionally hold the
+same key value** — this duplication is an accepted trade-off (a separate app
+per trust level was considered and deferred).
 
 | Store | Used by | Why this store |
 |-------|---------|----------------|
@@ -99,8 +100,11 @@ add the new key everywhere, verify, then remove the old one.
      `<type>!:` or `BREAKING CHANGE:` → major)
    - `patch` / `minor` / `major` — override the auto analysis
 3. Click **Run workflow**. The shared `tag-release.yml` reusable workflow
-   computes the next version, creates and pushes a signed `vX.Y.Z` tag
-   via the Release Bot App
+   computes the next version and creates a lightweight `vX.Y.Z` tag ref through
+   the GitHub API using the Release Bot App. dep-rank has no
+   `.version-bump.json`, so the workflow reports target-commit verification but
+   does not hard-gate tag creation on that report; the `main` ruleset's
+   signed-commit requirement is the upstream enforcement point.
 4. The `v*` tag push triggers `release.yml` (test → build → TestPyPI →
    PyPI → GitHub Release)
 
@@ -125,13 +129,16 @@ Use **PEP 440 canonical** forms (no hyphens): `a1` / `b1` / `rc1` / `.dev1`.
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs five jobs in sequence:
+The `release.yml` workflow runs six jobs in sequence. Its leading `test` job is
+a deliberate dep-rank-owned CI gate in addition to the shared-workflows
+caller-owned PyPI template:
 
 | Job | What it does |
 |-----|--------------|
 | `test` | Runs linting, type checking, and tests as a CI gate |
 | `build` | Verifies the tag is on `main`, builds sdist + wheel via `uv build`, uploads artifacts |
-| `publish-testpypi` | Publishes to TestPyPI, polls for availability, installs and smoke-tests the package |
+| `publish-testpypi` | Publishes the built artifacts to TestPyPI |
+| `verify-testpypi` | Uses Python 3.13 and an explicit uv source to install only `dep-rank` from TestPyPI while resolving ordinary dependencies from PyPI, then runs `dep-rank --version` |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
 | `github-release` | Creates a **draft** GitHub Release with auto-generated notes and attached artifacts |
 
