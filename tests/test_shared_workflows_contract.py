@@ -69,7 +69,7 @@ def test_release_workflow_retains_v4_2_2_contract() -> None:
         'uv run --no-sync bash -euo pipefail -c "$VERIFY_COMMAND"',
         'git merge-base --is-ancestor "$TAG_SHA" origin/main',
         "name: testpypi",
-        "name: pypi",
+        "\n      name: pypi\n",
         "skip-existing: false",
         "if: env.ATTACH_ASSETS == 'true'",
         'if [ "$DRAFT_RELEASE" = "true" ]; then',
