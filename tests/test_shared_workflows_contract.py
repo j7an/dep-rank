@@ -96,3 +96,4 @@ def test_testpypi_verifier_disables_setup_uv_cache() -> None:
     assert "uses: astral-sh/setup-uv@" in setup_step
     assert "with:" in setup_step
     assert "enable-cache: false" in setup_step
+    assert "ignore-empty-workdir: true" in setup_step
