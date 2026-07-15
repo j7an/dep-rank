@@ -5,8 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
-EXPECTED_SHA = "dc9105acf09a4ad43bad2e4a86f4c65f553fe3c0"
-EXPECTED_VERSION = "v4.2.2"
+EXPECTED_SHA = "e22b38d70bf615d2e250718d430a5a4688fee158"
+EXPECTED_VERSION = "v4.2.3"
 EXPECTED_CALLERS = {
     "dependency-safety.yml": "dependency-safety.yml",
     "dependency-safety-non-bot-gate.yml": "dependency-safety-non-bot-gate.yml",
@@ -42,7 +42,7 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
     assert actual_callers == EXPECTED_CALLERS
 
 
-def test_release_workflow_retains_v4_2_2_contract() -> None:
+def test_release_workflow_retains_v4_2_3_contract() -> None:
     release = (WORKFLOWS_DIR / "release.yml").read_text()
 
     required_lines = (
