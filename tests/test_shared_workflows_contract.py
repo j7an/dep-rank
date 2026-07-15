@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
+TESTS_DIR = ROOT / "tests"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
-EXPECTED_SHA = "dc9105acf09a4ad43bad2e4a86f4c65f553fe3c0"
-EXPECTED_VERSION = "v4.2.2"
 EXPECTED_CALLERS = {
     "dependency-safety.yml": "dependency-safety.yml",
     "dependency-safety-non-bot-gate.yml": "dependency-safety-non-bot-gate.yml",
@@ -19,6 +21,112 @@ SHARED_USES_RE = re.compile(
     r"(?P<reusable>[^@\s]+)@(?P<sha>[0-9a-f]{40})\s+"
     r"#\s+(?P<version>v\d+\.\d+\.\d+)\s*$"
 )
+SHA_LITERAL_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
+VERSION_LITERAL_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+ACTION_PIN_LITERAL_RE = re.compile(
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9A-Fa-f]{40}"
+    r'(?:\\?["\'])?\s+#\s+v\d+\.\d+\.\d+'
+)
+
+
+def _pin_literal_violations(path: Path, *, reject_standalone_values: bool) -> list[str]:
+    violations: list[str] = []
+    display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+    tree = ast.parse(path.read_text())
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        value = node.value
+        if (
+            ACTION_PIN_LITERAL_RE.search(value)
+            or reject_standalone_values
+            and (SHA_LITERAL_RE.fullmatch(value) or VERSION_LITERAL_RE.fullmatch(value))
+        ):
+            violations.append(f"{display_path}:{node.lineno}:{value}")
+
+    return violations
+
+
+def test_shared_workflow_contract_tests_do_not_snapshot_pin_values() -> None:
+    violations: list[str] = []
+
+    for path in sorted(TESTS_DIR.rglob("test_*.py")):
+        policy_name = path.name.lower()
+        violations.extend(
+            _pin_literal_violations(
+                path,
+                reject_standalone_values="workflow" in policy_name or "action" in policy_name,
+            )
+        )
+
+    assert not violations, "literal shared-workflow pin snapshots found:\n" + "\n".join(violations)
+
+
+def test_pin_policy_reports_complete_snapshots_without_subject_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = "a" * 40
+    version = "v7" + ".1.2"
+    target = "actions/checkout"
+    snapshots = (
+        f"uses: {target}@{sha} # {version}",
+        f"uses: '{target}@{sha}' # {version}",
+        f'uses: "{target}@{sha}" # {version}',
+        f'uses: \\"{target}@{sha}\\" # {version}',
+        f"before\nuses: {target}@{sha} # {version}\nafter",
+    )
+    path = tmp_path / "test_other.py"
+    path.write_text(
+        "\n".join(f"PIN_{index} = {snapshot!r}" for index, snapshot in enumerate(snapshots))
+    )
+    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
+
+    with pytest.raises(AssertionError) as exc_info:
+        test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
+
+    message = str(exc_info.value)
+    for snapshot in snapshots:
+        pin_line = next(line for line in snapshot.splitlines() if target in line)
+        assert pin_line in message
+
+
+def test_pin_policy_reports_standalone_values_in_workflow_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = "b" * 40
+    version = "v8" + ".2.1"
+    path = tmp_path / "test_workflow_contract.py"
+    path.write_text(f"SHA = {sha!r}\nVERSION = {version!r}\n")
+    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
+
+    with pytest.raises(AssertionError) as exc_info:
+        test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
+
+    assert sha in str(exc_info.value)
+    assert version in str(exc_info.value)
+
+
+def test_pin_policy_allows_incomplete_pins_and_unrelated_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = "c" * 40
+    version = "v9" + ".3.0"
+    target = "actions/checkout"
+    path = tmp_path / "test_other.py"
+    path.write_text(
+        "\n".join(
+            (
+                f"SHA = {sha!r}",
+                f"VERSION = {version!r}",
+                f"MISSING_VERSION = {f'{target}@{sha}'!r}",
+                f"MISSING_SHA = {f'{target}@v9 # {version}'!r}",
+            )
+        )
+    )
+    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
+
+    test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
 
 
 def test_shared_workflows_refs_are_uniformly_pinned() -> None:
@@ -32,17 +140,18 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
     assert len(shared_uses_lines) == len(EXPECTED_CALLERS)
 
     actual_callers: dict[str, str] = {}
+    actual_pins: set[tuple[str, str]] = set()
     for caller, line in shared_uses_lines:
         match = SHARED_USES_RE.fullmatch(line)
         assert match is not None, f"Malformed shared-workflows pin in {caller}: {line}"
-        assert match["sha"] == EXPECTED_SHA
-        assert match["version"] == EXPECTED_VERSION
+        actual_pins.add((match["sha"], match["version"]))
         actual_callers[match["reusable"]] = caller
 
     assert actual_callers == EXPECTED_CALLERS
+    assert len(actual_pins) == 1, f"shared-workflows callers use different pins: {actual_pins}"
 
 
-def test_release_workflow_retains_v4_2_2_contract() -> None:
+def test_release_workflow_retains_caller_owned_contract() -> None:
     release = (WORKFLOWS_DIR / "release.yml").read_text()
 
     required_lines = (
