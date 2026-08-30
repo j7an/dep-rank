@@ -138,7 +138,7 @@ uv sync
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy dep_rank/
+uv run mypy src tests
 ```
 
 ## Acknowledgments

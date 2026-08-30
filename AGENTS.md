@@ -63,7 +63,7 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v
 # Lint, format-check, and type-check the same paths used by CI
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
-uv run mypy src/dep_rank/
+uv run mypy src tests
 
 # Run all configured local hooks
 uv run pre-commit run --all-files

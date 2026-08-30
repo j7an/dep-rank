@@ -60,7 +60,7 @@ async def test_fetch_window_never_exceeds_concurrency() -> None:
     semaphore = asyncio.Semaphore(concurrency)
 
     async def fetch(i: int) -> str:
-        return await _fetch_page(  # type: ignore[no-any-return]
+        return await _fetch_page(
             session,
             f"https://github.com/o/r/network/dependents?page={i}",
             limiter,
