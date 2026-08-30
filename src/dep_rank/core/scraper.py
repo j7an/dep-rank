@@ -10,7 +10,9 @@ import random
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from types import TracebackType
+from typing import Protocol
 
 import aiohttp
 from selectolax.parser import HTMLParser
@@ -62,6 +64,43 @@ class NetworkFailureError(ScrapeError):
 
 class RateLimitedError(ScrapeError):
     """The retry budget was exhausted on 429 responses."""
+
+
+class _PageResponse(Protocol):
+    """HTTP response members consumed by the scraper."""
+
+    @property
+    def status(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    async def read(self) -> bytes: ...
+
+
+class _PageRequest(Protocol):
+    """Async context manager returned by a page request."""
+
+    async def __aenter__(self) -> _PageResponse: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+
+class _PageSession(Protocol):
+    """Session capability required to fetch a dependents page."""
+
+    def get(
+        self,
+        url: str,
+        *,
+        timeout: aiohttp.ClientTimeout,
+        headers: Mapping[str, str],
+    ) -> _PageRequest: ...
 
 
 def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
@@ -154,7 +193,7 @@ def _retry_delay(attempt: int) -> float:
 
 
 async def _fetch_page(
-    session: aiohttp.ClientSession,
+    session: _PageSession,
     url: str,
     limiter: AdaptiveRateLimiter,
     semaphore: asyncio.Semaphore,
@@ -224,7 +263,7 @@ async def _fetch_page(
 
 
 async def _read_page(
-    session: aiohttp.ClientSession,
+    session: _PageSession,
     url: str,
     limiter: AdaptiveRateLimiter,
     semaphore: asyncio.Semaphore,
@@ -266,7 +305,7 @@ class SWRManager:
 
     def __init__(
         self,
-        session: aiohttp.ClientSession,
+        session: _PageSession,
         limiter: AdaptiveRateLimiter,
         auth_headers: dict[str, str],
         cache: SqliteCache | None,
@@ -456,7 +495,7 @@ def _build_snapshot(
 
 
 async def stream_dependents(
-    session: aiohttp.ClientSession,
+    session: _PageSession,
     url: str,
     *,
     rows: int | None,
@@ -561,7 +600,7 @@ async def stream_dependents(
 
 
 async def scrape_dependents(
-    session: aiohttp.ClientSession,
+    session: _PageSession,
     url: str,
     dependent_type: DependentType = DependentType.REPOSITORY,
     min_stars: int = 5,
