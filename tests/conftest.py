@@ -29,8 +29,9 @@ if "stream_writer" in inspect.signature(_response_init).parameters:
         _response_init(self, *args, **kwargs)
 
     # aiohttp's constructor is an overloaded method; this test-only compatibility shim
-    # deliberately accepts its complete call surface to add the missing keyword.
-    aiohttp.ClientResponse.__init__ = _patched_response_init  # type: ignore[method-assign]
+    # deliberately accepts its complete call surface to add the missing keyword. The isolated
+    # pre-commit hook lacks aiohttp stubs, so method-assign is unused only in that environment.
+    aiohttp.ClientResponse.__init__ = _patched_response_init  # type: ignore[method-assign, unused-ignore]
 
 DEPENDENTS_HTML_PAGE_1 = """
 <html>
