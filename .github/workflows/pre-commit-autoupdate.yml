@@ -16,6 +16,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: j7an/shared-workflows/.github/workflows/pre-commit-autoupdate.yml@d76ca3a6d121dabbab2d7a64118968edc1f14da2 # v4.5.1
+    uses: j7an/shared-workflows/.github/workflows/pre-commit-autoupdate.yml@0779707159acf1eb829779ec466823c1bef854c5 # v4.7.0
     secrets:
       RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
