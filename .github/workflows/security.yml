@@ -22,7 +22,7 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@72948aa22854e8ae24a8e86ee72eb72ec954b71d # v4.7.3
+    uses: j7an/shared-workflows/.github/workflows/security-scan.yml@922a5c02377c33cfb1298fa46f498e71dfad4a70 # v4.8.0
     with:
       support_merge_group: true
       codeql_queries: +security-and-quality
