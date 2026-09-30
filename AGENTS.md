@@ -151,8 +151,9 @@ request, run the checks that cover every changed area and then the full suite.
 
 ## CI and Workflow Policy
 
-- `.github/workflows/ci.yml` owns Ruff, mypy, the 3x3 OS/Python pytest matrix,
-  changed-line coverage, lockfile repair, and dependency review.
+- `.github/workflows/ci.yml` owns Ruff, mypy, the 3x3 OS/Python pytest matrix
+  (run with `--no-cov`), the PR-only `coverage` job (total and changed-line
+  coverage), lockfile repair, and dependency review.
 - `.github/workflows/security.yml` delegates CodeQL, secret scanning, OSV,
   Trivy, and workflow analysis to the shared security workflow.
 - `dependency-safety.yml` handles Dependabot analysis. The status-only
@@ -160,8 +161,9 @@ request, run the checks that cover every changed area and then the full suite.
   `dependency-safety / gate` context for non-Dependabot pull requests, including
   fork pull requests. Preserve this split.
 - The shared-workflows caller set is exactly dependency safety, its non-bot gate,
-  pre-commit autoupdate, security scan, and tag release. Keep the set and all
-  callers on one uniform release.
+  pre-commit autoupdate, security scan, and tag release. The only shared action is
+  `actions/coverage`, used by the `ci.yml` `coverage` job. Keep the set, all
+  callers, and the action on one uniform release.
 - External GitHub Actions and cross-repository reusable workflows must be pinned
   to immutable lowercase 40-character commit SHAs with trailing `# vX.Y.Z`
   comments. Dereference tags to commit SHAs; never use a mutable tag as the

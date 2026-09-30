@@ -75,7 +75,7 @@ Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `
 
 ## Running Diff Coverage Locally
 
-CI enforces a minimum coverage threshold on changed lines via [`diff-cover`](https://github.com/Bachmann1234/diff_cover). The gate runs on PRs only, on a single matrix cell (`ubuntu-latest` + Python 3.11), with `--fail-under=80`. To check the same gate locally before pushing:
+CI enforces a minimum coverage threshold on changed lines via [`diff-cover`](https://github.com/Bachmann1234/diff_cover). The gate runs on PRs only, in the dedicated `coverage` job (`ubuntu-latest` + Python 3.11), through the shared `j7an/shared-workflows/actions/coverage` action with a minimum of 80% over `src/dep_rank/` (excluding the generated `_version.py`). It compares against the PR's base commit, passes as not-applicable when no production lines changed, and uploads its report as an artifact and job summary. The `test` matrix runs with `--no-cov` and measures no coverage. To check the same gate locally before pushing:
 
 ```bash
 uv run pytest                                              # produces coverage.xml
@@ -86,7 +86,7 @@ uv run diff-cover coverage.xml \
 
 `diff-cover` reads `coverage.xml`, computes the git diff between `HEAD` and `origin/main`, and reports the percentage of changed lines covered by tests. If your branch is based off a base other than `main`, replace `origin/main` accordingly.
 
-The local gate uses the same threshold and inputs as CI. A PR that passes locally should pass in CI; if they disagree, the most likely cause is stale local state — re-run `git fetch origin` and re-check `coverage.xml` is current.
+The local gate uses the same threshold and coverage report as CI. A PR that passes locally should pass in CI; if they disagree, the most likely cause is stale local state — re-run `git fetch origin` and re-check `coverage.xml` is current.
 
 ## Best Practices
 
@@ -123,7 +123,7 @@ class TestMyFeature:
 These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
 
 - Coverage minimum threshold: 90% overall with branch coverage enabled (via `[tool.coverage.run] branch = true` and `[tool.coverage.report] fail_under`)
-- Coverage report formats: html, term-missing, xml (the terminal report now includes `Branch` / `BrPart`; xml still feeds the PR-only `diff-cover` gate at `--fail-under=80`)
+- Coverage report formats: html, term-missing, xml (the terminal report now includes `Branch` / `BrPart`; xml still feeds the PR-only `coverage` job's diff gate at 80%)
 - Warnings filtered appropriately
 
-Failed tests, overall coverage (branch-enabled total) below 90%, or diff coverage below 80% on changed lines (PRs only, on the `ubuntu-latest`/Python 3.11 cell) will cause CI to fail.
+Failed tests, overall coverage (branch-enabled total) below 90%, or diff coverage below 80% on changed lines will cause CI to fail. Both coverage thresholds are enforced on PRs only, by the `coverage` job; the `test` matrix legs run with `--no-cov`.
