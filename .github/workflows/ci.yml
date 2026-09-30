@@ -133,8 +133,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.11', '3.12', '3.13']
+        os: [ubuntu-latest]
+        python-version: ['3.11', '3.12', '3.13', '3.14']
+        # OS-specific breakage (missing wheels, platform CPython changes) lands on the newest
+        # Python; version-specific breakage is already covered by the Linux legs.
+        include:
+          - os: macos-latest
+            python-version: '3.14'
+          - os: windows-latest
+            python-version: '3.14'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read

@@ -12,7 +12,7 @@ can search code across the discovered repositories. It combines HTML scraping,
 optional GraphQL enrichment, bounded concurrency, rate limiting, and a local
 SQLite cache.
 
-The supported Python matrix is 3.11, 3.12, and 3.13. The package uses a
+The supported Python matrix is 3.11, 3.12, 3.13, and 3.14. The package uses a
 `src/` layout, `uv` for environments and dependency locking, Hatchling for
 builds, and hatch-vcs for versions derived from Git tags.
 
@@ -111,7 +111,7 @@ request, run the checks that cover every changed area and then the full suite.
   requests also require at least 80% coverage on changed lines.
 - Add regression tests for fixes and boundary-focused tests for pagination,
   concurrency, rate limiting, partial results, caching, and CLI validation.
-- Keep tests deterministic across Linux, macOS, Windows, and Python 3.11-3.13.
+- Keep tests deterministic across Linux, macOS, Windows, and Python 3.11-3.14.
 
 ## Scraper and Runtime Invariants
 
@@ -151,8 +151,9 @@ request, run the checks that cover every changed area and then the full suite.
 
 ## CI and Workflow Policy
 
-- `.github/workflows/ci.yml` owns Ruff, mypy, the 3x3 OS/Python pytest matrix
-  (run with `--no-cov`), the PR-only `coverage` job (total and changed-line
+- `.github/workflows/ci.yml` owns Ruff, mypy, the pytest matrix
+  (Linux on every supported Python plus macOS and Windows on the newest, run with
+  `--no-cov`), the PR-only `coverage` job (total and changed-line
   coverage), lockfile repair, and dependency review.
 - `.github/workflows/security.yml` delegates CodeQL, secret scanning, OSV,
   Trivy, and workflow analysis to the shared security workflow.
