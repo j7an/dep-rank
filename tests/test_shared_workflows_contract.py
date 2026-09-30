@@ -16,10 +16,11 @@ EXPECTED_CALLERS = {
     "security-scan.yml": "security.yml",
     "tag-release.yml": "tag-release.yml",
 }
+EXPECTED_ACTIONS = {"coverage": "ci.yml"}
 SHARED_USES_RE = re.compile(
-    r"^\s*uses:\s+j7an/shared-workflows/\.github/workflows/"
-    r"(?P<reusable>[^@\s]+)@(?P<sha>[0-9a-f]{40})\s+"
-    r"#\s+(?P<version>v\d+\.\d+\.\d+)\s*$"
+    r"^\s*uses:\s+j7an/shared-workflows/"
+    r"(?:\.github/workflows/(?P<reusable>[^@\s]+)|actions/(?P<action>[^@\s]+))"
+    r"@(?P<sha>[0-9a-f]{40})\s+#\s+(?P<version>v\d+\.\d+\.\d+)\s*$"
 )
 SHA_LITERAL_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 VERSION_LITERAL_RE = re.compile(r"^v\d+\.\d+\.\d+$")
@@ -134,21 +135,26 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
 
     for path in sorted(WORKFLOWS_DIR.glob("*.y*ml")):
         for line in path.read_text().splitlines():
-            if "j7an/shared-workflows/.github/workflows/" in line:
+            if "j7an/shared-workflows/" in line:
                 shared_uses_lines.append((path.name, line))
 
-    assert len(shared_uses_lines) == len(EXPECTED_CALLERS)
+    assert len(shared_uses_lines) == len(EXPECTED_CALLERS) + len(EXPECTED_ACTIONS)
 
     actual_callers: dict[str, str] = {}
+    actual_actions: dict[str, str] = {}
     actual_pins: set[tuple[str, str]] = set()
     for caller, line in shared_uses_lines:
         match = SHARED_USES_RE.fullmatch(line)
         assert match is not None, f"Malformed shared-workflows pin in {caller}: {line}"
         actual_pins.add((match["sha"], match["version"]))
-        actual_callers[match["reusable"]] = caller
+        if match["reusable"]:
+            actual_callers[match["reusable"]] = caller
+        else:
+            actual_actions[match["action"]] = caller
 
     assert actual_callers == EXPECTED_CALLERS
-    assert len(actual_pins) == 1, f"shared-workflows callers use different pins: {actual_pins}"
+    assert actual_actions == EXPECTED_ACTIONS
+    assert len(actual_pins) == 1, f"shared-workflows refs use different pins: {actual_pins}"
 
 
 def test_release_workflow_retains_caller_owned_contract() -> None:
