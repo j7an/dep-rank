@@ -6,10 +6,15 @@ check uses aggregate daily counts only.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import NamedTuple
 
-from dep_rank.core.models import CautionCode, CautionSignal
+import aiohttp
+
+from dep_rank.core.models import CautionCode, CautionSignal, Repository, TrustCheckResult
+
+logger = logging.getLogger(__name__)
 
 STAR_HISTORY_URL = "https://api.github.com/repos/{owner}/{name}/stargazers/history"
 WINDOW_WEEKS = 30
@@ -70,3 +75,71 @@ def evaluate_star_history(daily: list[tuple[date, int]], *, now: datetime) -> St
             ),
         )
     return StarHistoryVerdict(sufficient=True, caution=caution)
+
+
+async def check_star_history(
+    session: aiohttp.ClientSession,
+    repos: list[Repository],
+    token: str,
+    *,
+    now: datetime,
+) -> tuple[list[Repository], TrustCheckResult]:
+    """Check the first bounded set sequentially, preserving input order and scores."""
+    checked = repos[:MAX_CHECKED_REPOS]
+    updated = list(repos)
+    unavailable: list[str] = []
+    insufficient_history: list[str] = []
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": API_VERSION,
+    }
+    # The core REST budget is separate from the scraper's request budget/RateLimiter.
+    # ponytail: no early stop on 401/403/429 — <= 25 fast failures is acceptable; add one if MAX_CHECKED_REPOS grows substantially.  # noqa: E501
+    for index, repo in enumerate(checked):
+        full_name = f"{repo.owner}/{repo.name}"
+        url = STAR_HISTORY_URL.format(owner=repo.owner, name=repo.name)
+        try:
+            async with session.get(
+                url, params={"per_page": WINDOW_WEEKS}, headers=headers
+            ) as response:
+                if response.status != 200:
+                    unavailable.append(full_name)
+                    logger.debug(
+                        "Star history unavailable for %s: HTTP %s", full_name, response.status
+                    )
+                    continue
+                daily = parse_star_history(await response.json())
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+            unavailable.append(full_name)
+            logger.debug("Star history unavailable for %s: %s", full_name, exc)
+            continue
+        verdict = evaluate_star_history(daily, now=now)
+        if not verdict.sufficient:
+            insufficient_history.append(full_name)
+        if verdict.caution is not None and repo.trust is not None:
+            updated[index] = repo.model_copy(
+                update={
+                    "trust": repo.trust.model_copy(
+                        update={"cautions": [*repo.trust.cautions, verdict.caution]}
+                    )
+                }
+            )
+    return updated, TrustCheckResult(
+        complete=not unavailable,
+        window_weeks=WINDOW_WEEKS,
+        repos_checked=len(checked),
+        insufficient_history=insufficient_history,
+        unavailable=unavailable,
+    )
+
+
+def skipped_trust_check(repos: list[Repository]) -> TrustCheckResult:
+    """Report the bounded check unavailable when trust ranking could not run."""
+    unavailable = [f"{repo.owner}/{repo.name}" for repo in repos[:MAX_CHECKED_REPOS]]
+    return TrustCheckResult(
+        complete=not unavailable,
+        window_weeks=WINDOW_WEEKS,
+        repos_checked=len(unavailable),
+        unavailable=unavailable,
+    )

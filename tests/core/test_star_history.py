@@ -2,10 +2,24 @@
 
 from datetime import UTC, date, datetime, timedelta, timezone
 
+import aiohttp
 import pytest
+from aioresponses import aioresponses
 
-from dep_rank.core.models import CautionCode
-from dep_rank.core.star_history import evaluate_star_history, parse_star_history
+from dep_rank.core.models import (
+    CautionCode,
+    CautionSignal,
+    Repository,
+    TrustCheckResult,
+    TrustComponents,
+    TrustScore,
+)
+from dep_rank.core.star_history import (
+    check_star_history,
+    evaluate_star_history,
+    parse_star_history,
+    skipped_trust_check,
+)
 
 NOW = datetime(2026, 9, 20, 12, tzinfo=UTC)
 
@@ -112,3 +126,155 @@ def test_empty_daily_is_insufficient() -> None:
     verdict = evaluate_star_history([], now=NOW)
     assert verdict.sufficient is False
     assert verdict.caution is None
+
+
+def history_repo(name: str) -> Repository:
+    return Repository(
+        owner="o",
+        name=name,
+        url=f"https://github.com/o/{name}",
+        stars=5000,
+        trust=TrustScore(
+            score=87.4,
+            components=TrustComponents(stars=0.9, forks=0.8, engagement=0.7, recency=0.5),
+            cautions=[
+                CautionSignal(code=CautionCode.STALE_ACTIVITY, description="Existing caution")
+            ],
+        ),
+    )
+
+
+def history_url(name: str) -> str:
+    return f"https://api.github.com/repos/o/{name}/stargazers/history?per_page=30"
+
+
+def concentrated_payload() -> list[dict[str, object]]:
+    return [
+        {"week": 1788652800, "total": 2771, "days": [400, 400, 400, 400, 400, 400, 371]},
+        {"week": 1789257600, "total": 1331, "days": [1331, 0, 0, 0, 0, 0, 0]},
+    ]
+
+
+class TestCheckStarHistory:
+    async def test_concentrated_caution_merged_into_trust(self) -> None:
+        repo = history_repo("a")
+        with aioresponses() as m:
+            m.get(history_url("a"), payload=concentrated_payload())
+            async with aiohttp.ClientSession() as session:
+                repos, result = await check_star_history(session, [repo], "tok", now=NOW)
+        assert repos[0].trust is not None
+        assert repo.trust is not None
+        assert repos[0].trust.cautions[:-1] == repo.trust.cautions
+        assert len(repo.trust.cautions) == 1
+        assert repos[0].trust.cautions[-1].code == CautionCode.CONCENTRATED_STARRING
+        assert repos[0].trust.cautions[-1].description == (
+            "1,331 of 4,102 stars in the last 30 weeks arrived on 2026-09-13"
+        )
+        assert repos[0].trust.score == repo.trust.score
+        assert result.complete is True
+        assert result.repos_checked == 1
+
+    async def test_request_carries_api_version_and_bearer(self) -> None:
+        with aioresponses() as m:
+            m.get(history_url("a"), payload=[])
+            async with aiohttp.ClientSession() as session:
+                await check_star_history(session, [history_repo("a")], "tok", now=NOW)
+            headers = next(iter(m.requests.values()))[0].kwargs["headers"]
+        # contract literal: documented API version for this endpoint
+        assert headers["X-GitHub-Api-Version"] == "2026-03-10"
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers["Accept"] == "application/vnd.github+json"
+
+    async def test_caps_at_25_repos(self) -> None:
+        repos = [history_repo(str(i)) for i in range(40)]
+        with aioresponses() as m:
+            for i in range(25):
+                m.get(history_url(str(i)), payload=[])
+            async with aiohttp.ClientSession() as session:
+                returned, result = await check_star_history(session, repos, "tok", now=NOW)
+            assert sum(len(calls) for calls in m.requests.values()) == 25
+        assert result.repos_checked == 25
+        assert result.complete is True
+        assert returned == repos
+        assert [repo.name for repo in returned] == [str(i) for i in range(40)]
+
+    async def test_mixed_failures_are_unavailable(self) -> None:
+        repos = [history_repo(name) for name in "abcde"]
+        with aioresponses() as m:
+            m.get(history_url("a"), payload=concentrated_payload())
+            m.get(history_url("b"), status=404)
+            m.get(history_url("c"), exception=aiohttp.ClientError("network failure"))
+            m.get(history_url("d"), payload={"message": "x"})
+            m.get(history_url("e"), payload=[])
+            async with aiohttp.ClientSession() as session:
+                returned, result = await check_star_history(session, repos, "tok", now=NOW)
+        assert result.unavailable == ["o/b", "o/c", "o/d"]
+        assert result.insufficient_history == ["o/e"]
+        assert result.complete is False
+        assert result.repos_checked == 5
+        assert returned[1:] == repos[1:]
+
+    @pytest.mark.parametrize("status", [401, 403, 429])
+    async def test_error_status_does_not_stop_later_checks(self, status: int) -> None:
+        with aioresponses() as m:
+            m.get(history_url("a"), status=status)
+            m.get(history_url("b"), payload=[])
+            async with aiohttp.ClientSession() as session:
+                _, result = await check_star_history(
+                    session, [history_repo("a"), history_repo("b")], "tok", now=NOW
+                )
+        assert result.unavailable == ["o/a"]
+        assert result.insufficient_history == ["o/b"]
+        assert result.repos_checked == 2
+
+    async def test_timeout_and_bad_json_are_unavailable(self) -> None:
+        with aioresponses() as m:
+            m.get(history_url("a"), exception=TimeoutError())
+            m.get(history_url("b"), body="{", content_type="application/json")
+            async with aiohttp.ClientSession() as session:
+                _, result = await check_star_history(
+                    session, [history_repo("a"), history_repo("b")], "tok", now=NOW
+                )
+        assert result.unavailable == ["o/a", "o/b"]
+        assert result.complete is False
+
+    async def test_concentrated_repo_without_trust_is_preserved(self) -> None:
+        repo = history_repo("a").model_copy(update={"trust": None})
+        with aioresponses() as m:
+            m.get(history_url("a"), payload=concentrated_payload())
+            async with aiohttp.ClientSession() as session:
+                returned, result = await check_star_history(session, [repo], "tok", now=NOW)
+        assert returned == [repo]
+        assert returned[0].trust is None
+        assert result.complete is True
+        assert result.insufficient_history == []
+
+    async def test_sufficient_spread_history_preserves_existing_cautions(self) -> None:
+        repos = [history_repo("a")]
+        payload = [
+            {"week": 1788652800, "total": 210, "days": [30] * 7},
+            {"week": 1789257600, "total": 210, "days": [30] * 7},
+        ]
+        with aioresponses() as m:
+            m.get(history_url("a"), payload=payload)
+            async with aiohttp.ClientSession() as session:
+                returned, result = await check_star_history(session, repos, "tok", now=NOW)
+        assert returned == repos
+        assert result.complete is True
+        assert result.insufficient_history == []
+
+    async def test_empty_repos(self) -> None:
+        with aioresponses() as m:
+            async with aiohttp.ClientSession() as session:
+                returned = await check_star_history(session, [], "tok", now=NOW)
+            assert m.requests == {}
+        assert returned == ([], TrustCheckResult(complete=True, window_weeks=30, repos_checked=0))
+
+    def test_skipped_trust_check_marks_top_25_unavailable(self) -> None:
+        repos = [history_repo(str(i)) for i in range(30)]
+        result = skipped_trust_check(repos)
+        assert result.repos_checked == 25
+        assert result.unavailable == [f"o/{i}" for i in range(25)]
+        assert result.complete is False
+        assert result.insufficient_history == []
+        assert skipped_trust_check([]).complete is True
