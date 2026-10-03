@@ -33,20 +33,6 @@ def test_both_broken_flags_both() -> None:
     assert len(drift_check.evaluate_drift(repos_count=0, total_dependents=0)) == 2
 
 
-@pytest.mark.parametrize("reason", [ScrapeReason.NETWORK_FAILURE, ScrapeReason.RATE_LIMITED])
-def test_transport_failure_is_inconclusive_not_drift(reason: ScrapeReason) -> None:
-    """A network/rate failure must not be reported as selector drift, even when the
-    failed scrape returned zero repos and a zero header count."""
-    assert drift_check.evaluate_drift(repos_count=0, total_dependents=0, reason=reason) == []
-
-
-def test_max_pages_reached_still_evaluates_selectors() -> None:
-    """MAX_PAGES_REACHED is expected on the multi-page canary; it does not suppress
-    evaluation — healthy counts pass, and a zero-repo page still flags drift."""
-    assert drift_check.evaluate_drift(5, 15000, ScrapeReason.MAX_PAGES_REACHED) == []
-    assert drift_check.evaluate_drift(0, 15000, ScrapeReason.MAX_PAGES_REACHED) != []
-
-
 def test_missing_token_fails_before_scraping(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

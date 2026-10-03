@@ -130,7 +130,6 @@ async def run_deps(
                     repos,
                     token,
                     include_description=descriptions,
-                    cache=cache,
                 )
                 if meta.failed:
                     if not quiet:
@@ -170,7 +169,7 @@ async def run_deps(
             else:
                 repos = repos[:rows]
                 if descriptions and token and repos:
-                    repos = await enrich_with_graphql(session, repos, token, cache=cache)
+                    repos = await enrich_with_graphql(session, repos, token)
                     repos = repos[:rows]
 
             return DependentsResult(

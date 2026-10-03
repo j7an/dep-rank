@@ -5,7 +5,6 @@ from __future__ import annotations
 import heapq
 from collections import deque
 
-import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
@@ -111,7 +110,6 @@ def _decaying_page(page_num: int, total_pages: int) -> str:
     """
 
 
-@pytest.mark.asyncio
 async def test_decaying_stream_stops_with_trend_converged() -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
     with aioresponses() as m:
@@ -136,7 +134,6 @@ async def test_decaying_stream_stops_with_trend_converged() -> None:
     assert [r.name for r in result.repos] == ["a", "b", "c"]
 
 
-@pytest.mark.asyncio
 async def test_no_adaptive_stop_runs_to_exhaustion() -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5
     with aioresponses() as m:

@@ -35,21 +35,13 @@ CANARY_MIN_STARS = 0
 CANARY_MAX_PAGES = 2
 
 
-def evaluate_drift(
-    repos_count: int,
-    total_dependents: int,
-    reason: ScrapeReason | None = None,
-) -> list[str]:
+def evaluate_drift(repos_count: int, total_dependents: int) -> list[str]:
     """Return a list of human-readable drift problems (empty == healthy).
 
-    A transport-level ``reason`` (``NETWORK_FAILURE``/``RATE_LIMITED``) is *inconclusive*:
-    we never saw enough HTML to judge the selectors, so we return ``[]`` rather than
-    misreporting a flaky network as selector drift. ``MAX_PAGES_REACHED`` and
-    ``TREND_CONVERGED`` are expected on the canary and do not suppress evaluation — the
-    pages actually scraped still prove the selectors parse.
+    Callers must screen out ``_INCONCLUSIVE_REASONS`` first; ``MAX_PAGES_REACHED`` and
+    ``TREND_CONVERGED`` are expected on the canary, and the pages actually scraped
+    still prove the selectors parse.
     """
-    if reason in _INCONCLUSIVE_REASONS:
-        return []
     problems: list[str] = []
     if repos_count <= 0:
         problems.append("item selectors returned zero repositories")
@@ -91,7 +83,7 @@ async def _run() -> int:
             f"{result.reason.value}; selector health could not be checked this run.\n"
         )
         return 0
-    problems = evaluate_drift(len(result.repos), result.estimated_total_dependents, result.reason)
+    problems = evaluate_drift(len(result.repos), result.estimated_total_dependents)
     if problems:
         sys.stderr.write(f"DRIFT DETECTED on {CANARY_URL}: " + "; ".join(problems) + "\n")
         return 1

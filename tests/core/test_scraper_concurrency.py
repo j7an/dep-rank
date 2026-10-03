@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from dep_rank.core.rate_limiter import AdaptiveRateLimiter
 from dep_rank.core.scraper import _fetch_page
 
@@ -50,7 +48,6 @@ class _FakeSession:
         return _FakeResponse(self._counter)
 
 
-@pytest.mark.asyncio
 async def test_fetch_window_never_exceeds_concurrency() -> None:
     concurrency = 3
     counter = _Counter()

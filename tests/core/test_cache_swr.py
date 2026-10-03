@@ -62,7 +62,6 @@ URL = "https://github.com/o/r/network/dependents?page=5"
 
 
 class TestSWRManager:
-    @pytest.mark.asyncio
     async def test_disabled_when_unauthenticated(self, cache: SqliteCache) -> None:
         session = _FakeSession([])
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=False)
@@ -70,7 +69,6 @@ class TestSWRManager:
         await swr.drain()
         assert session.calls == 0  # no refresh ever scheduled
 
-    @pytest.mark.asyncio
     async def test_refresh_updates_cache_on_200(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
         session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
@@ -82,7 +80,6 @@ class TestSWRManager:
         assert entry["body"] == b"fresh"
         assert entry["expired"] is False
 
-    @pytest.mark.asyncio
     async def test_refresh_bumps_ttl_on_304(self, cache: SqliteCache) -> None:
         """A 304 revalidation keeps the stale body but refreshes its TTL (no longer expired)."""
         await _seed_expired(cache, URL, b"stale", '"old"')
@@ -96,7 +93,6 @@ class TestSWRManager:
         assert entry["body"] == b"stale"  # body unchanged on 304
         assert entry["expired"] is False  # TTL bumped
 
-    @pytest.mark.asyncio
     async def test_429_feeds_aimd_then_suppresses(self, cache: SqliteCache) -> None:
         """A background 429 must update the shared limiter (AIMD halves concurrency),
         leave the stale body intact, and — once concurrency hits the floor — suppress
@@ -124,7 +120,6 @@ class TestSWRManager:
         await swr.drain()
         assert session.calls == 1  # no new request fired
 
-    @pytest.mark.asyncio
     async def test_dedup_one_refresh_per_url(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
         session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=0.02)])
@@ -134,7 +129,6 @@ class TestSWRManager:
         await swr.drain()
         assert session.calls == 1
 
-    @pytest.mark.asyncio
     async def test_failed_refresh_enters_cooldown(
         self, cache: SqliteCache, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -162,7 +156,6 @@ class TestSWRManager:
         await swr.drain()
         assert session.calls == 1
 
-    @pytest.mark.asyncio
     async def test_no_refresh_without_foreground_headroom(self, cache: SqliteCache) -> None:
         """Spec §3 foreground-priority: at low headroom the refresh makes no request AND
         a concurrent foreground ``acquire()`` is not delayed by the refresh path."""
@@ -186,7 +179,6 @@ class TestSWRManager:
         assert session.calls == 0  # refresh aborted: try_acquire(reserve=1) saw <2 tokens
         assert foreground.done()  # foreground acquired immediately, never queued behind SWR
 
-    @pytest.mark.asyncio
     async def test_drain_cancels_stragglers_past_timeout(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
         session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"', delay=5.0)])
@@ -201,7 +193,6 @@ class TestSWRManager:
 
 
 class TestSWRIntegration:
-    @pytest.mark.asyncio
     async def test_read_page_serves_stale_and_schedules_refresh(self, cache: SqliteCache) -> None:
         from dep_rank.core.scraper import _read_page
 
@@ -224,7 +215,6 @@ class TestSWRIntegration:
         assert entry is not None
         assert entry["body"] == b"<html>fresh</html>"  # refreshed in background
 
-    @pytest.mark.asyncio
     async def test_stream_blocks_on_drain_before_returning(self, tmp_path: Any) -> None:
         """`stream_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
         not leave the refresh as a fire-and-forget task that merely happens to finish in
