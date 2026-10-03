@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -54,6 +55,58 @@ def mock_result() -> DependentsResult:
     )
 
 
+class TestCacheDir:
+    @pytest.mark.parametrize(
+        ("platform", "case"),
+        [
+            ("darwin", "darwin"),
+            ("linux", "xdg-set"),
+            ("linux", "xdg-empty"),
+            ("linux", "xdg-unset"),
+            ("win32", "win-shell"),
+        ],
+        ids=["darwin", "xdg-set", "xdg-empty", "xdg-unset", "win-shell"],
+    )
+    def test_paths(
+        self, platform: str, case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from dep_rank.cli.app import _cache_dir
+
+        monkeypatch.setattr(sys, "platform", platform)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        home = os.path.expanduser("~")
+        if case == "darwin":
+            expected = os.path.join(home, "Library", "Caches", "dep-rank")
+        elif case == "xdg-set":
+            monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+            expected = os.path.join(str(tmp_path), "dep-rank")
+        elif case == "win-shell":
+            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "env"))
+            monkeypatch.setattr(
+                "dep_rank.cli.app._win_local_appdata", lambda: str(tmp_path / "shell")
+            )
+            expected = os.path.join(str(tmp_path / "shell"), "dep-rank", "dep-rank", "Cache")
+        else:
+            if case == "xdg-empty":
+                monkeypatch.setenv("XDG_CACHE_HOME", "")
+            expected = os.path.join(home, ".cache", "dep-rank")
+        assert _cache_dir() == expected
+
+
+class TestOpenCache:
+    async def test_closes_on_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        from dep_rank.cli.app import _open_cache
+
+        monkeypatch.setattr("dep_rank.cli.app._cache_dir", lambda: str(tmp_path))
+        with pytest.raises(RuntimeError, match="boom"):
+            async with _open_cache() as cache:
+                held = cache
+                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await held.get("x")
+
+
 class TestImportCost:
     def test_cli_import_does_not_load_network_stack(self) -> None:
         code = (
@@ -87,7 +140,7 @@ payload = {
     "errors": [{"type": "NOT_FOUND", "message": "x"}],
 }
 with TemporaryDirectory() as cache_dir:
-    with patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value=cache_dir), \
+    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
          patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock) as scrape:
         scrape.return_value = ScrapeResult(
             repos=repos, pages_scraped=1, max_pages=1000,
@@ -157,7 +210,7 @@ class TestCacheCommand:
 class TestDepsCommandFull:
     """Tests that exercise the full deps command body with mocked core functions."""
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -187,7 +240,7 @@ class TestDepsCommandFull:
         assert result.exit_code == 0
         assert "alpha" in result.output
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
@@ -237,7 +290,7 @@ class TestDepsCommandFull:
         assert mock_enrich.call_args.kwargs["include_description"] is True
         assert result.stdout.index('"toolkit"') < result.stdout.index('"framework"')
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
@@ -269,7 +322,7 @@ class TestDepsCommandFull:
         assert result.stdout.index("alpha/framework") < result.stdout.index("beta/toolkit")
         assert "Trust metadata fetch failed" not in result.stderr
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
@@ -308,7 +361,7 @@ class TestDepsCommandFull:
 class TestSearchCommandFull:
     """Tests that exercise the full search command body."""
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
@@ -360,7 +413,7 @@ class TestSearchCommandFull:
 
 
 class TestCacheCommandsFull:
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.clear", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
@@ -376,7 +429,7 @@ class TestCacheCommandsFull:
         assert result.exit_code == 0
         assert "Cache cleared" in result.output
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.stats", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
@@ -403,7 +456,7 @@ class TestVersionOption:
 
 
 class TestDepsHardeningFlags:
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -457,7 +510,7 @@ class TestDepsHardeningFlags:
         assert "Found" not in result.stdout
         assert "⚠" not in result.stdout
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -533,7 +586,7 @@ class TestDepsHardeningFlags:
 
 
 class TestSearchHardening:
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
@@ -582,7 +635,7 @@ class TestSearchHardening:
         assert kwargs["rows"] == 7  # bounded to --max-repos
         assert kwargs["adaptive_stop"] is False  # never heuristic on the search path
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
@@ -627,7 +680,7 @@ class TestSearchHardening:
         _, kwargs = mock_scrape.call_args
         assert kwargs["max_pages"] == 1000  # clamped before the scrape
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
@@ -676,7 +729,7 @@ class TestSearchHardening:
 
 
 class TestDepsLiveTopK:
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.get", new_callable=AsyncMock, return_value=None)
@@ -736,7 +789,7 @@ async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object)
 
 
 class TestOnPageCallbacks:
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("rich.live.Live.update")
@@ -755,7 +808,7 @@ class TestOnPageCallbacks:
         assert result.exit_code == 0, result.output
         assert mock_live_update.call_count == 1
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("rich.progress.Progress.update")
@@ -806,7 +859,7 @@ class TestRankByTrust:
         ("rows", "expected_pool"),
         [(0, 0), (5, 50), (10, 100), (50, 100), (200, 200)],
     )
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -846,7 +899,7 @@ class TestRankByTrust:
         _, kwargs = mock_scrape.call_args
         assert kwargs["rows"] == expected_pool
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -891,7 +944,7 @@ class TestRankByTrust:
         assert "score" in payload["repos"][0]["trust"]
         assert payload["repos"][0]["trust"]["cautions"] == []  # zero or more, always a list
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -951,7 +1004,7 @@ class TestRankByTrust:
         assert "ranked_by" not in payload
         assert "trust" not in result.stdout
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -985,7 +1038,7 @@ class TestRankByTrust:
         assert result.exit_code == 0
         assert "falling back to star ranking" in result.output
 
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -1032,7 +1085,7 @@ class TestRankByTrust:
         assert "requires a GitHub token" in result.stderr
 
     @pytest.mark.parametrize("trust_check", [False, True])
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -1110,7 +1163,7 @@ class TestRankByTrust:
 
     @pytest.mark.parametrize("output_format", ["table", "json"])
     @pytest.mark.parametrize("metadata_failed", [False, True])
-    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)

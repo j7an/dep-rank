@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ctypes
 import logging
+import os
 import sys
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-import appdirs
 import click
 from rich.console import Console
 from rich.logging import RichHandler
@@ -17,6 +20,9 @@ from dep_rank import __version__
 from dep_rank.core.models import DependentsResult, DependentType
 from dep_rank.core.validation import validate_github_url
 
+if TYPE_CHECKING:
+    from dep_rank.core.cache import SqliteCache
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(message)s",
@@ -24,6 +30,38 @@ logging.basicConfig(
         RichHandler(console=Console(stderr=True), show_time=False, show_path=False, markup=True)
     ],
 )
+
+
+def _win_local_appdata() -> str:  # pragma: no cover
+    """Resolve the Windows shell's local application data folder."""
+    if sys.platform != "win32":
+        raise OSError("Windows only")
+    buf = ctypes.create_unicode_buffer(1024)
+    ctypes.windll.shell32.SHGetFolderPathW(None, 28, None, 0, buf)
+    return buf.value
+
+
+def _cache_dir() -> str:
+    """Resolve the platform cache directory using current environment settings."""
+    if sys.platform == "win32":
+        return os.path.join(_win_local_appdata(), "dep-rank", "dep-rank", "Cache")
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Caches", "dep-rank")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "dep-rank")
+
+
+@contextlib.asynccontextmanager
+async def _open_cache() -> AsyncIterator[SqliteCache]:
+    """Initialize a cache and close it when its caller leaves the context."""
+    from dep_rank.core.cache import SqliteCache
+
+    cache = SqliteCache(_cache_dir())
+    await cache.initialize()
+    try:
+        yield cache
+    finally:
+        await cache.close()
 
 
 async def run_deps(
@@ -46,19 +84,13 @@ async def run_deps(
     from rich.live import Live
 
     from dep_rank.cli.formatters import build_topk_table, format_scrape_summary
-    from dep_rank.core.cache import SqliteCache
     from dep_rank.core.graphql import enrich_with_trust_metadata
     from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
     from dep_rank.core.scraper import scrape_dependents
 
     console = Console(stderr=True)
-    cache_dir = appdirs.user_cache_dir("dep-rank")
-    cache = SqliteCache(cache_dir)
-    await cache.initialize()
-
-    dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
-
-    try:
+    async with _open_cache() as cache:
+        dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
         async with aiohttp.ClientSession(
             headers={"User-Agent": "dep-rank/0.1"},
         ) as session:
@@ -188,8 +220,6 @@ async def run_deps(
                 ranked_by=ranked_by,
                 trust_check=trust_check_result,
             )
-    finally:
-        await cache.close()
 
 
 @click.group()
@@ -374,17 +404,12 @@ def search(
         from rich.console import Console
 
         from dep_rank.cli.formatters import print_search_results
-        from dep_rank.core.cache import SqliteCache
         from dep_rank.core.models import ScrapeSnapshot
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
         console = Console(stderr=True)
-        cache_dir = appdirs.user_cache_dir("dep-rank")
-        cache = SqliteCache(cache_dir)
-        await cache.initialize()
-
-        try:
+        async with _open_cache() as cache:
             async with aiohttp.ClientSession(
                 headers={"User-Agent": "dep-rank/0.1"},
             ) as session:
@@ -461,8 +486,6 @@ def search(
                     max_repos=max_repos,
                 )
                 print_search_results(result)
-        finally:
-            await cache.close()
 
     asyncio.run(_run())
 
@@ -477,13 +500,8 @@ def clear() -> None:
     """Clear all cached data."""
 
     async def _clear() -> None:
-        from dep_rank.core.cache import SqliteCache
-
-        cache_dir = appdirs.user_cache_dir("dep-rank")
-        c = SqliteCache(cache_dir)
-        await c.initialize()
-        await c.clear()
-        await c.close()
+        async with _open_cache() as cache:
+            await cache.clear()
         click.echo("Cache cleared.")
 
     asyncio.run(_clear())
@@ -494,13 +512,8 @@ def stats() -> None:
     """Show cache statistics."""
 
     async def _stats() -> None:
-        from dep_rank.core.cache import SqliteCache
-
-        cache_dir = appdirs.user_cache_dir("dep-rank")
-        c = SqliteCache(cache_dir)
-        await c.initialize()
-        s = await c.stats()
-        await c.close()
+        async with _open_cache() as cache:
+            s = await cache.stats()
         click.echo(f"Entries: {s['entries']}")
         click.echo(f"Size: {s['size_bytes']:,} bytes")
 
