@@ -62,7 +62,7 @@ Module-level HTML constants are also defined in `conftest.py` and imported direc
 
 ## Coverage Report
 
-Run `uv run pytest` to generate the current coverage report. With `[tool.coverage.run] branch = true` enabled, the terminal output includes branch columns (`Branch` and `BrPart`) in addition to missing lines. The HTML report is written to `htmlcov/index.html`; `coverage.xml` is also written for `diff-cover` consumption (used by CI on PRs and available locally for the same gate). Coverage activation, configuration file pointer, and report formats are all configured in `pytest.ini`'s `addopts`; measurement policy (source, branch mode, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
+Run `uv run pytest` to generate the current coverage report. With `[tool.coverage.run] branch = true` enabled, the terminal output includes branch columns (`Branch` and `BrPart`) in addition to missing lines. The HTML report is written to `htmlcov/index.html`; `coverage.xml` is also written for `diff-cover` consumption (used by CI on PRs and available locally for the same gate). Coverage activation, configuration file pointer, and report formats are all configured in `pyproject.toml` `[tool.pytest.ini_options] addopts`; measurement policy (source, branch mode, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
 
 ## Running Coverage Report
 
@@ -71,7 +71,7 @@ uv run pytest tests/
 open htmlcov/index.html
 ```
 
-Coverage runs automatically because `pytest.ini`'s `addopts` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, `--cov-report=term-missing`, and `--cov-report=xml`. Branch coverage is enabled by `pyproject.toml` `[tool.coverage.run] branch = true`, so no extra `--cov-branch` flag is needed after this change.
+Coverage runs automatically because `[tool.pytest.ini_options] addopts` in `pyproject.toml` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, `--cov-report=term-missing`, and `--cov-report=xml`. Branch coverage is enabled by `pyproject.toml` `[tool.coverage.run] branch = true`, so no extra `--cov-branch` flag is needed after this change.
 
 ## Running Diff Coverage Locally
 
@@ -120,7 +120,7 @@ class TestMyFeature:
 
 ## Continuous Integration
 
-These tests run with a minimum 90% coverage enforcement. Configuration is split between `pytest.ini` (activation and report formatting) and `pyproject.toml` `[tool.coverage.*]` (measurement policy). Specifically:
+These tests run with a minimum 90% coverage enforcement. Configuration lives in `pyproject.toml`: `[tool.pytest.ini_options]` (activation and report formatting) and `[tool.coverage.*]` (measurement policy). Specifically:
 
 - Coverage minimum threshold: 90% overall with branch coverage enabled (via `[tool.coverage.run] branch = true` and `[tool.coverage.report] fail_under`)
 - Coverage report formats: html, term-missing, xml (the terminal report now includes `Branch` / `BrPart`; xml still feeds the PR-only `coverage` job's diff gate at 80%)
