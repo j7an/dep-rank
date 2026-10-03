@@ -21,6 +21,7 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    TrustCheckResult,
     TrustComponents,
     TrustScore,
 )
@@ -407,3 +408,61 @@ class TestTrustTableAndJson:
         with console.capture() as cap:
             print_dependents_json(result, include_rank_metadata=True)
         assert json.loads(cap.get())["trust_check"]["unavailable"] == ["alpha/framework"]
+
+    def test_table_footer_counts(self) -> None:
+        concentrated = CautionSignal(
+            code=CautionCode.CONCENTRATED_STARRING, description="A concentrated day"
+        )
+        result = self._result(ranked_by="trust", repos=[self._trust_repo([concentrated])])
+        result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
+        original_width = console.width
+        try:
+            console.width = 200
+            with console.capture() as cap:
+                print_dependents_table(result)
+        finally:
+            console.width = original_width
+        assert (
+            "Trust check (last 30 weeks of star history): 1 of 1 repos checked · "
+            "1 concentrated · 0 insufficient history · 0 unavailable"
+        ) in cap.get()
+
+    def test_table_footer_reflects_cap(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo() for _ in range(40)])
+        result.trust_check = TrustCheckResult(
+            complete=True,
+            window_weeks=30,
+            repos_checked=25,
+            insufficient_history=["alpha/framework"],
+        )
+        with console.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert "25 of 40 repos checked" in out
+        assert "1 insufficient history" in out
+
+    def test_fallback_star_table_prints_footer(self) -> None:
+        repo = Repository(
+            owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
+        )
+        result = self._result(ranked_by="stars", repos=[repo])
+        result.trust_check = TrustCheckResult(
+            complete=False, window_weeks=30, repos_checked=1, unavailable=["beta/toolkit"]
+        )
+        original_width = console.width
+        try:
+            console.width = 200
+            with console.capture() as cap:
+                print_dependents_table(result)
+        finally:
+            console.width = original_width
+        out = cap.get()
+        assert "Trust check (last 30 weeks of star history): 1 of 1 repos checked" in out
+        assert "0 concentrated · 0 insufficient history · 1 unavailable" in out
+        assert out.index("Trust check") > out.index("total dependents")
+
+    def test_no_footer_without_check(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_table(result)
+        assert "Trust check" not in cap.get()

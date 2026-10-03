@@ -38,6 +38,7 @@ dep-rank deps https://github.com/django/django --packages
 | `--concurrency` | 3 | Max concurrent page fetches (1–10) |
 | `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
 | `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
+| `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
 
 ### `dep-rank search` — Search code in dependents
 
@@ -83,6 +84,7 @@ A token is effectively required for non-trivial use: unauthenticated GitHub HTML
 **What requires a token:**
 - `--descriptions` flag — fetches repo descriptions via GitHub GraphQL API
 - `--rank-by trust` — fetches engagement/recency metadata via GitHub GraphQL API
+- `--trust-check` — adds authenticated REST star-history requests to trust ranking
 - `dep-rank search` — code search across dependents
 
 Create a token at [github.com/settings/tokens](https://github.com/settings/tokens) with `public_repo` scope.
@@ -115,18 +117,68 @@ dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...
   it min-max normalizes signals across the scraped candidate set.
 - It re-ranks **only the scraped candidate pool** (the star-top-N dependents), not
   every dependent.
-- It is **heuristic and does not detect fake stars.** It does not fetch stargazer
-  history, GHArchive data, or external fraud datasets.
+- It is **heuristic and does not detect fake stars.** By default it does not fetch star
+  history; `--trust-check` optionally samples it. Neither mode fetches GHArchive
+  data or external fraud datasets.
 - Trust ranking scrapes a **larger candidate pool and is therefore deeper and
   slower** than star ranking.
 - `--rank-by trust` requires a GitHub token; trust scores appear in `--format json`
   output under each repo's `trust` field.
 
+### Star-history check
+
+```bash
+dep-rank deps https://github.com/django/django --rank-by trust --trust-check
+```
+
+This optional check samples the **last 30 weeks of daily star counts for up to
+25 top returned repositories**, using GitHub's authenticated
+[repository star-history API](https://docs.github.com/en/rest/activity/starring#get-repository-star-history).
+It adds a `concentrated_starring` caution when the window contains at least
+200 stars and at least 15% arrived on one day. It does not change trust scores
+or ranking. This is **not proof of fake stars**: launches and Hacker News spikes
+can match the same pattern. See [StarScout][starscout] and the research references
+below for the motivation and limits of star-based signals.
+
+The table footer reports checked versus returned repositories, concentrated
+patterns, `insufficient_history` (fewer than 200 stars in the window), and
+`unavailable` (history could not be obtained). JSON adds top-level `trust_check`
+status only when the check is requested; for example (excerpt):
+
+```json
+{
+  "trust_check": {
+    "complete": true,
+    "window_weeks": 30,
+    "repos_checked": 1,
+    "insufficient_history": [],
+    "unavailable": []
+  },
+  "repos": [{
+    "trust": {
+      "cautions": [{
+        "code": "concentrated_starring",
+        "description": "300 of 1,000 stars in the last 30 weeks arrived on 2026-09-01"
+      }]
+    }
+  }]
+}
+```
+
+`trust_check.complete` describes availability for the sampled repositories,
+not coverage of all results or all historical stars. Unavailable history makes
+it false and leaves the ranking usable. If trust ranking is unavailable, the
+check is skipped and the status reports the returned repositories as unavailable.
+The check uses no account-level signals: GitHub limited stargazer listings to
+repository admins and collaborators in July 2026; aggregate star history remains
+the basis of this check.
+
 ### Caution signals
 
 Trust-ranked results may carry informational **caution signals**, built from the
-same metadata fetch (no extra flag or request). They appear in JSON under each
-repo's `trust.cautions` (a list of `code` + `description`, possibly empty) and, in
+same metadata fetch without extra requests by default. The optional
+`--trust-check` adds a star-history caution using separate requests. Signals
+appear in JSON under each repo's `trust.cautions` (a list of `code` + `description`, possibly empty) and, in
 the table, as a `Cautions` column shown only when at least one result has a signal.
 
 | Code | Shown when |
@@ -135,6 +187,7 @@ the table, as a `Cautions` column shown only when at least one result has a sign
 | `stale_activity` | ≥ 500 stars and no push for more than 365 days |
 | `archived_or_disabled` | The repository is archived or disabled |
 | `new_with_high_stars` | ≥ 1,000 stars and created within the last 180 days |
+| `concentrated_starring` | Only with `--trust-check`: ≥ 200 stars in the sampled window and ≥ 15% arriving on one day |
 
 Thresholds are fixed heuristics. Star floors stand in for a minimum sample size,
 and the low-activity signal requires forks *and* issues/PRs to be low together,
