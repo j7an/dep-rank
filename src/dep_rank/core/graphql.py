@@ -8,7 +8,6 @@ from typing import Any
 
 import aiohttp
 
-from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import Repository, TrustMetadataResult, TrustSignals
 
 logger = logging.getLogger(__name__)
@@ -32,7 +31,6 @@ async def enrich_with_graphql(
     session: aiohttp.ClientSession,
     repos: list[Repository],
     token: str,
-    cache: SqliteCache | None = None,
 ) -> list[Repository]:
     """Fetch accurate star counts and descriptions via GitHub GraphQL API.
 
@@ -161,7 +159,6 @@ async def enrich_with_trust_metadata(
     token: str,
     *,
     include_description: bool = False,
-    cache: SqliteCache | None = None,
 ) -> TrustMetadataResult:
     """Fetch trust metadata for repos via GraphQL (batches of 100).
 

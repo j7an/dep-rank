@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
 import aiohttp
@@ -21,7 +20,6 @@ async def search_code(
     query: str,
     token: str,
     max_repos: int = 10,
-    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> CodeSearchResult:
     """Search for code patterns across dependent repositories.
 
@@ -31,7 +29,6 @@ async def search_code(
         query: Code search query string.
         token: GitHub token (required for code search).
         max_repos: Maximum number of repos to search.
-        on_progress: Optional async callback(current, total).
     """
     if not repos:
         return CodeSearchResult(source="", query=query, hits=[], searched_repos=0)
@@ -43,7 +40,7 @@ async def search_code(
         "Accept": "application/vnd.github.text-match+json",
     }
 
-    for i, repo in enumerate(search_repos):
+    for repo in search_repos:
         await SEARCH_RATE_LIMITER.acquire()
 
         search_query = f"{query} repo:{repo.owner}/{repo.name}"
@@ -67,9 +64,6 @@ async def search_code(
                     matches=len(text_matches),
                 )
             )
-
-        if on_progress:
-            await on_progress(i + 1, len(search_repos))
 
     return CodeSearchResult(
         source=repos[0].url if repos else "",

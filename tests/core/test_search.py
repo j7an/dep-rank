@@ -92,21 +92,3 @@ class TestSearchCode:
                 result = await search_code(session, repos, "import os", token="fake")
         assert result.searched_repos == 1
         assert len(result.hits) == 0
-
-    @pytest.mark.asyncio
-    async def test_progress_callback_called(self) -> None:
-        """on_progress callback is called for each repo."""
-        repos = [make_repo("alpha", "framework")]
-        calls: list[tuple[int, int]] = []
-
-        async def on_progress(current: int, total: int) -> None:
-            calls.append((current, total))
-
-        with aioresponses() as m:
-            m.get(
-                "https://api.github.com/search/code?q=test%20repo%3Aalpha%2Fframework",
-                payload={"total_count": 0, "items": []},
-            )
-            async with ClientSession() as session:
-                await search_code(session, repos, "test", token="fake", on_progress=on_progress)
-        assert calls == [(1, 1)]

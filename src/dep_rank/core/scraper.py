@@ -46,7 +46,6 @@ DEFAULT_MAX_PAGES = 200
 DEFAULT_CONCURRENCY = 3
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
-MAX_PAGES = MAX_PAGES_CEILING  # back-compat: cli.app's search progress bar imports this
 
 SWR_COOLDOWN = 300.0  # seconds a URL serves stale without re-refreshing after a failure
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
@@ -54,15 +53,11 @@ SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= th
 #                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
 
 
-class ScrapeError(Exception):
-    """Base class for terminal scrape failures."""
-
-
-class NetworkFailureError(ScrapeError):
+class NetworkFailureError(Exception):
     """A page could not be fetched after the retry budget (or an unexpected status)."""
 
 
-class RateLimitedError(ScrapeError):
+class RateLimitedError(Exception):
     """The retry budget was exhausted on 429 responses."""
 
 
