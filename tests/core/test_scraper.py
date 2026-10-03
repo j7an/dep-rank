@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
@@ -16,6 +18,8 @@ from tests.conftest import (
     DEPENDENTS_HTML_WITH_COUNTS,
     DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
 )
+
+FIRST_URL = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
 def _fast_limiter() -> RateLimiter:
@@ -575,3 +579,18 @@ async def test_limiter_budget_follows_token(
         async with ClientSession() as session:
             await scrape_dependents(session, "https://github.com/owner/repo", token=token)
     assert built == [(rate, RATE_PERIOD)]
+
+
+async def test_http_date_retry_after_falls_back_to_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    with aioresponses() as m:
+        m.get(FIRST_URL, status=429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+        m.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        async with ClientSession() as session:
+            result = await scrape_dependents(
+                session, "https://github.com/owner/repo", token="ghp_x"
+            )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
