@@ -7,7 +7,7 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
-from dep_rank.core.rate_limiter import AdaptiveRateLimiter
+from dep_rank.core.rate_limiter import AUTH_RATE, RATE_PERIOD, UNAUTH_RATE, RateLimiter
 from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
 from tests.conftest import (
     DEPENDENTS_HTML_LAST_PAGE,
@@ -18,7 +18,7 @@ from tests.conftest import (
 )
 
 
-def _fast_limiter() -> AdaptiveRateLimiter:
+def _fast_limiter() -> RateLimiter:
     """A non-throttling limiter for multi-page tests not about rate limiting.
 
     A token-less scrape builds the unauthenticated 1/min limiter, whose lone token is
@@ -26,7 +26,7 @@ def _fast_limiter() -> AdaptiveRateLimiter:
     tests exercise pagination/filtering/progress/estimates, not throttling, so inject a
     high-capacity bucket that never blocks.
     """
-    return AdaptiveRateLimiter(rate=100_000, period=1.0, concurrency=3)
+    return RateLimiter(rate=100_000, period=1.0)
 
 
 class TestParseDependentCounts:
@@ -400,15 +400,6 @@ class TestScrapeDependentsEdgeCases:
         assert result.reason == ScrapeReason.RATE_LIMITED
         assert result.pages_scraped == 0  # never got a parseable page
 
-    async def test_concurrency_out_of_range_raises(self) -> None:
-        """The library refuses concurrency <1 or >10 (avoids Semaphore(0) deadlock)."""
-        async with ClientSession() as session:
-            for bad in (0, 11):
-                with pytest.raises(ValueError, match="concurrency"):
-                    await scrape_dependents(
-                        session, "https://github.com/owner/repo", concurrency=bad
-                    )
-
     async def test_cache_hit_skips_network(self) -> None:
         """When cache has a valid (non-expired) entry, no network request is made."""
         import tempfile
@@ -564,3 +555,23 @@ class TestScrapeResultReturn:
         assert result.estimated_total_dependents == 900
         # Both pages get the same estimated total (parsed from page 1)
         assert progress_calls == [(1, 30), (2, 30)]
+
+
+@pytest.mark.parametrize(("token", "rate"), [(None, UNAUTH_RATE), ("ghp_x", AUTH_RATE)])
+async def test_limiter_budget_follows_token(
+    monkeypatch: pytest.MonkeyPatch, token: str | None, rate: int
+) -> None:
+    built: list[tuple[int, float]] = []
+    real = RateLimiter
+
+    def record(r: int, p: float) -> RateLimiter:
+        built.append((r, p))
+        return real(100_000, 1.0)
+
+    monkeypatch.setattr("dep_rank.core.scraper.RateLimiter", record)
+    first_url = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+    with aioresponses() as m:
+        m.get(first_url, body=DEPENDENTS_HTML_LAST_PAGE)
+        async with ClientSession() as session:
+            await scrape_dependents(session, "https://github.com/owner/repo", token=token)
+    assert built == [(rate, RATE_PERIOD)]

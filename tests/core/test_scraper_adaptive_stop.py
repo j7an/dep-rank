@@ -9,7 +9,7 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import Repository, ScrapeReason
-from dep_rank.core.rate_limiter import AdaptiveRateLimiter
+from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import (
     ADAPTIVE_W_MIN,
     ADAPTIVE_WINDOW,
@@ -18,7 +18,7 @@ from dep_rank.core.scraper import (
 )
 
 
-def _fast_limiter() -> AdaptiveRateLimiter:
+def _fast_limiter() -> RateLimiter:
     """A non-throttling limiter for the long end-to-end walks below.
 
     These tests page through ``ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5`` (~55) pages. The
@@ -26,7 +26,7 @@ def _fast_limiter() -> AdaptiveRateLimiter:
     leaves only a ~5-token margin over this walk — fragile if the window constants grow.
     Inject a high-capacity bucket so ``acquire()`` never blocks regardless of page count.
     """
-    return AdaptiveRateLimiter(rate=100_000, period=1.0, concurrency=3)
+    return RateLimiter(rate=100_000, period=1.0)
 
 
 def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:

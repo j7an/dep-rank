@@ -6,7 +6,6 @@ import asyncio
 import heapq
 import itertools
 import logging
-import random
 import re
 import time
 from collections import deque
@@ -25,7 +24,13 @@ from dep_rank.core.models import (
     ScrapeResult,
     ScrapeSnapshot,
 )
-from dep_rank.core.rate_limiter import AdaptiveRateLimiter
+from dep_rank.core.rate_limiter import (
+    AUTH_RATE,
+    RATE_PERIOD,
+    UNAUTH_RATE,
+    RateLimiter,
+    backoff_delay,
+)
 from dep_rank.core.validation import validate_github_url
 
 logger = logging.getLogger(__name__)
@@ -39,11 +44,8 @@ MAX_RETRIES = 5
 REQUEST_TIMEOUT = 30
 CACHE_TTL = 86400  # 24 hours
 DEPENDENTS_PER_PAGE = 30  # Approximate dependents shown per GitHub page
-RETRY_BASE_SECONDS = 5
-RETRY_MAX_SECONDS = 120
 MAX_PAGES_CEILING = 1000
 DEFAULT_MAX_PAGES = 200
-DEFAULT_CONCURRENCY = 3
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 
@@ -178,24 +180,14 @@ def parse_dependent_counts(html: str) -> dict[str, int]:
     return counts
 
 
-def _retry_delay(attempt: int) -> float:
-    """Exponential backoff with full jitter.
-
-    delay = random(0, min(base * 2^attempt, max))
-    """
-    exp = min(RETRY_BASE_SECONDS * (2**attempt), RETRY_MAX_SECONDS)
-    return random.uniform(0, exp)  # noqa: S311
-
-
 async def _fetch_page(
     session: _PageSession,
     url: str,
-    limiter: AdaptiveRateLimiter,
-    semaphore: asyncio.Semaphore,
+    limiter: RateLimiter,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
 ) -> str:
-    """Fetch one page with bounded concurrency, rate limiting, retries, and caching.
+    """Fetch one page with rate limiting, retries, and caching.
 
     Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
     retry budget is exhausted or an unexpected status is returned.
@@ -212,45 +204,43 @@ async def _fetch_page(
 
     rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
-        async with semaphore:
-            await limiter.acquire()
-            try:
-                async with session.get(
-                    url, timeout=timeout, headers={**auth_headers, **headers}
-                ) as resp:
-                    if resp.status == 304 and cache and cached_body:
-                        limiter.note_success()
-                        await cache.put(
-                            url, cached_body, etag=headers.get("If-None-Match"), ttl=CACHE_TTL
-                        )
-                        return cached_body.decode("utf-8")
-                    if resp.status == 200:
-                        limiter.note_success()
-                        body: bytes = await resp.read()
-                        if cache:
-                            await cache.put(url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL)
-                        return body.decode("utf-8")
-                    if resp.status == 429:
-                        rate_limited = True
-                        retry_after = resp.headers.get("Retry-After")
-                        delay = limiter.note_429(float(retry_after) if retry_after else None)
-                        logger.warning(
-                            "Rate limited — retrying in %.1fs (%d/%d)",
-                            delay,
-                            attempt + 1,
-                            MAX_RETRIES,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    logger.warning("Unexpected HTTP %d — stopping", resp.status)
-                    raise NetworkFailureError(f"HTTP {resp.status} for {url}")
-            except (TimeoutError, aiohttp.ClientError):
-                delay = _retry_delay(attempt)
-                logger.warning(
-                    "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
-                )
-                await asyncio.sleep(delay)
-
+        await limiter.acquire()
+        try:
+            async with session.get(
+                url, timeout=timeout, headers={**auth_headers, **headers}
+            ) as resp:
+                if resp.status == 304 and cache and cached_body:
+                    limiter.note_success()
+                    await cache.put(
+                        url, cached_body, etag=headers.get("If-None-Match"), ttl=CACHE_TTL
+                    )
+                    return cached_body.decode("utf-8")
+                if resp.status == 200:
+                    limiter.note_success()
+                    body: bytes = await resp.read()
+                    if cache:
+                        await cache.put(url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL)
+                    return body.decode("utf-8")
+                if resp.status == 429:
+                    rate_limited = True
+                    retry_after = resp.headers.get("Retry-After")
+                    delay = limiter.note_429(float(retry_after) if retry_after else None)
+                    logger.warning(
+                        "Rate limited — retrying in %.1fs (%d/%d)",
+                        delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning("Unexpected HTTP %d — stopping", resp.status)
+                raise NetworkFailureError(f"HTTP {resp.status} for {url}")
+        except (TimeoutError, aiohttp.ClientError):
+            delay = backoff_delay(attempt)
+            logger.warning(
+                "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
+            )
+            await asyncio.sleep(delay)
     logger.warning("Exhausted retries for %s", url)
     if rate_limited:
         raise RateLimitedError(url)
@@ -260,8 +250,7 @@ async def _fetch_page(
 async def _read_page(
     session: _PageSession,
     url: str,
-    limiter: AdaptiveRateLimiter,
-    semaphore: asyncio.Semaphore,
+    limiter: RateLimiter,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
     swr: SWRManager | None = None,
@@ -282,7 +271,7 @@ async def _read_page(
             if swr is not None:
                 swr.schedule(url)
                 return body.decode("utf-8")
-    return await _fetch_page(session, url, limiter, semaphore, auth_headers, cache)
+    return await _fetch_page(session, url, limiter, auth_headers, cache)
 
 
 class SWRManager:
@@ -290,7 +279,7 @@ class SWRManager:
 
     Disabled when unauthenticated (refresh would displace the foreground walk under
     the 1/min budget). Refreshes are deduped per URL, capped at one in flight,
-    suppressed while AIMD has concurrency at its floor, gated *at refresh time* on
+    paused after a recent 429, gated *at refresh time* on
     foreground token headroom (via ``try_acquire(reserve=...)``), cooled down on
     failure, and drained before the generator completes (while the session is still
     open) — never at cache.close(). Refresh outcomes feed the shared limiter
@@ -301,12 +290,11 @@ class SWRManager:
     def __init__(
         self,
         session: _PageSession,
-        limiter: AdaptiveRateLimiter,
+        limiter: RateLimiter,
         auth_headers: dict[str, str],
         cache: SqliteCache | None,
         *,
         enabled: bool,
-        cooldown: float = SWR_COOLDOWN,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session = session
@@ -314,7 +302,6 @@ class SWRManager:
         self._auth_headers = auth_headers
         self._cache = cache
         self._enabled = enabled and cache is not None
-        self._cooldown = cooldown
         self._now = now
         self._semaphore = asyncio.Semaphore(1)
         self._inflight: set[str] = set()
@@ -322,10 +309,10 @@ class SWRManager:
         self._tasks: set[asyncio.Task[None]] = set()
 
     def schedule(self, url: str) -> None:
-        """Schedule a background refresh if enabled, not deduped, off cooldown, and AIMD allows it.
+        """Schedule a background refresh if enabled, not deduped, off cooldown, and not paused.
 
         Token headroom is deliberately **not** checked here. A schedule-time
-        ``tokens_available()`` read is lock-unaware and races the foreground walk
+        availability read is lock-unaware and races the foreground walk
         (tokens read here can be gone by the time the refresh runs). Instead the
         token decision is made atomically at refresh time via
         ``try_acquire(reserve=SWR_HEADROOM_TOKENS - 1)``, which both reserves
@@ -336,9 +323,8 @@ class SWRManager:
         until = self._cooldown_until.get(url)
         if until is not None and self._now() < until:
             return
-        if self._limiter.current_max_concurrency <= 1:
-            # AIMD has throttled concurrency to its floor on sustained 429s —
-            # suppress background work so it cannot compete with foreground retries.
+        if self._limiter.background_paused():
+            # Yield to foreground retries after a recent 429.
             return
         self._inflight.add(url)
         task = asyncio.create_task(self._refresh(url))
@@ -348,6 +334,8 @@ class SWRManager:
     async def _refresh(self, url: str) -> None:
         try:
             async with self._semaphore:
+                if self._limiter.background_paused():
+                    return
                 # Atomically consume a token only if foreground headroom remains;
                 # if not (foreground drained the bucket), abort without making a request.
                 if not self._limiter.try_acquire(reserve=SWR_HEADROOM_TOKENS - 1):
@@ -357,6 +345,8 @@ class SWRManager:
                 if cached and cached["etag"]:
                     headers["If-None-Match"] = cached["etag"]
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+                if self._limiter.background_paused():
+                    return
                 async with self._session.get(url, timeout=timeout, headers=headers) as resp:
                     if resp.status == 200:
                         self._limiter.note_success()
@@ -372,34 +362,33 @@ class SWRManager:
                                 url, cached["body"], etag=cached["etag"], ttl=CACHE_TTL
                             )
                     elif resp.status == 429:
-                        # Feed the *shared* limiter so AIMD halves concurrency — which
-                        # suppresses further background refreshes (the schedule gate) and
-                        # lengthens foreground backoff. Mirrors the foreground 429 path in
+                        # Feed the shared limiter to pause background refreshes and
+                        # lengthen foreground backoff. Mirrors the foreground 429 path in
                         # `_fetch_page`. The returned delay is unused: the background path
                         # waits via the per-URL cooldown below, not an in-band sleep.
                         retry_after = resp.headers.get("Retry-After")
                         self._limiter.note_429(float(retry_after) if retry_after else None)
-                        self._cooldown_until[url] = self._now() + self._cooldown
+                        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
                         logger.warning(
                             "SWR refresh rate-limited (429) for %s; cooling down %.0fs",
                             url,
-                            self._cooldown,
+                            SWR_COOLDOWN,
                         )
                     else:
-                        self._cooldown_until[url] = self._now() + self._cooldown
+                        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
                         logger.warning(
                             "SWR refresh got unexpected status %d for %s; cooling down %.0fs",
                             resp.status,
                             url,
-                            self._cooldown,
+                            SWR_COOLDOWN,
                         )
         except (TimeoutError, aiohttp.ClientError) as exc:
-            self._cooldown_until[url] = self._now() + self._cooldown
+            self._cooldown_until[url] = self._now() + SWR_COOLDOWN
             logger.warning(
                 "SWR refresh failed for %s (%s); cooling down %.0fs",
                 url,
                 exc.__class__.__name__,
-                self._cooldown,
+                SWR_COOLDOWN,
             )
         finally:
             self._inflight.discard(url)
@@ -500,9 +489,8 @@ async def stream_dependents(
     on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
-    concurrency: int = DEFAULT_CONCURRENCY,
     adaptive_stop: bool = True,
-    rate_limiter: AdaptiveRateLimiter | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> AsyncIterator[ScrapeSnapshot]:
     """Stream top-K dependents page by page.
 
@@ -514,17 +502,13 @@ async def stream_dependents(
     block awaits outstanding background SWR refreshes before completion, so abandoning
     iteration early could let the session close while a refresh is still in flight.
     """
-    if not 1 <= concurrency <= 10:
-        msg = f"concurrency must be between 1 and 10, got {concurrency}"
-        raise ValueError(msg)
     owner, repo = validate_github_url(url)
     base_url = f"{GITHUB_URL}/{owner}/{repo}/network/dependents"
     current_url: str | None = f"{base_url}?dependent_type={dependent_type.value}"
     source_url = f"{GITHUB_URL}/{owner}/{repo}"
 
     max_pages = min(max_pages, MAX_PAGES_CEILING)
-    limiter = rate_limiter or AdaptiveRateLimiter.for_token(token, concurrency)
-    semaphore = asyncio.Semaphore(concurrency)
+    limiter = rate_limiter or RateLimiter(AUTH_RATE if token else UNAUTH_RATE, RATE_PERIOD)
     auth_headers: dict[str, str] = {"Authorization": f"token {token}"} if token else {}
 
     swr = SWRManager(session, limiter, auth_headers, cache, enabled=bool(token))
@@ -543,9 +527,7 @@ async def stream_dependents(
     try:
         while current_url and page < max_pages:
             try:
-                html = await _read_page(
-                    session, current_url, limiter, semaphore, auth_headers, cache, swr=swr
-                )
+                html = await _read_page(session, current_url, limiter, auth_headers, cache, swr=swr)
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
                 break
@@ -605,9 +587,8 @@ async def scrape_dependents(
     max_pages: int = MAX_PAGES_CEILING,
     *,
     rows: int | None = None,
-    concurrency: int = DEFAULT_CONCURRENCY,
     adaptive_stop: bool = True,
-    rate_limiter: AdaptiveRateLimiter | None = None,
+    rate_limiter: RateLimiter | None = None,
     on_partial: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
 ) -> ScrapeResult:
     """Compatibility wrapper: drain stream_dependents into a ScrapeResult.
@@ -631,7 +612,6 @@ async def scrape_dependents(
         on_progress=on_progress,
         token=token,
         max_pages=max_pages,
-        concurrency=concurrency,
         adaptive_stop=adaptive_stop,
         rate_limiter=rate_limiter,
     ):

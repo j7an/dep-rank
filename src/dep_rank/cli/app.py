@@ -32,7 +32,6 @@ async def run_deps(
     token: str | None,
     verbose: bool = False,
     max_pages: int = 200,
-    concurrency: int = 3,
     adaptive_stop: bool = True,
     quiet: bool = False,
     rank_by: str = "stars",
@@ -88,7 +87,6 @@ async def run_deps(
                     token=token,
                     max_pages=max_pages,
                     rows=scrape_rows,
-                    concurrency=concurrency,
                     adaptive_stop=adaptive_stop,
                     on_partial=on_partial,
                 )
@@ -225,9 +223,10 @@ def cli(ctx: click.Context, verbose: bool) -> None:
 )
 @click.option(
     "--concurrency",
-    type=click.IntRange(1, 10),
-    default=3,
-    help="Max concurrent page fetches (1-10, default: 3).",
+    type=int,
+    hidden=True,
+    expose_value=False,
+    deprecated="has no effect; dependents pages are fetched serially",
 )
 @click.option(
     "--adaptive-stop/--no-adaptive-stop",
@@ -258,7 +257,6 @@ def deps(
     packages: bool,
     token: str | None,
     max_pages: int,
-    concurrency: int,
     adaptive_stop: bool,
     rank_by: str,
     trust_check: bool,
@@ -311,7 +309,6 @@ def deps(
             token,
             verbose,
             max_pages=max_pages,
-            concurrency=concurrency,
             adaptive_stop=adaptive_stop,
             quiet=(output_format == "json"),
             rank_by=rank_by,
@@ -340,9 +337,10 @@ def deps(
 )
 @click.option(
     "--concurrency",
-    type=click.IntRange(1, 10),
-    default=3,
-    help="Max concurrent page fetches (1-10, default: 3).",
+    type=int,
+    hidden=True,
+    expose_value=False,
+    deprecated="has no effect; dependents pages are fetched serially",
 )
 @click.pass_context
 def search(
@@ -353,7 +351,6 @@ def search(
     min_stars: int,
     token: str,
     max_pages: int,
-    concurrency: int,
 ) -> None:
     """Search code patterns across dependents of a GitHub repository."""
     try:
@@ -429,7 +426,6 @@ def search(
                         token=token,
                         max_pages=max_pages,
                         rows=max_repos,
-                        concurrency=concurrency,
                         adaptive_stop=False,
                     )
                 finally:

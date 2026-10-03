@@ -1,7 +1,7 @@
 """Tests for the streaming heap aggregator (top-K correctness + edge cases).
 
 Multi-page tests pass ``token="ghp_x"`` so the per-scrape limiter is built via
-``AdaptiveRateLimiter.for_token("ghp_x", ...)`` — the authenticated 60/min budget
+``RateLimiter(60, 60.0)`` — the authenticated 60/min budget
 (bucket capacity 60, starts full), so ``acquire()`` returns immediately for every page.
 Without a token the limiter is the unauthenticated **1/min** bucket: page 1 drains the
 lone token and page 2's ``acquire()`` does a real ``asyncio.sleep(60)``, hanging the

@@ -9,7 +9,7 @@ and required outcomes without depending on a particular execution environment.
 `dep-rank` is a Python 3.11+ command-line application that discovers GitHub
 repository dependents, ranks them by stars or an optional trust heuristic, and
 can search code across the discovered repositories. It combines HTML scraping,
-optional GraphQL enrichment, bounded concurrency, rate limiting, and a local
+optional GraphQL enrichment, rate limiting, and a local
 SQLite cache.
 
 The supported Python matrix is 3.11, 3.12, 3.13, and 3.14. The package uses a
@@ -27,8 +27,7 @@ builds, and hatch-vcs for versions derived from Git tags.
   streaming aggregation, adaptive stopping, partial-result state, and
   stale-while-revalidate coordination.
 - `src/dep_rank/core/rate_limiter.py` owns token-bucket request budgets, 429
-  backoff, and advisory AIMD concurrency state shared by foreground and
-  background work.
+  backoff, and a post-429 background pause shared by foreground and background work.
 - `src/dep_rank/core/cache.py` owns SQLite persistence, expiry, ETags, and cache
   lifecycle behavior.
 - `src/dep_rank/core/graphql.py` owns batched metadata enrichment through the
@@ -110,7 +109,7 @@ request, run the checks that cover every changed area and then the full suite.
 - Overall coverage requires at least 90% with branch coverage enabled. Pull
   requests also require at least 80% coverage on changed lines.
 - Add regression tests for fixes and boundary-focused tests for pagination,
-  concurrency, rate limiting, partial results, caching, and CLI validation.
+  background refresh, rate limiting, partial results, caching, and CLI validation.
 - Keep tests deterministic across Linux, macOS, Windows, and Python 3.11-3.14.
 
 ## Scraper and Runtime Invariants
@@ -126,10 +125,10 @@ request, run the checks that cover every changed area and then the full suite.
 - Unauthenticated scraping has a much smaller request budget. Background cache
   refresh must not compete with its foreground walk.
 - Stale-while-revalidate refreshes are deduplicated, capped, share limiter state,
-  reserve foreground token headroom, respect AIMD suppression, and drain before
+  reserve foreground token headroom, pause for 60 s after any 429, and drain before
   their HTTP session closes.
 - Feed foreground and background 429 responses into the shared limiter so
-  backoff and concurrency recovery remain coordinated.
+  backoff and the background pause remain coordinated.
 - Preserve ETag-based conditional requests and SQLite cache lifecycle rules.
 - Trust scores are pool-relative heuristics, not absolute quality or fraud
   determinations. Keep that limitation visible in APIs, output, and docs.

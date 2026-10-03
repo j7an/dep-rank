@@ -10,7 +10,7 @@ from dep_rank.core.models import (
     Repository,
     ScrapeResult,
 )
-from dep_rank.core.rate_limiter import TokenBucketRateLimiter
+from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import scrape_dependents
 from dep_rank.core.search import search_code
 from dep_rank.core.validation import validate_github_url
@@ -23,7 +23,7 @@ __all__ = [
     "Repository",
     "ScrapeResult",
     "SqliteCache",
-    "TokenBucketRateLimiter",
+    "RateLimiter",
     "enrich_with_graphql",
     "scrape_dependents",
     "search_code",

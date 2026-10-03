@@ -304,7 +304,8 @@ class TestDepsHardeningFlags:
         )
         assert result.exit_code == 0
         _, kwargs = mock_scrape.call_args
-        assert kwargs["concurrency"] == 5
+        assert "concurrency" not in kwargs
+        assert "deprecated" in result.stderr
         assert kwargs["adaptive_stop"] is False
         assert kwargs["rows"] == 10  # default --rows
         import json
@@ -364,14 +365,18 @@ class TestDepsHardeningFlags:
         assert result.exit_code == 0
         assert "token" not in result.stderr.lower()
 
-    def test_concurrency_out_of_range_is_rejected(self, runner: CliRunner) -> None:
-        for bad in ("0", "11"):
-            result = runner.invoke(
-                cli,
-                ["deps", "https://github.com/x/y", "--token", "ghp_x", "--concurrency", bad],
-            )
-            assert result.exit_code != 0  # Click IntRange usage error
-            assert "concurrency" in result.output.lower() or "range" in result.output.lower()
+    @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
+    def test_concurrency_is_deprecated_noop(
+        self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
+    ) -> None:
+        mock_run.return_value = mock_result
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/x/y", "--token", "ghp_x", "--concurrency", "11"]
+        )
+        assert result.exit_code == 0
+        assert "has no effect; dependents pages are fetched serially" in result.stderr
+        assert "concurrency" not in mock_run.call_args.kwargs
+        assert "--concurrency" not in runner.invoke(cli, ["deps", "--help"]).output
 
     @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
     def test_max_pages_above_ceiling_warns_and_clamps(
@@ -426,10 +431,15 @@ class TestSearchHardening:
                 "ghp_x",
                 "--max-repos",
                 "7",
+                "--concurrency",
+                "0",
             ],
         )
         assert result.exit_code == 0
+        assert "has no effect; dependents pages are fetched serially" in result.stderr
+        assert "--concurrency" not in runner.invoke(cli, ["search", "--help"]).output
         _, kwargs = mock_scrape.call_args
+        assert "concurrency" not in kwargs
         assert kwargs["rows"] == 7  # bounded to --max-repos
         assert kwargs["adaptive_stop"] is False  # never heuristic on the search path
 

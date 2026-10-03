@@ -7,11 +7,11 @@ from urllib.parse import quote
 import aiohttp
 
 from dep_rank.core.models import CodeSearchHit, CodeSearchResult, Repository
-from dep_rank.core.rate_limiter import TokenBucketRateLimiter
+from dep_rank.core.rate_limiter import RateLimiter
 
 SEARCH_URL = "https://api.github.com/search/code"
 # GitHub code search: 10 requests/minute authenticated
-SEARCH_RATE_LIMITER = TokenBucketRateLimiter(rate=10, period=60.0)
+SEARCH_RATE_LIMITER = RateLimiter(rate=10, period=60.0)
 
 
 async def search_code(
