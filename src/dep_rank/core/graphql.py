@@ -92,7 +92,8 @@ async def enrich_with_graphql(
 def build_trust_query(repos: list[Repository], *, include_description: bool) -> str:
     """Build a GraphQL query for trust metadata across multiple repos.
 
-    Fetches accurate stars plus low-cost engagement/recency signals. The ``states:``
+    Fetches accurate stars plus low-cost engagement/recency/status signals (the extra
+    scalars cost no additional rate-limit points). The ``states:``
     filters are stated explicitly (exhaustive enums) so the intent — all-time totals —
     cannot drift. When ``include_description`` is set, also fetches description so a
     combined ``--rank-by trust --descriptions`` run needs only one GraphQL pass.
@@ -105,34 +106,42 @@ def build_trust_query(repos: list[Repository], *, include_description: bool) -> 
             f"stargazerCount forkCount "
             f"issues(states: [OPEN, CLOSED]) {{ totalCount }} "
             f"pullRequests(states: [OPEN, CLOSED, MERGED]) {{ totalCount }} "
-            f"pushedAt{desc} }}"
+            f"pushedAt isArchived isDisabled createdAt{desc} }}"
         )
     return "query { " + " ".join(fragments) + " }"
+
+
+def _parse_timestamp(raw: str | None, field: str, repo: Repository) -> datetime | None:
+    """Parse a GraphQL DateTime; missing or malformed values degrade to ``None``."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        # A malformed timestamp degrades that signal to "missing" rather than aborting
+        # the whole trust run — consistent with the function's other partial handling.
+        logger.warning(
+            "Unparseable %s %r for %s/%s — treating it as missing",
+            field,
+            raw,
+            repo.owner,
+            repo.name,
+        )
+        return None
 
 
 def _apply_trust_data(
     repo: Repository, repo_data: dict[str, Any], include_description: bool
 ) -> Repository:
     """Return a copy of ``repo`` updated with accurate stars + trust signals."""
-    pushed_at_raw = repo_data.get("pushedAt")
-    pushed_at = None
-    if pushed_at_raw:
-        try:
-            pushed_at = datetime.fromisoformat(pushed_at_raw)
-        except ValueError:
-            # A malformed timestamp degrades recency to "missing" rather than aborting
-            # the whole trust run — consistent with the function's other partial handling.
-            logger.warning(
-                "Unparseable pushedAt %r for %s/%s — treating recency as missing",
-                pushed_at_raw,
-                repo.owner,
-                repo.name,
-            )
     signals = TrustSignals(
         forks=repo_data.get("forkCount"),
         issues=(repo_data.get("issues") or {}).get("totalCount"),
         pull_requests=(repo_data.get("pullRequests") or {}).get("totalCount"),
-        pushed_at=pushed_at,
+        pushed_at=_parse_timestamp(repo_data.get("pushedAt"), "pushedAt", repo),
+        is_archived=repo_data.get("isArchived"),
+        is_disabled=repo_data.get("isDisabled"),
+        created_at=_parse_timestamp(repo_data.get("createdAt"), "createdAt", repo),
     )
     stars = repo_data.get("stargazerCount")
     update: dict[str, Any] = {

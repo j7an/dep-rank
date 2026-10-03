@@ -40,6 +40,25 @@ class TrustSignals(BaseModel):
     issues: int | None = None  # total issues (all-time)
     pull_requests: int | None = None  # total pull requests (all-time)
     pushed_at: datetime | None = None
+    is_archived: bool | None = None
+    is_disabled: bool | None = None
+    created_at: datetime | None = None
+
+
+class CautionCode(StrEnum):
+    """Informational caution signals for trust-ranked repos (never a fraud verdict)."""
+
+    LOW_NON_STAR_ACTIVITY = "low_non_star_activity"
+    STALE_ACTIVITY = "stale_activity"
+    ARCHIVED_OR_DISABLED = "archived_or_disabled"
+    NEW_WITH_HIGH_STARS = "new_with_high_stars"
+
+
+class CautionSignal(BaseModel):
+    """One caution signal with a description citing the observed values."""
+
+    code: CautionCode
+    description: str
 
 
 class TrustComponents(BaseModel):
@@ -60,6 +79,7 @@ class TrustScore(BaseModel):
     pull_requests: int | None = None
     pushed_at: datetime | None = None
     components: TrustComponents
+    cautions: list[CautionSignal] = []
 
 
 class Repository(BaseModel):

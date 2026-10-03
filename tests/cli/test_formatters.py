@@ -14,6 +14,8 @@ from dep_rank.cli.formatters import (
     print_search_results,
 )
 from dep_rank.core.models import (
+    CautionCode,
+    CautionSignal,
     CodeSearchHit,
     CodeSearchResult,
     DependentsResult,
@@ -254,7 +256,7 @@ class TestBuildTopKTable:
 
 
 class TestTrustTableAndJson:
-    def _trust_repo(self) -> Repository:
+    def _trust_repo(self, cautions: list[CautionSignal] | None = None) -> Repository:
         return Repository(
             owner="alpha",
             name="framework",
@@ -267,6 +269,7 @@ class TestTrustTableAndJson:
                 pull_requests=120,
                 pushed_at=None,
                 components=TrustComponents(stars=0.9, forks=0.8, engagement=0.7, recency=0.5),
+                cautions=cautions or [],
             ),
         )
 
@@ -353,3 +356,33 @@ class TestTrustTableAndJson:
         assert '"ranked_by": "trust"' in out
         assert '"score": 87.4' in out
         assert "trust_signals" not in out  # always excluded structurally
+
+    def test_trust_table_shows_cautions_column_and_footer_when_flagged(self) -> None:
+        stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
+        result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
+        with console.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert "Cautions" in out
+        assert "stale_activity" in out
+        assert "not evidence of fake stars" in out
+
+    def test_trust_table_omits_cautions_column_when_none_flagged(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert "Cautions" not in out
+        assert "not evidence of fake stars" not in out
+
+    def test_json_trust_mode_includes_caution_code_and_description(self) -> None:
+        import json
+
+        stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
+        result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=True)
+        payload = json.loads(cap.get())
+        assert payload["repos"][0]["trust"]["cautions"] == [
+            {"code": "stale_activity", "description": "No pushes in 400 days"}
+        ]

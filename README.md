@@ -122,6 +122,31 @@ dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...
 - `--rank-by trust` requires a GitHub token; trust scores appear in `--format json`
   output under each repo's `trust` field.
 
+### Caution signals
+
+Trust-ranked results may carry informational **caution signals**, built from the
+same metadata fetch (no extra flag or request). They appear in JSON under each
+repo's `trust.cautions` (a list of `code` + `description`, possibly empty) and, in
+the table, as a `Cautions` column shown only when at least one result has a signal.
+
+| Code | Shown when |
+|---|---|
+| `low_non_star_activity` | ≥ 500 stars, and both forks and issues + pull requests are below 1% of stars |
+| `stale_activity` | ≥ 500 stars and no push for more than 365 days |
+| `archived_or_disabled` | The repository is archived or disabled |
+| `new_with_high_stars` | ≥ 1,000 stars and created within the last 180 days |
+
+Thresholds are fixed heuristics. Star floors stand in for a minimum sample size,
+and the low-activity signal requires forks *and* issues/PRs to be low together,
+because popular list and documentation repositories routinely have few issues.
+Missing metadata never produces a signal. Age-based signals are measured against
+the run's `scraped_at` time.
+
+**Caution signals are not proof of fake stars or malicious behavior.** They flag
+patterns worth a closer look, and legitimate repositories — finished libraries,
+archived projects, a new tool that went viral — can match them. They do not
+change the trust score.
+
 Motivation that stars are gameable comes from **StarScout** ([repo][starscout],
 [preprint](https://arxiv.org/abs/2412.13459),
 [ICSE 2026](https://conf.researchr.org/details/icse-2026/icse-2026-research-track/14/Six-Million-Suspected-Fake-Stars-on-GitHub-A-Growing-Spiral-of-Popularity-Contests)).

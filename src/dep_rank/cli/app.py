@@ -113,6 +113,9 @@ async def run_deps(
                     console.print(partial_warning(scrape_result.reason))
 
             ranked_by: Literal["stars", "trust"] = "stars"
+            # One clock read: the output's scraped_at is also the reference time for
+            # age-based caution signals.
+            now = datetime.now(tz=UTC)
             # ``and token`` makes the token precondition explicit (the CLI preflight
             # already enforces it) and narrows the type for the enrich call. A direct
             # caller passing rank_by="trust" without a token degrades to star ranking.
@@ -140,7 +143,7 @@ async def run_deps(
                             "[yellow]⚠ Some trust metadata was missing — "
                             "scores use partial data.[/yellow]"
                         )
-                    repos = compute_trust_scores(meta.repos)[:rows]
+                    repos = compute_trust_scores(meta.repos, now=now)[:rows]
                     ranked_by = "trust"
             else:
                 repos = repos[:rows]
@@ -154,7 +157,7 @@ async def run_deps(
                 filtered_count=total_count,
                 repos=repos,
                 dependent_type=dep_type,
-                scraped_at=datetime.now(tz=UTC),
+                scraped_at=now,
                 complete=scrape_result.complete,
                 reason=scrape_result.reason,
                 pages_scraped=scrape_result.pages_scraped,
