@@ -52,6 +52,7 @@ class CautionCode(StrEnum):
     STALE_ACTIVITY = "stale_activity"
     ARCHIVED_OR_DISABLED = "archived_or_disabled"
     NEW_WITH_HIGH_STARS = "new_with_high_stars"
+    CONCENTRATED_STARRING = "concentrated_starring"
 
 
 class CautionSignal(BaseModel):
@@ -131,6 +132,16 @@ class ScrapeSnapshot(BaseModel):
     reason: ScrapeReason | None = None
 
 
+class TrustCheckResult(BaseModel):
+    """Sampled star-history check over the top results (heuristic, never a fake-star verdict)."""
+
+    complete: bool  # True iff no checked repo is unavailable
+    window_weeks: int
+    repos_checked: int  # top repos the check covered (<= 25), including unavailable ones
+    insufficient_history: list[str] = []  # "owner/name"
+    unavailable: list[str] = []  # "owner/name"
+
+
 class DependentsResult(BaseModel):
     """Result of scraping dependents for a repository."""
 
@@ -145,6 +156,7 @@ class DependentsResult(BaseModel):
     pages_scraped: int = 0
     estimated_total_pages: int = 0
     ranked_by: Literal["stars", "trust"] = "stars"
+    trust_check: TrustCheckResult | None = None
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

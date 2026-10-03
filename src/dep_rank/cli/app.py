@@ -36,6 +36,7 @@ async def run_deps(
     adaptive_stop: bool = True,
     quiet: bool = False,
     rank_by: str = "stars",
+    trust_check: bool = False,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
@@ -45,7 +46,7 @@ async def run_deps(
     from dep_rank.cli.formatters import build_topk_table, format_scrape_summary
     from dep_rank.core.cache import SqliteCache
     from dep_rank.core.graphql import enrich_with_graphql
-    from dep_rank.core.models import ScrapeSnapshot
+    from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
     from dep_rank.core.scraper import scrape_dependents
 
     console = Console(stderr=True)
@@ -113,6 +114,7 @@ async def run_deps(
                     console.print(partial_warning(scrape_result.reason))
 
             ranked_by: Literal["stars", "trust"] = "stars"
+            trust_check_result: TrustCheckResult | None = None
             # One clock read: the output's scraped_at is also the reference time for
             # age-based caution signals.
             now = datetime.now(tz=UTC)
@@ -137,6 +139,15 @@ async def run_deps(
                             "falling back to star ranking.[/yellow]"
                         )
                     repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
+                    if trust_check:
+                        from dep_rank.core.star_history import skipped_trust_check
+
+                        trust_check_result = skipped_trust_check(repos)
+                        if not quiet:
+                            console.print(
+                                "[yellow]⚠ Trust check skipped — "
+                                "trust ranking unavailable.[/yellow]"
+                            )
                 else:
                     if not meta.complete and not quiet:
                         console.print(
@@ -145,6 +156,17 @@ async def run_deps(
                         )
                     repos = compute_trust_scores(meta.repos, now=now)[:rows]
                     ranked_by = "trust"
+                    if trust_check:
+                        from dep_rank.core.star_history import check_star_history
+
+                        repos, trust_check_result = await check_star_history(
+                            session, repos, token, now=now
+                        )
+                        if not trust_check_result.complete and not quiet:
+                            console.print(
+                                "[yellow]⚠ Trust check incomplete — star history unavailable for "
+                                f"{len(trust_check_result.unavailable)} repos.[/yellow]"
+                            )
             else:
                 repos = repos[:rows]
                 if descriptions and token and repos:
@@ -163,6 +185,7 @@ async def run_deps(
                 pages_scraped=scrape_result.pages_scraped,
                 estimated_total_pages=scrape_result.estimated_total_pages,
                 ranked_by=ranked_by,
+                trust_check=trust_check_result,
             )
     finally:
         await cache.close()
@@ -218,6 +241,13 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     default="stars",
     help="Ranking strategy: stars (default) or trust (heuristic, requires token).",
 )
+@click.option(
+    "--trust-check",
+    is_flag=True,
+    default=False,
+    help="Sample recent star history of the top trust-ranked results for concentrated starring "
+    "(heuristic; requires --rank-by trust).",
+)
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -232,6 +262,7 @@ def deps(
     concurrency: int,
     adaptive_stop: bool,
     rank_by: str,
+    trust_check: bool,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
     try:
@@ -245,6 +276,10 @@ def deps(
             "Error: --descriptions requires a GitHub token (--token or DEP_RANK_TOKEN env var)",
             err=True,
         )
+        sys.exit(1)
+
+    if trust_check and rank_by != "trust":
+        click.echo("Error: --trust-check requires --rank-by trust", err=True)
         sys.exit(1)
 
     if rank_by == "trust" and not token:
@@ -281,6 +316,7 @@ def deps(
             adaptive_stop=adaptive_stop,
             quiet=(output_format == "json"),
             rank_by=rank_by,
+            trust_check=trust_check,
         )
     )
 

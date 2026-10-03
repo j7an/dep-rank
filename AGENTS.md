@@ -34,6 +34,7 @@ builds, and hatch-vcs for versions derived from Git tags.
 - `src/dep_rank/core/graphql.py` owns batched metadata enrichment through the
   GitHub GraphQL API.
 - `src/dep_rank/core/trust.py` owns the pool-relative trust-ranking heuristic.
+- `src/dep_rank/core/star_history.py` owns the opt-in sampled star-history trust check.
 - `src/dep_rank/core/search.py` owns code search over the bounded dependent set.
 - `src/dep_rank/core/models.py` owns Pydantic result and repository models.
 - `src/dep_rank/scripts/drift_check.py` supports the scheduled scraper-drift
