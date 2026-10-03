@@ -93,9 +93,8 @@ request, run the checks that cover every changed area and then the full suite.
   async request paths.
 - Keep CLI formatting in `cli/` and reusable behavior in `core/`.
 - Do not edit `src/dep_rank/_version.py`; hatch-vcs generates it during builds.
-- Do not restore configuration to `setup.cfg`; it remains only for legacy
-  flake8 compatibility. Active Ruff, mypy, build, and coverage settings live in
-  `pyproject.toml`.
+- Ruff, mypy, build, and coverage settings live in `pyproject.toml`; do not add
+  `setup.cfg`.
 
 ## Testing and Coverage
 
