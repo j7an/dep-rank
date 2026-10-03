@@ -92,16 +92,19 @@ def _print_trust_table(result: DependentsResult) -> None:
 def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bool = False) -> None:
     """Print DependentsResult as JSON.
 
-    Star mode (``include_rank_metadata=False``) excludes ``ranked_by`` and per-repo
-    ``trust`` so CLI output stays byte-identical to pre-trust-ranking releases. Trust
-    mode includes both. ``trust_signals`` is excluded structurally by the model field.
+    Star mode (``include_rank_metadata=False``) excludes ``ranked_by``, ``trust_check``,
+    and per-repo ``trust`` so CLI output stays byte-identical to pre-trust-ranking
+    releases. Trust mode includes ``trust_check`` only when a check was run.
+    ``trust_signals`` is excluded structurally by the model field.
     """
     if include_rank_metadata:
-        payload = result.model_dump_json(indent=2)
+        payload = result.model_dump_json(
+            indent=2, exclude={"trust_check"} if result.trust_check is None else None
+        )
     else:
         payload = result.model_dump_json(
             indent=2,
-            exclude={"ranked_by": True, "repos": {"__all__": {"trust"}}},
+            exclude={"ranked_by": True, "trust_check": True, "repos": {"__all__": {"trust"}}},
         )
     console.print(payload, highlight=False)
 

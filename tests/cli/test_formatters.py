@@ -386,3 +386,24 @@ class TestTrustTableAndJson:
         assert payload["repos"][0]["trust"]["cautions"] == [
             {"code": "stale_activity", "description": "No pushes in 400 days"}
         ]
+
+    def test_json_trust_mode_without_check_has_no_trust_check_key(self) -> None:
+        import json
+
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=True)
+        assert "trust_check" not in json.loads(cap.get())
+
+    def test_json_trust_mode_with_check_includes_it(self) -> None:
+        import json
+
+        from dep_rank.core.models import TrustCheckResult
+
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result.trust_check = TrustCheckResult(
+            complete=False, window_weeks=30, repos_checked=1, unavailable=["alpha/framework"]
+        )
+        with console.capture() as cap:
+            print_dependents_json(result, include_rank_metadata=True)
+        assert json.loads(cap.get())["trust_check"]["unavailable"] == ["alpha/framework"]

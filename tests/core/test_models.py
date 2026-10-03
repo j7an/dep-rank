@@ -403,3 +403,26 @@ class TestTrustModels:
         assert res.repos == []
         assert res.failed is False
         assert res.complete is True
+
+
+def test_concentrated_starring_code_value() -> None:
+    from dep_rank.core.models import CautionCode
+
+    assert CautionCode.CONCENTRATED_STARRING.value == "concentrated_starring"
+
+
+def test_trust_check_result_defaults() -> None:
+    from dep_rank.core.models import TrustCheckResult
+
+    check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=0)
+    assert check.insufficient_history == []
+    assert check.unavailable == []
+    result = DependentsResult(
+        source="https://github.com/x/y",
+        total_count=0,
+        filtered_count=0,
+        repos=[],
+        dependent_type=DependentType.REPOSITORY,
+        scraped_at=datetime(2026, 9, 20, tzinfo=UTC),
+    )
+    assert result.trust_check is None
