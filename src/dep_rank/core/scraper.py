@@ -9,7 +9,7 @@ import logging
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
 
 import aiohttp
@@ -261,7 +261,7 @@ class SWRManager:
     the 1/min budget). Refreshes are deduped per URL, capped at one in flight,
     paused after a recent 429, gated *at refresh time* on
     foreground token headroom (via ``try_acquire(reserve=...)``), cooled down on
-    failure, and drained before the generator completes (while the session is still
+    failure, and drained before ``scrape_dependents`` returns (while the session is still
     open) — never at cache.close(). Refresh outcomes feed the shared limiter
     (``note_success`` on 200/304, ``note_429`` on 429), so background rate pressure
     throttles both background and foreground work.
@@ -351,11 +351,11 @@ class SWRManager:
 
 
 def _heap_push(
-    heap: list[tuple[int, int, Repository]], repo: Repository, count: int, rows: int | None
+    heap: list[tuple[int, int, Repository]], repo: Repository, count: int, rows: int
 ) -> None:
     """Maintain a bounded min-heap of the top-``rows`` repos by stars.
 
-    ``rows is None`` keeps every repo (unbounded, back-compat). ``rows <= 0`` keeps none.
+    ``rows <= 0`` keeps none.
 
     Tie-handling: ``count`` is the monotonically increasing arrival index, stored
     **negated** so that among repos with equal stars the min-heap root (the eviction
@@ -364,11 +364,9 @@ def _heap_push(
     this guarantees "ties: earlier-seen wins" both on admission and on eviction.
     """
     entry = (repo.stars, -count, repo)
-    if rows is None:
-        heap.append(entry)
-    elif rows <= 0:
+    if rows <= 0:
         return
-    elif len(heap) < rows:
+    if len(heap) < rows:
         heapq.heappush(heap, entry)
     elif repo.stars > heap[0][0]:
         heapq.heapreplace(heap, entry)
@@ -385,12 +383,12 @@ def _top_k(heap: list[tuple[int, int, Repository]]) -> list[Repository]:
 
 def _should_stop(
     heap: list[tuple[int, int, Repository]],
-    rows: int | None,
+    rows: int,
     recent_max: deque[int],
     page: int,
 ) -> bool:
     """True when the trailing window can no longer plausibly change the saturated top-K."""
-    if rows is None or rows <= 0:
+    if rows <= 0:
         return False
     if len(heap) < rows:  # heap not saturated -> kth_best undefined
         return False
@@ -402,51 +400,25 @@ def _should_stop(
     return max(recent_max) < kth_best
 
 
-def _build_snapshot(
-    heap: list[tuple[int, int, Repository]],
-    page: int,
-    est_pages: int,
-    est_deps: int,
-    matched: int,
-    *,
-    done: bool,
-    reason: ScrapeReason | None = None,
-) -> ScrapeSnapshot:
-    return ScrapeSnapshot(
-        top_k=_top_k(heap),
-        pages_scraped=page,
-        estimated_total_pages=est_pages,
-        estimated_total_dependents=est_deps,
-        matched_count=matched,
-        done=done,
-        complete=(reason is None) if done else False,
-        reason=reason if done else None,
-    )
-
-
-async def stream_dependents(
+async def scrape_dependents(
     session: aiohttp.ClientSession,
     url: str,
     *,
-    rows: int | None,
+    rows: int,
     dependent_type: DependentType = DependentType.REPOSITORY,
     min_stars: int = 5,
     cache: SqliteCache | None = None,
-    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
     rate_limiter: RateLimiter | None = None,
-) -> AsyncIterator[ScrapeSnapshot]:
-    """Stream top-K dependents page by page.
+    on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
+) -> ScrapeResult:
+    """Walk the dependents pages, keeping the top-``rows`` repos by stars.
 
-    Yields one snapshot per consumed page (done=False) then exactly one terminal
-    snapshot (done=True) carrying complete/reason. ``rows is None`` keeps every
-    matched repo and disables adaptive stop (back-compat for the wrapper).
-
-    Callers must fully iterate this generator (no early ``break``); the ``finally``
-    block awaits outstanding background SWR refreshes before completion, so abandoning
-    iteration early could let the session close while a refresh is still in flight.
+    ``on_page`` is awaited after each consumed page with the running top-K. Exceptions it
+    raises propagate. Outstanding background SWR refreshes are drained before returning
+    (or raising), while the caller's session is still open.
     """
     owner, repo = validate_github_url(url)
     base_url = f"{GITHUB_URL}/{owner}/{repo}/network/dependents"
@@ -466,7 +438,6 @@ async def stream_dependents(
     est_pages = 0
     est_deps = 0
     recent_max: deque[int] = deque(maxlen=ADAPTIVE_WINDOW)
-    bounded = rows is not None
     page = 0
     reason: ScrapeReason | None = None
 
@@ -499,11 +470,18 @@ async def stream_dependents(
                     _heap_push(heap, repo_obj, next(counter), rows)
             recent_max.append(page_max)
 
-            if on_progress:
-                await on_progress(page, est_pages)
-            yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=False)
+            if on_page:
+                await on_page(
+                    ScrapeSnapshot(
+                        top_k=_top_k(heap),
+                        pages_scraped=page,
+                        estimated_total_pages=est_pages,
+                        estimated_total_dependents=est_deps,
+                        matched_count=matched,
+                    )
+                )
 
-            if adaptive_stop and bounded and _should_stop(heap, rows, recent_max, page):
+            if adaptive_stop and _should_stop(heap, rows, recent_max, page):
                 reason = ScrapeReason.TREND_CONVERGED
                 break
             current_url = next_url
@@ -511,68 +489,18 @@ async def stream_dependents(
             # Loop exited via its condition (no break): exhausted, unless we stopped at the cap.
             if current_url is not None and page >= max_pages:
                 reason = ScrapeReason.MAX_PAGES_REACHED
-
-        # `estimated_total_pages` is always the header-derived estimate (`est_pages`),
-        # matching the historical scraper (it returned the header estimate unconditionally).
-        # Actual pages consumed live in `pages_scraped`; do NOT overwrite the estimate with
-        # `page` on completion — Phase 4 summaries and existing header-estimate tests depend
-        # on the estimate staying the population projection, not the walked count.
-        yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=True, reason=reason)
     finally:
         await swr.drain()
 
-
-async def scrape_dependents(
-    session: aiohttp.ClientSession,
-    url: str,
-    dependent_type: DependentType = DependentType.REPOSITORY,
-    min_stars: int = 5,
-    cache: SqliteCache | None = None,
-    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
-    token: str | None = None,
-    max_pages: int = MAX_PAGES_CEILING,
-    *,
-    rows: int | None = None,
-    adaptive_stop: bool = True,
-    rate_limiter: RateLimiter | None = None,
-    on_partial: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
-) -> ScrapeResult:
-    """Compatibility wrapper: drain stream_dependents into a ScrapeResult.
-
-    ``rows is None`` (default) returns every matched repo, sorted by stars, and
-    ``max_pages`` defaults to ``MAX_PAGES_CEILING`` (1000) — the historical
-    "return everything up to the ceiling" behavior, deliberately *overriding* the
-    bounded 200-page (`DEFAULT_MAX_PAGES`) default of ``stream_dependents``. This
-    keeps existing callers (the ``deps``/``search`` CLI in `app.py`, which pass no
-    ``max_pages`` or their own) unchanged until Phase 4 introduces a user-facing
-    ``--max-pages`` budget. Pass ``rows`` for a bounded top-K with adaptive stop.
-    """
-    terminal: ScrapeSnapshot | None = None
-    async for snapshot in stream_dependents(
-        session,
-        url,
-        rows=rows,
-        dependent_type=dependent_type,
-        min_stars=min_stars,
-        cache=cache,
-        on_progress=on_progress,
-        token=token,
-        max_pages=max_pages,
-        adaptive_stop=adaptive_stop,
-        rate_limiter=rate_limiter,
-    ):
-        if on_partial is not None:
-            await on_partial(snapshot)
-        terminal = snapshot
-
-    assert terminal is not None  # noqa: S101  # stream always yields a terminal snapshot
+    # `estimated_total_pages` is always the header-derived estimate, never the walked count
+    # (which lives in `pages_scraped`).
     return ScrapeResult(
-        repos=terminal.top_k,
-        pages_scraped=terminal.pages_scraped,
-        max_pages=min(max_pages, MAX_PAGES_CEILING),
-        estimated_total_pages=terminal.estimated_total_pages,
-        estimated_total_dependents=terminal.estimated_total_dependents,
-        complete=terminal.complete,
-        reason=terminal.reason,
-        matched_count=terminal.matched_count,
+        repos=_top_k(heap),
+        pages_scraped=page,
+        max_pages=max_pages,
+        estimated_total_pages=est_pages,
+        estimated_total_dependents=est_deps,
+        complete=reason is None,
+        reason=reason,
+        matched_count=matched,
     )

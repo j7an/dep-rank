@@ -68,11 +68,6 @@ class TestShouldStopPredicate:
         recent = deque([5] * ADAPTIVE_WINDOW, maxlen=ADAPTIVE_WINDOW)
         assert _should_stop(heap, rows=3, recent_max=recent, page=ADAPTIVE_W_MIN - 1) is False
 
-    def test_rows_none_never_stops(self) -> None:
-        heap = _heap([1000, 900, 800])
-        recent = deque([5] * ADAPTIVE_WINDOW, maxlen=ADAPTIVE_WINDOW)
-        assert _should_stop(heap, rows=None, recent_max=recent, page=999) is False
-
 
 # --- End-to-end: a decaying-star stream stops early with trend_converged ---
 

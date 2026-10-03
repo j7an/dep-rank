@@ -318,39 +318,6 @@ class TestDependentsResultInvariant:
         assert result.reason == reason
 
 
-class TestScrapeSnapshot:
-    def test_per_page_snapshot_defaults(self) -> None:
-        from dep_rank.core.models import ScrapeSnapshot
-
-        snap = ScrapeSnapshot(
-            top_k=[],
-            pages_scraped=1,
-            estimated_total_pages=3,
-            estimated_total_dependents=90,
-            matched_count=2,
-        )
-        assert snap.done is False
-        assert snap.complete is False
-        assert snap.reason is None
-
-    def test_terminal_snapshot(self) -> None:
-        from dep_rank.core.models import ScrapeReason, ScrapeSnapshot
-
-        snap = ScrapeSnapshot(
-            top_k=[],
-            pages_scraped=200,
-            estimated_total_pages=500,
-            estimated_total_dependents=15000,
-            matched_count=4200,
-            done=True,
-            complete=False,
-            reason=ScrapeReason.MAX_PAGES_REACHED,
-        )
-        assert snap.done is True
-        assert snap.complete is False
-        assert snap.reason == "max_pages_reached"
-
-
 class TestTrustModels:
     def test_repository_trust_fields_default_none(self) -> None:
         repo = Repository(owner="a", name="b", url="https://github.com/a/b", stars=1)

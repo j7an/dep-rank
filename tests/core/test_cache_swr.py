@@ -261,18 +261,18 @@ class TestSWRIntegration:
         assert entry["body"] == b"<html>fresh</html>"  # refreshed in background
 
     async def test_stream_blocks_on_drain_before_returning(self, tmp_path: Any) -> None:
-        """`stream_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
+        """`scrape_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
         not leave the refresh as a fire-and-forget task that merely happens to finish in
         time.
 
         The trap this avoids: with an immediate refresh response, the task can complete
-        opportunistically while the wrapper is still consuming snapshots, so a "is the
+        opportunistically while the scrape is still walking pages, so a "is the
         entry refreshed by the time scrape returns?" assertion passes *even if the
-        generator never drained*. So we make completion-without-drain impossible: the
+        scrape never drained*. So we make completion-without-drain impossible: the
         background refresh response is **delayed**, while the foreground walk is a single
         stale cache-hit (no foreground fetch) that would return near-instantly on its own.
 
-        - If the generator drains: the scrape return is BLOCKED until the delayed 304 lands
+        - If the scrape drains: the scrape return is BLOCKED until the delayed 304 lands
           and bumps the TTL, so the entry is no longer expired when scrape returns.
         - If it does NOT drain: scrape returns while the refresh is still mid-delay, the
           entry is still expired, and this test fails — catching the exact lifecycle bug
