@@ -59,6 +59,10 @@ def _print_trust_table(result: DependentsResult) -> None:
     table.add_column("Trust", justify="right", style="magenta")
     table.add_column("Stars", justify="right", style="yellow")
 
+    has_cautions = any(r.trust and r.trust.cautions for r in result.repos)
+    if has_cautions:
+        table.add_column("Cautions", style="dark_orange")
+
     has_descriptions = any(r.description for r in result.repos)
     if has_descriptions:
         table.add_column("Description", style="dim")
@@ -66,6 +70,9 @@ def _print_trust_table(result: DependentsResult) -> None:
     for repo in result.repos:
         score = round(repo.trust.score) if repo.trust else 0
         row = [f"{repo.owner}/{repo.name}", str(score), humanize(repo.stars)]
+        if has_cautions:
+            codes = [c.code for c in repo.trust.cautions] if repo.trust else []
+            row.append(", ".join(codes))
         if has_descriptions:
             row.append(repo.description or "")
         table.add_row(*row)
@@ -75,6 +82,11 @@ def _print_trust_table(result: DependentsResult) -> None:
         f"\n[dim]{result.total_count:,} total dependents, "
         f"{result.filtered_count:,} with stars above threshold[/dim]"
     )
+    if has_cautions:
+        console.print(
+            "[dim]Cautions are informational heuristics, "
+            "not evidence of fake stars or malicious behavior.[/dim]"
+        )
 
 
 def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bool = False) -> None:

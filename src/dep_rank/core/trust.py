@@ -2,20 +2,36 @@
 
 The score is a pool-relative ranking signal (0-100), not an absolute quality
 measure. Pool-relative recency is a min-max over ``pushed_at`` and never references
-the clock, so this module is fully deterministic and needs no ``now`` parameter.
+the clock. Caution signals are per-repo absolute heuristics; the age-based ones
+measure against an injected ``now`` so results stay deterministic.
 """
 
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta
 
-from dep_rank.core.models import Repository, TrustComponents, TrustScore
+from dep_rank.core.models import (
+    CautionCode,
+    CautionSignal,
+    Repository,
+    TrustComponents,
+    TrustScore,
+)
 
 # Component weights (sum to 1.0). Stars <= 0.40; non-star signals are the majority.
 _W_STARS = 0.35
 _W_FORKS = 0.25
 _W_ENGAGEMENT = 0.20
 _W_RECENCY = 0.20
+
+# Caution thresholds. Heuristic, informational only — never a fake-star verdict.
+# The star floors act as a minimum sample size; ratios as the meaningful share.
+_CAUTION_MIN_STARS = 500
+_CAUTION_MAX_RATIO = 0.01  # forks/stars AND (issues+PRs)/stars must both fall below
+_STALE_AFTER = timedelta(days=365)
+_NEW_REPO_MIN_STARS = 1000
+_NEW_REPO_WITHIN = timedelta(days=180)
 
 
 def _minmax(values: list[float]) -> list[float]:
@@ -53,12 +69,70 @@ def _recency_component(repos: list[Repository]) -> list[float]:
     return result
 
 
-def compute_trust_scores(repos: list[Repository]) -> list[Repository]:
+def _caution_signals(repo: Repository, now: datetime) -> list[CautionSignal]:
+    """Return the caution signals ``repo`` meets. Missing inputs never fire a signal."""
+    sig = repo.trust_signals
+    if sig is None:
+        return []
+    stars = repo.stars
+    cautions: list[CautionSignal] = []
+
+    if (
+        stars >= _CAUTION_MIN_STARS
+        and sig.forks is not None
+        and sig.issues is not None
+        and sig.pull_requests is not None
+    ):
+        engagement = sig.issues + sig.pull_requests
+        if sig.forks / stars < _CAUTION_MAX_RATIO and engagement / stars < _CAUTION_MAX_RATIO:
+            cautions.append(
+                CautionSignal(
+                    code=CautionCode.LOW_NON_STAR_ACTIVITY,
+                    description=(
+                        f"{sig.forks:,} forks and {engagement:,} issues/PRs for {stars:,} stars"
+                    ),
+                )
+            )
+
+    if stars >= _CAUTION_MIN_STARS and sig.pushed_at is not None:
+        idle = now - sig.pushed_at
+        if idle > _STALE_AFTER:
+            cautions.append(
+                CautionSignal(
+                    code=CautionCode.STALE_ACTIVITY,
+                    description=f"No pushes in {idle.days:,} days",
+                )
+            )
+
+    if sig.is_archived or sig.is_disabled:
+        status = "archived" if sig.is_archived else "disabled"
+        cautions.append(
+            CautionSignal(
+                code=CautionCode.ARCHIVED_OR_DISABLED,
+                description=f"Repository is {status}",
+            )
+        )
+
+    if stars >= _NEW_REPO_MIN_STARS and sig.created_at is not None:
+        age = now - sig.created_at
+        if age < _NEW_REPO_WITHIN:
+            cautions.append(
+                CautionSignal(
+                    code=CautionCode.NEW_WITH_HIGH_STARS,
+                    description=f"Created {age.days:,} days ago with {stars:,} stars",
+                )
+            )
+
+    return cautions
+
+
+def compute_trust_scores(repos: list[Repository], *, now: datetime) -> list[Repository]:
     """Score each repo 0-100 relative to the pool; return them sorted by score desc.
 
     Repos should carry ``trust_signals``; missing signals are scored as weak (counts
     -> 0 before normalization, missing ``pushed_at`` -> 0.0 recency). Ties break by
-    stars desc, then ``owner/name`` ascending, for stable ordering.
+    stars desc, then ``owner/name`` ascending, for stable ordering. ``now`` is the
+    reference time for age-based caution signals only; it never affects the score.
     """
     if not repos:
         return []
@@ -99,6 +173,7 @@ def compute_trust_scores(repos: list[Repository]) -> list[Repository]:
             pull_requests=sig.pull_requests if sig else None,
             pushed_at=sig.pushed_at if sig else None,
             components=components,
+            cautions=_caution_signals(repo, now),
         )
         scored.append((score, repo.model_copy(update={"trust": trust})))
 

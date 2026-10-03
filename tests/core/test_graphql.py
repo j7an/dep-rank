@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
@@ -138,6 +140,9 @@ class TestBuildTrustQuery:
         assert "issues(states: [OPEN, CLOSED])" in q
         assert "pullRequests(states: [OPEN, CLOSED, MERGED])" in q
         assert "pushedAt" in q
+        assert "isArchived" in q
+        assert "isDisabled" in q
+        assert "createdAt" in q
         assert "description" not in q
 
     def test_include_description_adds_field(self) -> None:
@@ -161,6 +166,9 @@ class TestEnrichWithTrustMetadata:
                     "issues": {"totalCount": 500},
                     "pullRequests": {"totalCount": 300},
                     "pushedAt": "2026-05-01T12:00:00Z",
+                    "isArchived": True,
+                    "isDisabled": False,
+                    "createdAt": "2005-07-13T00:00:00Z",
                 }
             }
         }
@@ -179,6 +187,25 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.issues == 500
         assert repo.trust_signals.pull_requests == 300
         assert repo.trust_signals.pushed_at is not None
+        assert repo.trust_signals.is_archived is True
+        assert repo.trust_signals.is_disabled is False
+        assert repo.trust_signals.created_at == datetime(2005, 7, 13, tzinfo=UTC)
+
+    @pytest.mark.asyncio
+    async def test_malformed_created_at_degrades_to_missing(self) -> None:
+        from dep_rank.core.graphql import enrich_with_trust_metadata
+
+        repos = [make_repo("django", "django", stars=80000)]
+        payload = {"data": {"repo_0": {"stargazerCount": 82400, "createdAt": "not-a-date"}}}
+        with aioresponses() as m:
+            m.post("https://api.github.com/graphql", payload=payload)
+            async with ClientSession() as session:
+                result = await enrich_with_trust_metadata(
+                    session, repos, token="fake", include_description=False
+                )
+        assert result.failed is False
+        assert result.repos[0].trust_signals is not None
+        assert result.repos[0].trust_signals.created_at is None
 
     @pytest.mark.asyncio
     async def test_malformed_pushed_at_degrades_recency_not_crash(self) -> None:

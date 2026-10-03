@@ -671,6 +671,7 @@ class TestRankByTrust:
         assert payload["ranked_by"] == "trust"
         assert payload["repos"][0]["trust"] is not None
         assert "score" in payload["repos"][0]["trust"]
+        assert payload["repos"][0]["trust"]["cautions"] == []  # zero or more, always a list
 
     @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
