@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import aiohttp
-import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
@@ -16,7 +15,6 @@ def make_repo(owner: str, name: str, stars: int = 100) -> Repository:
 
 
 class TestSearchCode:
-    @pytest.mark.asyncio
     async def test_basic_search(self) -> None:
         repos = [make_repo("alpha", "framework", stars=5000)]
         search_response = {
@@ -45,7 +43,6 @@ class TestSearchCode:
         assert len(result.hits) == 2
         assert result.hits[0].file_path == "src/app.py"
 
-    @pytest.mark.asyncio
     async def test_respects_max_repos(self) -> None:
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(5)]
         with aioresponses() as m:
@@ -58,14 +55,12 @@ class TestSearchCode:
                 result = await search_code(session, repos, "test", token="fake", max_repos=2)
         assert result.searched_repos == 2
 
-    @pytest.mark.asyncio
     async def test_empty_repos_list(self) -> None:
         async with ClientSession() as session:
             result = await search_code(session, [], "query", token="fake")
         assert result.searched_repos == 0
         assert len(result.hits) == 0
 
-    @pytest.mark.asyncio
     async def test_non_200_status_skipped(self) -> None:
         """Non-200 responses are silently skipped."""
         repos = [make_repo("alpha", "framework")]
@@ -79,7 +74,6 @@ class TestSearchCode:
         assert result.searched_repos == 1
         assert len(result.hits) == 0
 
-    @pytest.mark.asyncio
     async def test_client_error_skipped(self) -> None:
         """ClientError exceptions are silently skipped."""
         repos = [make_repo("alpha", "framework")]

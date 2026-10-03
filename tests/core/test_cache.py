@@ -17,12 +17,10 @@ async def cache(tmp_path: Any) -> SqliteCache:
 
 
 class TestSqliteCache:
-    @pytest.mark.asyncio
     async def test_get_miss(self, cache: SqliteCache) -> None:
         result = await cache.get("https://example.com/missing")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_put_and_get(self, cache: SqliteCache) -> None:
         await cache.put(
             url="https://example.com/page",
@@ -36,7 +34,6 @@ class TestSqliteCache:
         assert result["etag"] == '"abc123"'
         assert result["expired"] is False
 
-    @pytest.mark.asyncio
     async def test_expired_entry_returns_body_and_expired_flag(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/old", body=b"old", etag='"old"', ttl=-1)
         result = await cache.get("https://example.com/old")
@@ -45,7 +42,6 @@ class TestSqliteCache:
         assert result["etag"] == '"old"'
         assert result["expired"] is True
 
-    @pytest.mark.asyncio
     async def test_put_overwrites(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/x", body=b"v1", etag='"e1"', ttl=3600)
         await cache.put(url="https://example.com/x", body=b"v2", etag='"e2"', ttl=3600)
@@ -53,14 +49,12 @@ class TestSqliteCache:
         assert result is not None
         assert result["body"] == b"v2"
 
-    @pytest.mark.asyncio
     async def test_clear(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/a", body=b"a", etag=None, ttl=3600)
         await cache.clear()
         result = await cache.get("https://example.com/a")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_stats(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/1", body=b"x", etag=None, ttl=3600)
         await cache.put(url="https://example.com/2", body=b"y", etag=None, ttl=3600)
@@ -77,31 +71,26 @@ class TestSqliteCacheUninitialized:
         # Do NOT call initialize
         return c
 
-    @pytest.mark.asyncio
     async def test_get_raises_without_init(self, tmp_path: Any) -> None:
         c = self._make_uninit_cache(tmp_path)
         with pytest.raises(RuntimeError, match="not initialized"):
             await c.get("https://example.com")
 
-    @pytest.mark.asyncio
     async def test_put_raises_without_init(self, tmp_path: Any) -> None:
         c = self._make_uninit_cache(tmp_path)
         with pytest.raises(RuntimeError, match="not initialized"):
             await c.put("https://example.com", b"data", None, 3600)
 
-    @pytest.mark.asyncio
     async def test_clear_raises_without_init(self, tmp_path: Any) -> None:
         c = self._make_uninit_cache(tmp_path)
         with pytest.raises(RuntimeError, match="not initialized"):
             await c.clear()
 
-    @pytest.mark.asyncio
     async def test_stats_raises_without_init(self, tmp_path: Any) -> None:
         c = self._make_uninit_cache(tmp_path)
         with pytest.raises(RuntimeError, match="not initialized"):
             await c.stats()
 
-    @pytest.mark.asyncio
     async def test_close_without_init(self, tmp_path: Any) -> None:
         c = self._make_uninit_cache(tmp_path)
         # close on uninitialized cache should not raise

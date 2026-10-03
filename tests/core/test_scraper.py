@@ -130,7 +130,6 @@ class TestParseDependentsPage:
 
 
 class TestScrapeDependents:
-    @pytest.mark.asyncio
     async def test_single_page(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -142,7 +141,6 @@ class TestScrapeDependents:
             assert len(result.repos) == 1
             assert result.repos[0].owner == "delta"
 
-    @pytest.mark.asyncio
     async def test_pagination(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -159,7 +157,6 @@ class TestScrapeDependents:
                 )
             assert len(result.repos) == 4
 
-    @pytest.mark.asyncio
     async def test_min_stars_filter(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -179,7 +176,6 @@ class TestScrapeDependents:
                 )
             assert all(r.stars >= 200 for r in result.repos)
 
-    @pytest.mark.asyncio
     async def test_deduplication(self) -> None:
         html_with_dupe = DEPENDENTS_HTML_PAGE_1.replace("gamma/utils", "alpha/framework").replace(
             "150", "12,500"
@@ -200,7 +196,6 @@ class TestScrapeDependents:
             urls = [r.url for r in result.repos]
             assert len(urls) == len(set(urls))
 
-    @pytest.mark.asyncio
     async def test_package_type(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -215,7 +210,6 @@ class TestScrapeDependents:
                 )
             assert len(result.repos) == 1
 
-    @pytest.mark.asyncio
     async def test_progress_callback(self) -> None:
         progress_calls: list[tuple[int, int]] = []
 
@@ -243,7 +237,6 @@ class TestScrapeDependents:
         assert progress_calls[0] == (1, 3)
         assert progress_calls[1] == (2, 3)
 
-    @pytest.mark.asyncio
     async def test_complete_scrape_sets_complete_true(self) -> None:
         """A scrape that exhausts all pages reports complete=True, reason=None,
         and matched_count equal to the number of repos that passed min_stars."""
@@ -263,7 +256,6 @@ class TestScrapeDependents:
         assert result.reason is None
         assert result.matched_count == len(result.repos)
 
-    @pytest.mark.asyncio
     async def test_cap_sets_max_pages_reached(self) -> None:
         """Stopping at the page cap with a remaining next-page link reports
         complete=False, reason=MAX_PAGES_REACHED."""
@@ -290,7 +282,6 @@ class TestScrapeDependents:
         assert result.complete is False
         assert result.reason == ScrapeReason.MAX_PAGES_REACHED
 
-    @pytest.mark.asyncio
     async def test_fetch_failure_sets_network_failure(self) -> None:
         """A fetch that fails with an unexpected status (raising
         ``NetworkFailureError``) reports complete=False, reason=NETWORK_FAILURE."""
@@ -372,7 +363,6 @@ class TestScrapeDependentsEdgeCases:
         repos, next_url = parse_dependents_page(html)
         assert len(repos) == 0
 
-    @pytest.mark.asyncio
     async def test_error_response_sets_network_failure(self) -> None:
         """A non-200/304/429 response terminates with reason=network_failure."""
         from dep_rank.core.models import ScrapeReason
@@ -389,7 +379,6 @@ class TestScrapeDependentsEdgeCases:
         assert result.reason == ScrapeReason.NETWORK_FAILURE
         assert result.pages_scraped == 0  # first-page failure consumed no pages
 
-    @pytest.mark.asyncio
     async def test_429_exhaustion_sets_rate_limited(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A persistent 429 (past the retry budget) terminates with reason=rate_limited."""
         from unittest.mock import AsyncMock
@@ -411,7 +400,6 @@ class TestScrapeDependentsEdgeCases:
         assert result.reason == ScrapeReason.RATE_LIMITED
         assert result.pages_scraped == 0  # never got a parseable page
 
-    @pytest.mark.asyncio
     async def test_concurrency_out_of_range_raises(self) -> None:
         """The library refuses concurrency <1 or >10 (avoids Semaphore(0) deadlock)."""
         async with ClientSession() as session:
@@ -421,7 +409,6 @@ class TestScrapeDependentsEdgeCases:
                         session, "https://github.com/owner/repo", concurrency=bad
                     )
 
-    @pytest.mark.asyncio
     async def test_cache_hit_skips_network(self) -> None:
         """When cache has a valid (non-expired) entry, no network request is made."""
         import tempfile
@@ -446,7 +433,6 @@ class TestScrapeDependentsEdgeCases:
         assert len(result.repos) == 1
         assert result.repos[0].owner == "delta"
 
-    @pytest.mark.asyncio
     async def test_200_response_stores_in_cache(self) -> None:
         """200 response with cache stores the body and etag."""
         import tempfile
@@ -476,7 +462,6 @@ class TestScrapeDependentsEdgeCases:
 
 
 class TestScrapeResultReturn:
-    @pytest.mark.asyncio
     async def test_returns_scrape_result(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -493,7 +478,6 @@ class TestScrapeResultReturn:
         assert len(result.repos) == 1
         assert result.repos[0].owner == "alpha"
 
-    @pytest.mark.asyncio
     async def test_estimated_total_pages_with_max_pages(self) -> None:
         with aioresponses() as m:
             m.get(
@@ -506,7 +490,6 @@ class TestScrapeResultReturn:
                 )
         assert result.max_pages == 5
 
-    @pytest.mark.asyncio
     async def test_progress_callback_receives_estimated_total(self) -> None:
         progress_calls: list[tuple[int, int]] = []
 
@@ -527,7 +510,6 @@ class TestScrapeResultReturn:
         assert len(progress_calls) == 1
         assert progress_calls[0] == (1, 30)  # page 1, estimated 900//30=30
 
-    @pytest.mark.asyncio
     async def test_no_counts_in_html_defaults_to_zero(self) -> None:
         """When the HTML has no parseable count header, estimated totals default to 0."""
         html_no_counts = """
@@ -554,7 +536,6 @@ class TestScrapeResultReturn:
         assert result.estimated_total_pages == 0
         assert result.estimated_total_dependents == 0
 
-    @pytest.mark.asyncio
     async def test_multi_page_with_estimated_total(self) -> None:
         """Multi-page scrape carries estimated_total_pages from page 1 through all callbacks."""
         progress_calls: list[tuple[int, int]] = []

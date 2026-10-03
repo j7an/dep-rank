@@ -16,13 +16,11 @@ from dep_rank.core.rate_limiter import (
 
 
 class TestTokenBucketRateLimiter:
-    @pytest.mark.asyncio
     async def test_allows_within_limit(self) -> None:
         limiter = TokenBucketRateLimiter(rate=10, period=1.0)
         for _ in range(10):
             await limiter.acquire()
 
-    @pytest.mark.asyncio
     async def test_blocks_over_limit(self) -> None:
         limiter = TokenBucketRateLimiter(rate=2, period=1.0)
         await limiter.acquire()
@@ -32,7 +30,6 @@ class TestTokenBucketRateLimiter:
         elapsed = time.monotonic() - start
         assert elapsed >= 0.4
 
-    @pytest.mark.asyncio
     async def test_tokens_replenish(self) -> None:
         limiter = TokenBucketRateLimiter(rate=2, period=0.5)
         await limiter.acquire()
@@ -54,7 +51,6 @@ class TestTokenBucketRateLimiter:
         # bucket now empty; over a 60s period it will not refill within the test
         assert limiter.try_acquire() is False
 
-    @pytest.mark.asyncio
     async def test_try_acquire_refuses_while_lock_held(self) -> None:
         """A foreground caller waiting in acquire() holds the lock across its sleep;
         try_acquire must yield to it rather than steal the token it is about to claim."""
@@ -171,7 +167,6 @@ class TestAdaptiveRateLimiter:
         limiter.try_acquire()
         assert limiter.tokens_available() == pytest.approx(59.0, abs=0.05)
 
-    @pytest.mark.asyncio
     async def test_acquire_delegates_to_bucket(self) -> None:
         limiter = AdaptiveRateLimiter.for_token("ghp_x", concurrency=3)
         await limiter.acquire()  # does not raise

@@ -11,7 +11,6 @@ need a token, but passing one is harmless.
 
 from __future__ import annotations
 
-import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
@@ -48,7 +47,6 @@ def _item(owner: str, name: str, stars: int) -> str:
     """
 
 
-@pytest.mark.asyncio
 async def test_top_k_ordering_across_pages() -> None:
     """rows=2 keeps the two highest-star repos regardless of which page they were on."""
     p1 = _page(_item("a", "one", 100) + _item("b", "two", 5000), next_page=2)
@@ -66,7 +64,6 @@ async def test_top_k_ordering_across_pages() -> None:
     assert result.complete is True
 
 
-@pytest.mark.asyncio
 async def test_rows_zero_keeps_no_repos_but_counts() -> None:
     p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
     with aioresponses() as m:
@@ -77,7 +74,6 @@ async def test_rows_zero_keeps_no_repos_but_counts() -> None:
     assert result.matched_count == 2
 
 
-@pytest.mark.asyncio
 async def test_rows_greater_than_total_returns_all() -> None:
     p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
     with aioresponses() as m:
@@ -87,7 +83,6 @@ async def test_rows_greater_than_total_returns_all() -> None:
     assert [r.name for r in result.repos] == ["one", "two"]
 
 
-@pytest.mark.asyncio
 async def test_ties_keep_earlier_seen() -> None:
     """Equal stars: the repo seen first is retained when the heap is full."""
     p1 = _page(_item("a", "first", 500) + _item("b", "second", 500), next_page=None)
@@ -98,7 +93,6 @@ async def test_ties_keep_earlier_seen() -> None:
     assert [r.name for r in result.repos] == ["first"]
 
 
-@pytest.mark.asyncio
 async def test_ties_evict_later_seen_when_displaced() -> None:
     """Regression for the eviction tiebreak (not just admission): when a
     higher-star repo displaces one of two equal-star repos in a full heap, the
@@ -120,7 +114,6 @@ async def test_ties_evict_later_seen_when_displaced() -> None:
     assert [r.name for r in result.repos] == ["winner", "early"]
 
 
-@pytest.mark.asyncio
 async def test_duplicate_repos_counted_once() -> None:
     p1 = _page(_item("a", "dup", 100), next_page=2)
     p2 = _page(_item("a", "dup", 100) + _item("c", "new", 80), next_page=None)
@@ -135,7 +128,6 @@ async def test_duplicate_repos_counted_once() -> None:
     assert sorted(r.name for r in result.repos) == ["dup", "new"]
 
 
-@pytest.mark.asyncio
 async def test_max_pages_reached_sets_reason() -> None:
     """Hitting the page cap with more pages available -> complete=False, max_pages_reached."""
     from dep_rank.core.models import ScrapeReason
@@ -154,7 +146,6 @@ async def test_max_pages_reached_sets_reason() -> None:
     assert result.reason == ScrapeReason.MAX_PAGES_REACHED
 
 
-@pytest.mark.asyncio
 async def test_stream_emits_per_page_then_terminal() -> None:
     p1 = _page(_item("a", "one", 100), next_page=2)
     p2 = _page(_item("b", "two", 80), next_page=None)
@@ -173,7 +164,6 @@ async def test_stream_emits_per_page_then_terminal() -> None:
     assert snaps[-1].reason is None
 
 
-@pytest.mark.asyncio
 async def test_on_partial_called_per_snapshot() -> None:
     from dep_rank.core.models import ScrapeSnapshot
 

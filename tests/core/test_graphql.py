@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
@@ -36,7 +35,6 @@ class TestBuildBatchQuery:
 
 
 class TestEnrichWithGraphql:
-    @pytest.mark.asyncio
     async def test_enriches_stars_and_description(self) -> None:
         repos = [make_repo("django", "django", stars=80000)]
         graphql_response = {
@@ -54,7 +52,6 @@ class TestEnrichWithGraphql:
         assert enriched[0].stars == 82400
         assert enriched[0].description == "The Web framework for perfectionists with deadlines."
 
-    @pytest.mark.asyncio
     async def test_handles_null_description(self) -> None:
         repos = [make_repo("a", "b")]
         graphql_response = {"data": {"repo_0": {"stargazerCount": 50, "description": None}}}
@@ -64,7 +61,6 @@ class TestEnrichWithGraphql:
                 enriched = await enrich_with_graphql(session, repos, token="fake-token")
         assert enriched[0].description is None
 
-    @pytest.mark.asyncio
     async def test_batches_over_100(self) -> None:
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]
         response_1 = {
@@ -82,7 +78,6 @@ class TestEnrichWithGraphql:
                 enriched = await enrich_with_graphql(session, repos, token="fake-token")
         assert len(enriched) == 150
 
-    @pytest.mark.asyncio
     async def test_resorts_by_accurate_stars(self) -> None:
         repos = [make_repo("a", "b", stars=200), make_repo("c", "d", stars=100)]
         graphql_response = {
@@ -98,14 +93,12 @@ class TestEnrichWithGraphql:
         assert enriched[0].owner == "c"
         assert enriched[1].owner == "a"
 
-    @pytest.mark.asyncio
     async def test_empty_repos_returns_empty(self) -> None:
         """enrich_with_graphql returns [] when passed empty list."""
         async with ClientSession() as session:
             enriched = await enrich_with_graphql(session, [], token="fake-token")
         assert enriched == []
 
-    @pytest.mark.asyncio
     async def test_error_response_falls_back(self) -> None:
         """When GraphQL returns errors instead of data, repos pass through unchanged."""
         repos = [make_repo("a", "b", stars=100)]
@@ -117,7 +110,6 @@ class TestEnrichWithGraphql:
         assert len(enriched) == 1
         assert enriched[0].stars == 100  # unchanged
 
-    @pytest.mark.asyncio
     async def test_missing_repo_data_falls_back(self) -> None:
         """When a specific repo is missing from GraphQL data, it passes through unchanged."""
         repos = [make_repo("a", "b", stars=100)]
@@ -153,7 +145,6 @@ class TestBuildTrustQuery:
 
 
 class TestEnrichWithTrustMetadata:
-    @pytest.mark.asyncio
     async def test_populates_signals_and_marks_complete(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -191,7 +182,6 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.is_disabled is False
         assert repo.trust_signals.created_at == datetime(2005, 7, 13, tzinfo=UTC)
 
-    @pytest.mark.asyncio
     async def test_malformed_created_at_degrades_to_missing(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -207,7 +197,6 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is not None
         assert result.repos[0].trust_signals.created_at is None
 
-    @pytest.mark.asyncio
     async def test_malformed_pushed_at_degrades_recency_not_crash(self) -> None:
         # A non-ISO pushedAt must not abort the run; recency degrades to "missing"
         # (pushed_at=None) while the rest of the signals are still applied.
@@ -237,7 +226,6 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.pushed_at is None  # unparseable -> missing recency
         assert repo.trust_signals.forks == 31000  # other signals intact
 
-    @pytest.mark.asyncio
     async def test_401_short_circuits_to_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -251,7 +239,6 @@ class TestEnrichWithTrustMetadata:
         assert result.failed is True
         assert result.complete is False
 
-    @pytest.mark.asyncio
     async def test_graphql_error_marks_failed_when_only_batch(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -264,7 +251,6 @@ class TestEnrichWithTrustMetadata:
                 )
         assert result.failed is True  # the only batch errored -> no usable metadata
 
-    @pytest.mark.asyncio
     async def test_missing_repo_data_is_partial_not_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -292,7 +278,6 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is not None
         assert result.repos[1].trust_signals is None
 
-    @pytest.mark.asyncio
     async def test_data_with_errors_is_partial_not_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -321,7 +306,6 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is not None
         assert result.repos[1].trust_signals is None
 
-    @pytest.mark.asyncio
     async def test_data_all_null_is_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -339,7 +323,6 @@ class TestEnrichWithTrustMetadata:
         assert result.complete is False
         assert result.repos[0].trust_signals is None
 
-    @pytest.mark.asyncio
     async def test_multi_batch_one_failed_is_partial(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -369,7 +352,6 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is not None
         assert result.repos[100].trust_signals is None  # from the failed batch
 
-    @pytest.mark.asyncio
     async def test_multi_batch_all_failed_is_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -384,7 +366,6 @@ class TestEnrichWithTrustMetadata:
         assert result.failed is True  # no usable metadata at all
         assert result.complete is False
 
-    @pytest.mark.asyncio
     async def test_empty_repos_is_clean(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
