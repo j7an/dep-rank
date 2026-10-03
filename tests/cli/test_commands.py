@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from click.testing import CliRunner
 
@@ -800,3 +801,172 @@ class TestRankByTrust:
             )
         assert result.exit_code == 0
         assert "partial data" in result.output
+
+    def test_trust_check_requires_rank_by_trust(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["deps", "https://github.com/a/b", "--trust-check"])
+        assert result.exit_code != 0
+        assert "Error: --trust-check requires --rank-by trust" in result.stderr
+
+    def test_trust_check_without_token_errors(self, runner: CliRunner) -> None:
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/a/b", "--rank-by", "trust", "--trust-check"]
+        )
+        assert result.exit_code != 0
+        assert "requires a GitHub token" in result.stderr
+
+    @pytest.mark.parametrize("trust_check", [False, True])
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_trust_check_json_includes_only_requested_result(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+        trust_check: bool,
+    ) -> None:
+        import json
+
+        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
+
+        repos = [
+            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
+            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
+            Repository(owner="e", name="f", url="https://github.com/e/f", stars=30),
+        ]
+        mock_scrape.return_value = self._scrape_result(repos)
+
+        async def check(
+            session: aiohttp.ClientSession,
+            selected: list[Repository],
+            token: str,
+            *,
+            now: datetime,
+        ) -> tuple[list[Repository], TrustCheckResult]:
+            # The check must see scored, final selected results, using the output clock.
+            assert len(selected) == 2
+            assert all(repo.trust is not None for repo in selected)
+            return selected, TrustCheckResult(complete=True, window_weeks=30, repos_checked=2)
+
+        with (
+            patch(
+                "dep_rank.core.graphql.enrich_with_trust_metadata",
+                new_callable=AsyncMock,
+                return_value=TrustMetadataResult(repos=repos, failed=False, complete=True),
+            ),
+            patch("dep_rank.core.star_history.check_star_history", side_effect=check) as mock_check,
+        ):
+            args = [
+                "deps",
+                "https://github.com/a/b",
+                "--token",
+                "ghp_x",
+                "--rank-by",
+                "trust",
+                "--rows",
+                "2",
+                "--format",
+                "json",
+            ]
+            if trust_check:
+                args.append("--trust-check")
+            result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert result.stderr == ""
+        if trust_check:
+            assert payload["trust_check"]["repos_checked"] == 2
+            mock_check.assert_awaited_once()
+            checked_repos = mock_check.call_args.args[1]
+            assert [repo.url for repo in checked_repos] == [
+                repo["url"] for repo in payload["repos"]
+            ]
+            assert mock_check.call_args.kwargs["now"] == datetime.fromisoformat(
+                payload["scraped_at"]
+            )
+        else:
+            mock_check.assert_not_called()
+            assert "trust_check" not in payload
+
+    @pytest.mark.parametrize("output_format", ["table", "json"])
+    @pytest.mark.parametrize("metadata_failed", [False, True])
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_trust_check_unavailable_status_and_warning(
+        self,
+        mock_scrape: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+        metadata_failed: bool,
+        output_format: str,
+    ) -> None:
+        import json
+
+        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
+
+        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        mock_scrape.return_value = self._scrape_result(repos)
+
+        async def check(
+            session: aiohttp.ClientSession,
+            selected: list[Repository],
+            token: str,
+            *,
+            now: datetime,
+        ) -> tuple[list[Repository], TrustCheckResult]:
+            return selected, TrustCheckResult(
+                complete=False, window_weeks=30, repos_checked=1, unavailable=["a/b"]
+            )
+
+        with (
+            patch(
+                "dep_rank.core.graphql.enrich_with_trust_metadata",
+                new_callable=AsyncMock,
+                return_value=TrustMetadataResult(
+                    repos=repos, failed=metadata_failed, complete=not metadata_failed
+                ),
+            ),
+            patch("dep_rank.core.star_history.check_star_history", side_effect=check) as mock_check,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    "https://github.com/a/b",
+                    "--token",
+                    "ghp_x",
+                    "--rank-by",
+                    "trust",
+                    "--trust-check",
+                    "--format",
+                    output_format,
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        if metadata_failed:
+            mock_check.assert_not_called()
+        else:
+            mock_check.assert_awaited_once()
+        if output_format == "json":
+            assert result.stderr == ""
+            payload = json.loads(result.stdout)
+            assert payload["trust_check"] == {
+                "complete": False,
+                "window_weeks": 30,
+                "repos_checked": 1,
+                "insufficient_history": [],
+                "unavailable": ["a/b"],
+            }
+            assert payload["ranked_by"] == ("stars" if metadata_failed else "trust")
+        elif metadata_failed:
+            assert "Trust check skipped — trust ranking unavailable." in result.stderr
+        else:
+            assert "Trust check incomplete" in result.stderr
+            assert "1 repos" in result.stderr
