@@ -35,7 +35,6 @@ dep-rank deps https://github.com/django/django --packages
 | `--packages` | off | Search packages instead of repositories |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token |
 | `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
-| `--concurrency` | 3 | Max concurrent page fetches (1–10) |
 | `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
 | `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
 | `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
@@ -53,7 +52,6 @@ dep-rank search https://github.com/django/django "middleware" --max-repos 20
 | `--min-stars` | 50 | Only search repos with this many stars |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token (required) |
 | `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
-| `--concurrency` | 3 | Max concurrent page fetches (1–10) |
 
 `search` always runs a bounded non-adaptive top-K scrape (`--no-adaptive-stop` is not exposed; adaptive early-stop is permanently disabled for this command).
 
