@@ -17,6 +17,13 @@ class SqliteCache:
         self._db_path = os.path.join(cache_dir, "http_cache.db")
         self._db: aiosqlite.Connection | None = None
 
+    @property
+    def _conn(self) -> aiosqlite.Connection:
+        if self._db is None:
+            msg = "Cache not initialized; call initialize() first"
+            raise RuntimeError(msg)
+        return self._db
+
     async def initialize(self) -> None:
         """Create the cache table if it doesn't exist."""
         self._db = await aiosqlite.connect(self._db_path)
@@ -32,15 +39,12 @@ class SqliteCache:
         await self._db.commit()
 
     async def get(self, url: str) -> dict[str, Any] | None:
-        """Get a cached response. Returns None on miss.
+        """Return {"body", "etag", "expired"}, or None on a cache miss.
 
-        If expired but has an etag, returns {"body": None, "etag": etag}
-        so the caller can make a conditional request.
+        Expired rows are returned so the caller can serve stale content and
+        send If-None-Match.
         """
-        if self._db is None:
-            msg = "Cache not initialized; call initialize() first"
-            raise RuntimeError(msg)
-        cursor = await self._db.execute(
+        cursor = await self._conn.execute(
             "SELECT body, etag, expires_at FROM http_cache WHERE url = ?", (url,)
         )
         row = await cursor.fetchone()
@@ -53,37 +57,26 @@ class SqliteCache:
 
     async def put(self, url: str, body: bytes, etag: str | None, ttl: int) -> None:
         """Store a response in the cache."""
-        if self._db is None:
-            msg = "Cache not initialized; call initialize() first"
-            raise RuntimeError(msg)
         now = time.time()
-        await self._db.execute(
+        await self._conn.execute(
             """INSERT OR REPLACE INTO http_cache (url, etag, body, created_at, expires_at)
                VALUES (?, ?, ?, ?, ?)""",
             (url, etag, body, now, now + ttl),
         )
-        await self._db.commit()
+        await self._conn.commit()
 
     async def clear(self) -> None:
         """Delete all cached entries."""
-        if self._db is None:
-            msg = "Cache not initialized; call initialize() first"
-            raise RuntimeError(msg)
-        await self._db.execute("DELETE FROM http_cache")
-        await self._db.commit()
+        await self._conn.execute("DELETE FROM http_cache")
+        await self._conn.commit()
 
     async def stats(self) -> dict[str, Any]:
         """Return cache statistics."""
-        if self._db is None:
-            msg = "Cache not initialized; call initialize() first"
-            raise RuntimeError(msg)
-        cursor = await self._db.execute(
+        cursor = await self._conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(LENGTH(body)), 0) FROM http_cache"
         )
-        row = await cursor.fetchone()
-        if row is None:
-            return {"entries": 0, "size_bytes": 0}
-        return {"entries": row[0], "size_bytes": row[1]}
+        entries, size = await cursor.fetchone() or (0, 0)
+        return {"entries": entries, "size_bytes": size}
 
     async def close(self) -> None:
         """Close the database connection."""

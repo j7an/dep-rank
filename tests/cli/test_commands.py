@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -46,6 +48,18 @@ def mock_result() -> DependentsResult:
         dependent_type=DependentType.REPOSITORY,
         scraped_at=datetime.now(tz=UTC),
     )
+
+
+class TestImportCost:
+    def test_cli_import_does_not_load_network_stack(self) -> None:
+        code = (
+            "import sys, dep_rank.cli.app; "
+            "print(sorted(m for m in ('aiohttp', 'aiosqlite', 'selectolax') if m in sys.modules))"
+        )
+        out = subprocess.run(  # noqa: S603 - fixed test code in the current Python interpreter
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert out == "[]"
 
 
 class TestDepsCommand:

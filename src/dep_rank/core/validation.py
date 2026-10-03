@@ -22,7 +22,7 @@ def validate_github_url(url: str) -> tuple[str, str]:
     Raises:
         ValueError: If the URL is not a valid GitHub repository URL.
     """
-    if not url or not isinstance(url, str):
+    if not url:
         msg = "URL cannot be empty"
         raise ValueError(msg)
 
@@ -53,22 +53,12 @@ def validate_github_url(url: str) -> tuple[str, str]:
 
     owner, repo = segments
 
-    if not owner or not repo:
-        msg = "Both owner and repository names must be non-empty"
-        raise ValueError(msg)
-
-    if not _VALID_NAME.match(owner):
-        msg = (
-            f"Invalid owner name '{owner}' — must contain only"
-            " alphanumeric characters, dots, hyphens, or underscores"
-        )
-        raise ValueError(msg)
-
-    if not _VALID_NAME.match(repo):
-        msg = (
-            f"Invalid repository name '{repo}' — must contain only"
-            " alphanumeric characters, dots, hyphens, or underscores"
-        )
-        raise ValueError(msg)
+    for label, name in (("owner", owner), ("repository", repo)):
+        if not _VALID_NAME.match(name):
+            msg = (
+                f"Invalid {label} name '{name}' — must contain only"
+                " alphanumeric characters, dots, hyphens, or underscores"
+            )
+            raise ValueError(msg)
 
     return owner, repo
