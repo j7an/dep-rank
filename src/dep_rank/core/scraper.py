@@ -6,12 +6,13 @@ import asyncio
 import heapq
 import itertools
 import logging
+import math
 import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 from selectolax.parser import HTMLParser
@@ -112,7 +113,14 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
     else:
         return repos, None
     href = next_link.attributes.get("href")
-    return repos, urljoin(GITHUB_URL, href) if href else None
+    if not href:
+        return repos, None
+    next_url = urljoin(GITHUB_URL, href)
+    # The next request carries the auth token: only follow links back to https://github.com.
+    target = urlsplit(next_url)
+    if target.scheme != "https" or target.netloc != "github.com":
+        return repos, None
+    return repos, next_url
 
 
 def parse_dependent_counts(html: str) -> dict[str, int]:
@@ -173,6 +181,8 @@ async def _get_once(
                 retry_after: float | None = float(resp.headers.get("Retry-After", ""))
             except ValueError:  # absent, or the HTTP-date form
                 retry_after = None
+            if retry_after is not None and not math.isfinite(retry_after):
+                retry_after = None  # "inf" would sleep forever
             return _Attempt(429, None, limiter.note_429(retry_after))
         else:
             return _Attempt(resp.status, None)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
@@ -15,9 +16,16 @@ from dep_rank.core.models import (
     ScrapeResult,
     ScrapeSnapshot,
 )
-from dep_rank.core.rate_limiter import AUTH_RATE, RATE_PERIOD, UNAUTH_RATE, RateLimiter
+from dep_rank.core.rate_limiter import (
+    AUTH_RATE,
+    RATE_PERIOD,
+    RETRY_MAX_SECONDS,
+    UNAUTH_RATE,
+    RateLimiter,
+)
 from dep_rank.core.scraper import (
     DEFAULT_MAX_PAGES,
+    MAX_RETRIES,
     parse_dependent_counts,
     parse_dependents_page,
     scrape_dependents,
@@ -147,6 +155,21 @@ class TestParseDependentsPage:
             '<a href="/o/r/network/dependents?page=3">Next</a></div></div></div>'
         )
         assert parse_dependents_page(html)[1] == "https://github.com/o/r/network/dependents?page=3"
+
+    @pytest.mark.parametrize(
+        "href",
+        [
+            "//evil.example/o/r/network/dependents?page=2",
+            "https://evil.example/o/r/network/dependents?page=2",
+            "http://github.com/o/r/network/dependents?page=2",
+        ],
+    )
+    def test_next_link_off_github_https_is_ignored(self, href: str) -> None:
+        html = (
+            '<div id="dependents"><div class="paginate-container"><div>'
+            f'<a href="{href}">Next</a></div></div></div>'
+        )
+        assert parse_dependents_page(html)[1] is None
 
     def test_parse_next_url(self) -> None:
         _, next_url = parse_dependents_page(DEPENDENTS_HTML_PAGE_1)
@@ -600,6 +623,55 @@ async def test_http_date_retry_after_falls_back_to_backoff(
                 "https://github.com/owner/repo",
                 token="ghp_x",
                 rows=100,
+            )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
+
+
+async def test_infinite_retry_after_falls_back_to_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
+    with aioresponses() as m:
+        m.get(FIRST_URL, status=429, headers={"Retry-After": "inf"})
+        m.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        async with ClientSession() as session:
+            result = await scrape_dependents(
+                session, "https://github.com/owner/repo", rows=100, token="ghp_x"
+            )
+    assert result.complete is True
+    delays = [call.args[0] for call in sleep.await_args_list]
+    assert delays
+    assert all(0 <= d <= RETRY_MAX_SECONDS for d in delays)
+
+
+async def test_transport_errors_exhaust_to_network_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    with aioresponses() as m:
+        for _ in range(MAX_RETRIES + 1):
+            m.get(FIRST_URL, exception=aiohttp.ClientConnectionError())
+        async with ClientSession() as session:
+            result = await scrape_dependents(
+                session, "https://github.com/owner/repo", rows=100, token="ghp_x"
+            )
+    assert result.complete is False
+    assert result.reason == ScrapeReason.NETWORK_FAILURE
+    assert result.pages_scraped == 0
+
+
+async def test_transport_error_then_success_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    with aioresponses() as m:
+        m.get(FIRST_URL, exception=aiohttp.ClientConnectionError())
+        m.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        async with ClientSession() as session:
+            result = await scrape_dependents(
+                session, "https://github.com/owner/repo", rows=100, token="ghp_x"
             )
     assert result.complete is True
     assert [r.owner for r in result.repos] == ["delta"]

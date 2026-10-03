@@ -5,24 +5,36 @@ from __future__ import annotations
 import asyncio
 from typing import Any, cast
 
+import aiohttp
 import pytest
 from aiohttp import ClientSession
 
 from dep_rank.core.cache import SqliteCache
+from dep_rank.core.models import ScrapeSnapshot
 from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import SWRManager, scrape_dependents
 
 
 class _FakeResp:
-    def __init__(self, status: int, body: bytes = b"", etag: str | None = None, delay: float = 0.0):
+    def __init__(
+        self,
+        status: int,
+        body: bytes = b"",
+        etag: str | None = None,
+        delay: float = 0.0,
+        exc: Exception | None = None,
+    ):
         self.status = status
         self._body = body
         self.headers: dict[str, str] = {"ETag": etag} if etag else {}
         self._delay = delay
+        self._exc = exc
 
     async def __aenter__(self) -> _FakeResp:
         if self._delay:
             await asyncio.sleep(self._delay)
+        if self._exc:
+            raise self._exc
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -209,6 +221,23 @@ class TestSWRManager:
         await swr.drain()
         assert session.calls == 1
 
+    async def test_transport_error_enters_cooldown(
+        self, cache: SqliteCache, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        await _seed_expired(cache, URL, b"stale", '"old"')
+        session = _FakeSession([_FakeResp(0, exc=aiohttp.ClientConnectionError())])
+        swr = SWRManager(cast(ClientSession, session), _auth_limiter(), {}, cache, enabled=True)
+        with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
+            swr.schedule(URL)
+            await swr.drain()
+        assert session.calls == 1
+        assert any("ClientConnectionError" in r.getMessage() for r in caplog.records)
+        swr.schedule(URL)  # within cooldown: no second request
+        await swr.drain()
+        assert session.calls == 1
+
     async def test_no_refresh_without_foreground_headroom(self, cache: SqliteCache) -> None:
         """Spec §3 foreground-priority: at low headroom the refresh makes no request AND
         a concurrent foreground ``acquire()`` is not delayed by the refresh path."""
@@ -318,5 +347,32 @@ async def test_unauthenticated_expired_hit_serves_stale_without_request(tmp_path
         )
         assert [r.name for r in result.repos] == ["one"]
         assert fake.calls == 0
+    finally:
+        await cache.close()
+
+
+async def test_on_page_exception_still_drains_refresh(tmp_path: Any) -> None:
+    cache = SqliteCache(str(tmp_path))
+    await cache.initialize()
+    try:
+        await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)
+        session = _FakeSession([_FakeResp(304, delay=0.3)])
+
+        async def on_page(snap: ScrapeSnapshot) -> None:
+            raise RuntimeError("render failed")
+
+        with pytest.raises(RuntimeError, match="render failed"):
+            await scrape_dependents(
+                cast(ClientSession, session),
+                "https://github.com/owner/repo",
+                rows=5,
+                token="ghp_x",
+                cache=cache,
+                on_page=on_page,
+            )
+        assert session.calls == 1
+        refreshed = await cache.get(FIRST)
+        assert refreshed is not None
+        assert refreshed["expired"] is False  # the delayed refresh finished before the raise
     finally:
         await cache.close()
