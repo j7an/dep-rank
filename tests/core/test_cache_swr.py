@@ -123,10 +123,12 @@ class TestSWRManager:
             await _seed_expired(cache, URL, b"stale", '"old"')
             await _seed_expired(cache, other, b"stale", '"old2"')
             fake = _FakeSession([_FakeResp(429, delay=0.01), _FakeResp(200, body=b"fresh")])
-            swr = SWRManager(fake, _auth_limiter(), {}, cache, enabled=True)
+            limiter = RateLimiter(3, 60.0, now=lambda: 1000.0)
+            swr = SWRManager(fake, limiter, {}, cache, enabled=True)
             swr.schedule(URL)
             swr.schedule(other)
             await swr.drain()
+            assert limiter.try_acquire(reserve=1) is True
             entry = await cache.get(other)
             assert fake.calls == 1
             assert entry is not None
