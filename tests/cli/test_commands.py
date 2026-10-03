@@ -191,7 +191,8 @@ class TestDepsCommand:
 
     def test_invalid_url(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps", "https://gitlab.com/foo/bar"])
-        assert result.exit_code != 0
+        assert result.exit_code == 1
+        assert "Error: URL must be a github.com repository URL, got: gitlab.com" in result.stderr
 
 
 class TestSearchCommand:
@@ -408,8 +409,8 @@ class TestSearchCommandFull:
             cli,
             ["search", "https://gitlab.com/foo/bar", "import os", "--token", "test-token"],
         )
-        assert result.exit_code != 0
-        assert "Error" in result.output
+        assert result.exit_code == 1
+        assert "Error: URL must be a github.com repository URL, got: gitlab.com" in result.stderr
 
 
 class TestCacheCommandsFull:
@@ -580,7 +581,7 @@ class TestDepsHardeningFlags:
             ["deps", "https://github.com/x/y", "--token", "ghp_x", "--max-pages", "5000"],
         )
         assert result.exit_code == 0
-        assert "1000" in result.stderr  # warned about the cap
+        assert "Warning: --max-pages capped at the 1000 ceiling." in result.stderr
         _, kwargs = mock_run.call_args
         assert kwargs["max_pages"] == 1000
 
@@ -676,7 +677,7 @@ class TestSearchHardening:
             ],
         )
         assert result.exit_code == 0
-        assert "1000" in result.stderr  # warned about the cap (mirrors deps)
+        assert "Warning: --max-pages capped at the 1000 ceiling." in result.stderr
         _, kwargs = mock_scrape.call_args
         assert kwargs["max_pages"] == 1000  # clamped before the scrape
 

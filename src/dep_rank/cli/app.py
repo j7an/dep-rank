@@ -22,6 +22,7 @@ from dep_rank.core.validation import validate_github_url
 
 if TYPE_CHECKING:
     from dep_rank.core.cache import SqliteCache
+    from dep_rank.core.models import ScrapeResult
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -64,6 +65,39 @@ async def _open_cache() -> AsyncIterator[SqliteCache]:
         await cache.close()
 
 
+def _validate_url_or_exit(url: str) -> None:
+    """Validate a repository URL and report invalid input to stderr."""
+    try:
+        validate_github_url(url)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+def _cap_max_pages(max_pages: int) -> int:
+    """Clamp the page budget to its ceiling and warn when it exceeds it."""
+    if max_pages > 1000:
+        click.echo("Warning: --max-pages capped at the 1000 ceiling.", err=True)
+        return 1000
+    return max_pages
+
+
+def _print_scrape_outcome(console: Console, scrape_result: ScrapeResult, min_stars: int) -> None:
+    """Print the scrape summary and any partial-result warning."""
+    from dep_rank.cli.formatters import format_scrape_summary, partial_warning
+
+    summary = format_scrape_summary(
+        pages_scraped=scrape_result.pages_scraped,
+        max_pages=scrape_result.max_pages,
+        estimated_total_pages=scrape_result.estimated_total_pages,
+        found_count=scrape_result.matched_count,
+        min_stars=min_stars,
+    )
+    console.print(f"[green]{summary}")
+    if not scrape_result.complete:
+        console.print(partial_warning(scrape_result.reason))
+
+
 async def run_deps(
     url: str,
     rows: int,
@@ -83,7 +117,7 @@ async def run_deps(
     from rich.console import Console
     from rich.live import Live
 
-    from dep_rank.cli.formatters import build_topk_table, format_scrape_summary
+    from dep_rank.cli.formatters import build_topk_table
     from dep_rank.core.graphql import enrich_with_trust_metadata
     from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
     from dep_rank.core.scraper import scrape_dependents
@@ -133,18 +167,7 @@ async def run_deps(
             total_count = scrape_result.matched_count
 
             if not quiet:
-                summary = format_scrape_summary(
-                    pages_scraped=scrape_result.pages_scraped,
-                    max_pages=scrape_result.max_pages,
-                    estimated_total_pages=scrape_result.estimated_total_pages,
-                    found_count=total_count,
-                    min_stars=min_stars,
-                )
-                console.print(f"[green]{summary}")
-                if not scrape_result.complete:
-                    from dep_rank.cli.formatters import partial_warning
-
-                    console.print(partial_warning(scrape_result.reason))
+                _print_scrape_outcome(console, scrape_result, min_stars)
 
             ranked_by: Literal["stars", "trust"] = "stars"
             trust_check_result: TrustCheckResult | None = None
@@ -296,11 +319,7 @@ def deps(
     trust_check: bool,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
-    try:
-        validate_github_url(url)
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+    _validate_url_or_exit(url)
 
     if descriptions and not token:
         click.echo(
@@ -320,9 +339,7 @@ def deps(
         )
         sys.exit(1)
 
-    if max_pages > 1000:
-        click.echo("Warning: --max-pages capped at the 1000 ceiling.", err=True)
-        max_pages = 1000
+    max_pages = _cap_max_pages(max_pages)
 
     if not token:
         click.echo(
@@ -387,15 +404,9 @@ def search(
     max_pages: int,
 ) -> None:
     """Search code patterns across dependents of a GitHub repository."""
-    try:
-        validate_github_url(url)
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+    _validate_url_or_exit(url)
 
-    if max_pages > 1000:
-        click.echo("Warning: --max-pages capped at the 1000 ceiling.", err=True)
-        max_pages = 1000
+    max_pages = _cap_max_pages(max_pages)
 
     verbose = ctx.obj.get("verbose", False)
 
@@ -414,8 +425,6 @@ def search(
                 headers={"User-Agent": "dep-rank/0.1"},
             ) as session:
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
-
-                from dep_rank.cli.formatters import format_scrape_summary
 
                 progress_ctx = None
                 task_id = None
@@ -465,18 +474,7 @@ def search(
                         progress_ctx.stop()
 
                 repos = scrape_result.repos
-                summary = format_scrape_summary(
-                    pages_scraped=scrape_result.pages_scraped,
-                    max_pages=scrape_result.max_pages,
-                    estimated_total_pages=scrape_result.estimated_total_pages,
-                    found_count=scrape_result.matched_count,
-                    min_stars=min_stars,
-                )
-                console.print(f"[green]{summary}")
-                if not scrape_result.complete:
-                    from dep_rank.cli.formatters import partial_warning
-
-                    console.print(partial_warning(scrape_result.reason))
+                _print_scrape_outcome(console, scrape_result, min_stars)
 
                 result = await search_code(
                     session,
