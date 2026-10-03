@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from dep_rank.core.models import CautionCode, Repository, TrustSignals
+from dep_rank.core.star_history import evaluate_star_history
 from dep_rank.core.trust import compute_trust_scores
 
 
@@ -227,7 +228,9 @@ def test_caution_descriptions_are_not_accusatory() -> None:
     )
     ranked = compute_trust_scores([repo], now=NOW)
     assert ranked[0].trust is not None
-    cautions = ranked[0].trust.cautions
+    star_history = evaluate_star_history([(NOW.date(), 200)], now=NOW)
+    assert star_history.caution is not None
+    cautions = [*ranked[0].trust.cautions, star_history.caution]
     assert {c.code for c in cautions} == set(CautionCode)
     for caution in cautions:
         text = caution.description.lower()
