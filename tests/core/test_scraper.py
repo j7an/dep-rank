@@ -129,6 +129,25 @@ class TestParseDependentsPage:
         assert repos[1].stars == 3200
         assert repos[2].stars == 150
 
+    @pytest.mark.parametrize(
+        "href",
+        ["/o/r/network/dependents?page=2", "https://github.com/o/r/network/dependents?page=2"],
+    )
+    def test_next_url_from_relative_or_absolute_href(self, href: str) -> None:
+        html = (
+            '<div id="dependents"><div class="paginate-container"><div>'
+            f'<a href="{href}">Next</a></div></div></div>'
+        )
+        assert parse_dependents_page(html)[1] == "https://github.com/o/r/network/dependents?page=2"
+
+    def test_next_url_is_second_of_two_links(self) -> None:
+        html = (
+            '<div id="dependents"><div class="paginate-container"><div>'
+            '<a href="/o/r/network/dependents?page=1">Previous</a>'
+            '<a href="/o/r/network/dependents?page=3">Next</a></div></div></div>'
+        )
+        assert parse_dependents_page(html)[1] == "https://github.com/o/r/network/dependents?page=3"
+
     def test_parse_next_url(self) -> None:
         _, next_url = parse_dependents_page(DEPENDENTS_HTML_PAGE_1)
         assert next_url is not None

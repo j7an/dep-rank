@@ -11,6 +11,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
+from urllib.parse import urljoin
 
 import aiohttp
 from selectolax.parser import HTMLParser
@@ -102,21 +103,16 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
             )
         )
 
-    # Find next page URL
-    next_url: str | None = None
+    # Find next page URL: the second of two pagination links, or a lone "Next" link.
     links = tree.css(NEXT_BUTTON_SELECTOR)
     if len(links) == 2:
-        next_href = links[1].attributes.get("href")
-        if next_href:
-            next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
-    elif len(links) == 1:
-        link_text = links[0].text(strip=True)
-        if link_text == "Next":
-            next_href = links[0].attributes.get("href")
-            if next_href:
-                next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
-
-    return repos, next_url
+        next_link = links[1]
+    elif len(links) == 1 and links[0].text(strip=True) == "Next":
+        next_link = links[0]
+    else:
+        return repos, None
+    href = next_link.attributes.get("href")
+    return repos, urljoin(GITHUB_URL, href) if href else None
 
 
 def parse_dependent_counts(html: str) -> dict[str, int]:
