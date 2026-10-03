@@ -64,7 +64,7 @@ async def run_deps(
                 Live(console=console, refresh_per_second=4, transient=True) if show_live else None
             )
 
-            async def on_partial(snapshot: ScrapeSnapshot) -> None:
+            async def on_page(snapshot: ScrapeSnapshot) -> None:
                 # Update on EVERY snapshot, even when top_k is empty: high --min-stars,
                 # rows=0, or a no-match scrape must still show live progress.
                 # build_topk_table renders page/matched/empty-state for the empty case.
@@ -88,7 +88,7 @@ async def run_deps(
                     max_pages=max_pages,
                     rows=scrape_rows,
                     adaptive_stop=adaptive_stop,
-                    on_partial=on_partial,
+                    on_page=on_page,
                 )
             finally:
                 if live is not None:
@@ -371,6 +371,7 @@ def search(
 
         from dep_rank.cli.formatters import print_search_results
         from dep_rank.core.cache import SqliteCache
+        from dep_rank.core.models import ScrapeSnapshot
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
@@ -405,7 +406,9 @@ def search(
                         "scraping", total=max_pages, est_text="estimating..."
                     )
 
-                async def on_progress(page: int, est_total: int) -> None:
+                async def on_page(snapshot: ScrapeSnapshot) -> None:
+                    page = snapshot.pages_scraped
+                    est_total = snapshot.estimated_total_pages
                     if progress_ctx is not None and task_id is not None:
                         est_text = (
                             f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
@@ -422,7 +425,7 @@ def search(
                         url,
                         min_stars=min_stars,
                         cache=cache,
-                        on_progress=on_progress,
+                        on_page=on_page,
                         token=token,
                         max_pages=max_pages,
                         rows=max_repos,

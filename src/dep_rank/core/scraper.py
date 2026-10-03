@@ -6,12 +6,13 @@ import asyncio
 import heapq
 import itertools
 import logging
+import math
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from types import TracebackType
-from typing import Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, NamedTuple
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 from selectolax.parser import HTMLParser
@@ -63,43 +64,6 @@ class RateLimitedError(Exception):
     """The retry budget was exhausted on 429 responses."""
 
 
-class _PageResponse(Protocol):
-    """HTTP response members consumed by the scraper."""
-
-    @property
-    def status(self) -> int: ...
-
-    @property
-    def headers(self) -> Mapping[str, str]: ...
-
-    async def read(self) -> bytes: ...
-
-
-class _PageRequest(Protocol):
-    """Async context manager returned by a page request."""
-
-    async def __aenter__(self) -> _PageResponse: ...
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None: ...
-
-
-class _PageSession(Protocol):
-    """Session capability required to fetch a dependents page."""
-
-    def get(
-        self,
-        url: str,
-        *,
-        timeout: aiohttp.ClientTimeout,
-        headers: Mapping[str, str],
-    ) -> _PageRequest: ...
-
-
 def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
     """Parse a single GitHub dependents HTML page.
 
@@ -140,20 +104,22 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
             )
         )
 
-    # Find next page URL
-    next_url: str | None = None
+    # Find next page URL: the second of two pagination links, or a lone "Next" link.
     links = tree.css(NEXT_BUTTON_SELECTOR)
     if len(links) == 2:
-        next_href = links[1].attributes.get("href")
-        if next_href:
-            next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
-    elif len(links) == 1:
-        link_text = links[0].text(strip=True)
-        if link_text == "Next":
-            next_href = links[0].attributes.get("href")
-            if next_href:
-                next_url = f"{GITHUB_URL}{next_href}" if next_href.startswith("/") else next_href
-
+        next_link = links[1]
+    elif len(links) == 1 and links[0].text(strip=True) == "Next":
+        next_link = links[0]
+    else:
+        return repos, None
+    href = next_link.attributes.get("href")
+    if not href:
+        return repos, None
+    next_url = urljoin(GITHUB_URL, href)
+    # The next request carries the auth token: only follow links back to https://github.com.
+    target = urlsplit(next_url)
+    if target.scheme != "https" or target.netloc != "github.com":
+        return repos, None
     return repos, next_url
 
 
@@ -180,8 +146,54 @@ def parse_dependent_counts(html: str) -> dict[str, int]:
     return counts
 
 
+class _Attempt(NamedTuple):
+    status: int
+    body: bytes | None  # 200, or 304 with a cached body
+    retry_delay: float = 0.0  # 429 only (from limiter.note_429)
+
+
+async def _get_once(
+    session: aiohttp.ClientSession,
+    url: str,
+    limiter: RateLimiter,
+    auth_headers: dict[str, str],
+    cache: SqliteCache | None,
+    cached: dict[str, Any] | None,
+) -> _Attempt:
+    """Make one GET, feed the outcome to the limiter, and store a usable body in the cache.
+
+    Shared by the foreground walk and SWR refreshes, so it must not await anything before
+    ``session.get`` (callers' pause checks rely on that).
+    """
+    headers = dict(auth_headers)
+    if cached and cached["etag"]:
+        headers["If-None-Match"] = cached["etag"]
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+    async with session.get(url, timeout=timeout, headers=headers) as resp:
+        if resp.status == 200:
+            body: bytes = await resp.read()
+            etag = resp.headers.get("ETag")
+        elif resp.status == 304 and cached and cached["body"] is not None:
+            body = cached["body"]
+            etag = cached["etag"]
+        elif resp.status == 429:
+            try:
+                retry_after: float | None = float(resp.headers.get("Retry-After", ""))
+            except ValueError:  # absent, or the HTTP-date form
+                retry_after = None
+            if retry_after is not None and not math.isfinite(retry_after):
+                retry_after = None  # "inf" would sleep forever
+            return _Attempt(429, None, limiter.note_429(retry_after))
+        else:
+            return _Attempt(resp.status, None)
+    limiter.note_success()
+    if cache:
+        await cache.put(url, body, etag=etag, ttl=CACHE_TTL)
+    return _Attempt(resp.status, body)
+
+
 async def _fetch_page(
-    session: _PageSession,
+    session: aiohttp.ClientSession,
     url: str,
     limiter: RateLimiter,
     auth_headers: dict[str, str],
@@ -192,55 +204,32 @@ async def _fetch_page(
     Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
     retry budget is exhausted or an unexpected status is returned.
     """
-    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-    headers: dict[str, str] = {}
-    cached_body: bytes | None = None
-    if cache:
-        cached = await cache.get(url)
-        if cached:
-            if cached["etag"]:
-                headers["If-None-Match"] = cached["etag"]
-            cached_body = cached["body"]
-
     rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
         await limiter.acquire()
         try:
-            async with session.get(
-                url, timeout=timeout, headers={**auth_headers, **headers}
-            ) as resp:
-                if resp.status == 304 and cache and cached_body:
-                    limiter.note_success()
-                    await cache.put(
-                        url, cached_body, etag=headers.get("If-None-Match"), ttl=CACHE_TTL
-                    )
-                    return cached_body.decode("utf-8")
-                if resp.status == 200:
-                    limiter.note_success()
-                    body: bytes = await resp.read()
-                    if cache:
-                        await cache.put(url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL)
-                    return body.decode("utf-8")
-                if resp.status == 429:
-                    rate_limited = True
-                    retry_after = resp.headers.get("Retry-After")
-                    delay = limiter.note_429(float(retry_after) if retry_after else None)
-                    logger.warning(
-                        "Rate limited — retrying in %.1fs (%d/%d)",
-                        delay,
-                        attempt + 1,
-                        MAX_RETRIES,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                logger.warning("Unexpected HTTP %d — stopping", resp.status)
-                raise NetworkFailureError(f"HTTP {resp.status} for {url}")
+            result = await _get_once(session, url, limiter, auth_headers, cache, cached=None)
         except (TimeoutError, aiohttp.ClientError):
             delay = backoff_delay(attempt)
             logger.warning(
                 "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
             )
             await asyncio.sleep(delay)
+            continue
+        if result.body is not None:
+            return result.body.decode("utf-8")
+        if result.status == 429:
+            rate_limited = True
+            logger.warning(
+                "Rate limited — retrying in %.1fs (%d/%d)",
+                result.retry_delay,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            await asyncio.sleep(result.retry_delay)
+            continue
+        logger.warning("Unexpected HTTP %d — stopping", result.status)
+        raise NetworkFailureError(f"HTTP {result.status} for {url}")
     logger.warning("Exhausted retries for %s", url)
     if rate_limited:
         raise RateLimitedError(url)
@@ -248,29 +237,26 @@ async def _fetch_page(
 
 
 async def _read_page(
-    session: _PageSession,
+    session: aiohttp.ClientSession,
     url: str,
     limiter: RateLimiter,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
-    swr: SWRManager | None = None,
+    swr: SWRManager,
 ) -> str:
     """Return a page's HTML; fresh-hit skips network, stale-hit serves stale + refreshes.
 
-    Fresh cache hit -> cached body (no request). Expired-with-body + an ``swr`` manager ->
-    serve stale immediately and schedule a background revalidation (Phase 3 SWR). Miss,
-    expired-without-``swr`` -> ``_fetch_page`` (revalidates via If-None-Match when an ETag
-    is cached).
+    Fresh cache hit -> cached body (no request). Expired-with-body -> serve stale
+    immediately and ask ``swr`` for a background revalidation (a no-op when SWR is
+    disabled). Miss -> ``_fetch_page``.
     """
     if cache:
         cached = await cache.get(url)
         if cached and cached["body"] is not None:
             body: bytes = cached["body"]
-            if not cached.get("expired"):
-                return body.decode("utf-8")
-            if swr is not None:
+            if cached.get("expired"):
                 swr.schedule(url)
-                return body.decode("utf-8")
+            return body.decode("utf-8")
     return await _fetch_page(session, url, limiter, auth_headers, cache)
 
 
@@ -281,7 +267,7 @@ class SWRManager:
     the 1/min budget). Refreshes are deduped per URL, capped at one in flight,
     paused after a recent 429, gated *at refresh time* on
     foreground token headroom (via ``try_acquire(reserve=...)``), cooled down on
-    failure, and drained before the generator completes (while the session is still
+    failure, and drained before ``scrape_dependents`` returns (while the session is still
     open) — never at cache.close(). Refresh outcomes feed the shared limiter
     (``note_success`` on 200/304, ``note_429`` on 429), so background rate pressure
     throttles both background and foreground work.
@@ -289,7 +275,7 @@ class SWRManager:
 
     def __init__(
         self,
-        session: _PageSession,
+        session: aiohttp.ClientSession,
         limiter: RateLimiter,
         auth_headers: dict[str, str],
         cache: SqliteCache | None,
@@ -341,57 +327,23 @@ class SWRManager:
                 if not self._limiter.try_acquire(reserve=SWR_HEADROOM_TOKENS - 1):
                     return
                 cached = await self._cache.get(url) if self._cache else None
-                headers = dict(self._auth_headers)
-                if cached and cached["etag"]:
-                    headers["If-None-Match"] = cached["etag"]
-                timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+                # Re-check here, not in `_get_once` (shared with the foreground): a
+                # foreground 429 may have landed during the cache lookup above.
                 if self._limiter.background_paused():
                     return
-                async with self._session.get(url, timeout=timeout, headers=headers) as resp:
-                    if resp.status == 200:
-                        self._limiter.note_success()
-                        body = await resp.read()
-                        if self._cache:
-                            await self._cache.put(
-                                url, body, etag=resp.headers.get("ETag"), ttl=CACHE_TTL
-                            )
-                    elif resp.status == 304 and cached and cached["body"] is not None:
-                        self._limiter.note_success()
-                        if self._cache:
-                            await self._cache.put(
-                                url, cached["body"], etag=cached["etag"], ttl=CACHE_TTL
-                            )
-                    elif resp.status == 429:
-                        # Feed the shared limiter to pause background refreshes and
-                        # lengthen foreground backoff. Mirrors the foreground 429 path in
-                        # `_fetch_page`. The returned delay is unused: the background path
-                        # waits via the per-URL cooldown below, not an in-band sleep.
-                        retry_after = resp.headers.get("Retry-After")
-                        self._limiter.note_429(float(retry_after) if retry_after else None)
-                        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
-                        logger.warning(
-                            "SWR refresh rate-limited (429) for %s; cooling down %.0fs",
-                            url,
-                            SWR_COOLDOWN,
-                        )
-                    else:
-                        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
-                        logger.warning(
-                            "SWR refresh got unexpected status %d for %s; cooling down %.0fs",
-                            resp.status,
-                            url,
-                            SWR_COOLDOWN,
-                        )
+                result = await _get_once(
+                    self._session, url, self._limiter, self._auth_headers, self._cache, cached
+                )
+                if result.body is None:
+                    self._cool_down(url, f"HTTP {result.status}")
         except (TimeoutError, aiohttp.ClientError) as exc:
-            self._cooldown_until[url] = self._now() + SWR_COOLDOWN
-            logger.warning(
-                "SWR refresh failed for %s (%s); cooling down %.0fs",
-                url,
-                exc.__class__.__name__,
-                SWR_COOLDOWN,
-            )
+            self._cool_down(url, exc.__class__.__name__)
         finally:
             self._inflight.discard(url)
+
+    def _cool_down(self, url: str, why: str) -> None:
+        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
+        logger.warning("SWR refresh for %s failed (%s); cooling down %.0fs", url, why, SWR_COOLDOWN)
 
     async def drain(self, timeout: float = SWR_DRAIN_TIMEOUT) -> None:
         """Await outstanding refreshes up to ``timeout``, then cancel any stragglers."""
@@ -405,11 +357,11 @@ class SWRManager:
 
 
 def _heap_push(
-    heap: list[tuple[int, int, Repository]], repo: Repository, count: int, rows: int | None
+    heap: list[tuple[int, int, Repository]], repo: Repository, count: int, rows: int
 ) -> None:
     """Maintain a bounded min-heap of the top-``rows`` repos by stars.
 
-    ``rows is None`` keeps every repo (unbounded, back-compat). ``rows <= 0`` keeps none.
+    ``rows <= 0`` keeps none.
 
     Tie-handling: ``count`` is the monotonically increasing arrival index, stored
     **negated** so that among repos with equal stars the min-heap root (the eviction
@@ -418,11 +370,9 @@ def _heap_push(
     this guarantees "ties: earlier-seen wins" both on admission and on eviction.
     """
     entry = (repo.stars, -count, repo)
-    if rows is None:
-        heap.append(entry)
-    elif rows <= 0:
+    if rows <= 0:
         return
-    elif len(heap) < rows:
+    if len(heap) < rows:
         heapq.heappush(heap, entry)
     elif repo.stars > heap[0][0]:
         heapq.heapreplace(heap, entry)
@@ -439,12 +389,12 @@ def _top_k(heap: list[tuple[int, int, Repository]]) -> list[Repository]:
 
 def _should_stop(
     heap: list[tuple[int, int, Repository]],
-    rows: int | None,
+    rows: int,
     recent_max: deque[int],
     page: int,
 ) -> bool:
     """True when the trailing window can no longer plausibly change the saturated top-K."""
-    if rows is None or rows <= 0:
+    if rows <= 0:
         return False
     if len(heap) < rows:  # heap not saturated -> kth_best undefined
         return False
@@ -456,51 +406,25 @@ def _should_stop(
     return max(recent_max) < kth_best
 
 
-def _build_snapshot(
-    heap: list[tuple[int, int, Repository]],
-    page: int,
-    est_pages: int,
-    est_deps: int,
-    matched: int,
-    *,
-    done: bool,
-    reason: ScrapeReason | None = None,
-) -> ScrapeSnapshot:
-    return ScrapeSnapshot(
-        top_k=_top_k(heap),
-        pages_scraped=page,
-        estimated_total_pages=est_pages,
-        estimated_total_dependents=est_deps,
-        matched_count=matched,
-        done=done,
-        complete=(reason is None) if done else False,
-        reason=reason if done else None,
-    )
-
-
-async def stream_dependents(
-    session: _PageSession,
+async def scrape_dependents(
+    session: aiohttp.ClientSession,
     url: str,
     *,
-    rows: int | None,
+    rows: int,
     dependent_type: DependentType = DependentType.REPOSITORY,
     min_stars: int = 5,
     cache: SqliteCache | None = None,
-    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     token: str | None = None,
     max_pages: int = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
     rate_limiter: RateLimiter | None = None,
-) -> AsyncIterator[ScrapeSnapshot]:
-    """Stream top-K dependents page by page.
+    on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
+) -> ScrapeResult:
+    """Walk the dependents pages, keeping the top-``rows`` repos by stars.
 
-    Yields one snapshot per consumed page (done=False) then exactly one terminal
-    snapshot (done=True) carrying complete/reason. ``rows is None`` keeps every
-    matched repo and disables adaptive stop (back-compat for the wrapper).
-
-    Callers must fully iterate this generator (no early ``break``); the ``finally``
-    block awaits outstanding background SWR refreshes before completion, so abandoning
-    iteration early could let the session close while a refresh is still in flight.
+    ``on_page`` is awaited after each consumed page with the running top-K. Exceptions it
+    raises propagate. Outstanding background SWR refreshes are drained before returning
+    (or raising), while the caller's session is still open.
     """
     owner, repo = validate_github_url(url)
     base_url = f"{GITHUB_URL}/{owner}/{repo}/network/dependents"
@@ -520,14 +444,13 @@ async def stream_dependents(
     est_pages = 0
     est_deps = 0
     recent_max: deque[int] = deque(maxlen=ADAPTIVE_WINDOW)
-    bounded = rows is not None
     page = 0
     reason: ScrapeReason | None = None
 
     try:
         while current_url and page < max_pages:
             try:
-                html = await _read_page(session, current_url, limiter, auth_headers, cache, swr=swr)
+                html = await _read_page(session, current_url, limiter, auth_headers, cache, swr)
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
                 break
@@ -553,11 +476,18 @@ async def stream_dependents(
                     _heap_push(heap, repo_obj, next(counter), rows)
             recent_max.append(page_max)
 
-            if on_progress:
-                await on_progress(page, est_pages)
-            yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=False)
+            if on_page:
+                await on_page(
+                    ScrapeSnapshot(
+                        top_k=_top_k(heap),
+                        pages_scraped=page,
+                        estimated_total_pages=est_pages,
+                        estimated_total_dependents=est_deps,
+                        matched_count=matched,
+                    )
+                )
 
-            if adaptive_stop and bounded and _should_stop(heap, rows, recent_max, page):
+            if adaptive_stop and _should_stop(heap, rows, recent_max, page):
                 reason = ScrapeReason.TREND_CONVERGED
                 break
             current_url = next_url
@@ -565,68 +495,18 @@ async def stream_dependents(
             # Loop exited via its condition (no break): exhausted, unless we stopped at the cap.
             if current_url is not None and page >= max_pages:
                 reason = ScrapeReason.MAX_PAGES_REACHED
-
-        # `estimated_total_pages` is always the header-derived estimate (`est_pages`),
-        # matching the historical scraper (it returned the header estimate unconditionally).
-        # Actual pages consumed live in `pages_scraped`; do NOT overwrite the estimate with
-        # `page` on completion — Phase 4 summaries and existing header-estimate tests depend
-        # on the estimate staying the population projection, not the walked count.
-        yield _build_snapshot(heap, page, est_pages, est_deps, matched, done=True, reason=reason)
     finally:
         await swr.drain()
 
-
-async def scrape_dependents(
-    session: _PageSession,
-    url: str,
-    dependent_type: DependentType = DependentType.REPOSITORY,
-    min_stars: int = 5,
-    cache: SqliteCache | None = None,
-    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
-    token: str | None = None,
-    max_pages: int = MAX_PAGES_CEILING,
-    *,
-    rows: int | None = None,
-    adaptive_stop: bool = True,
-    rate_limiter: RateLimiter | None = None,
-    on_partial: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
-) -> ScrapeResult:
-    """Compatibility wrapper: drain stream_dependents into a ScrapeResult.
-
-    ``rows is None`` (default) returns every matched repo, sorted by stars, and
-    ``max_pages`` defaults to ``MAX_PAGES_CEILING`` (1000) — the historical
-    "return everything up to the ceiling" behavior, deliberately *overriding* the
-    bounded 200-page (`DEFAULT_MAX_PAGES`) default of ``stream_dependents``. This
-    keeps existing callers (the ``deps``/``search`` CLI in `app.py`, which pass no
-    ``max_pages`` or their own) unchanged until Phase 4 introduces a user-facing
-    ``--max-pages`` budget. Pass ``rows`` for a bounded top-K with adaptive stop.
-    """
-    terminal: ScrapeSnapshot | None = None
-    async for snapshot in stream_dependents(
-        session,
-        url,
-        rows=rows,
-        dependent_type=dependent_type,
-        min_stars=min_stars,
-        cache=cache,
-        on_progress=on_progress,
-        token=token,
-        max_pages=max_pages,
-        adaptive_stop=adaptive_stop,
-        rate_limiter=rate_limiter,
-    ):
-        if on_partial is not None:
-            await on_partial(snapshot)
-        terminal = snapshot
-
-    assert terminal is not None  # noqa: S101  # stream always yields a terminal snapshot
+    # `estimated_total_pages` is always the header-derived estimate, never the walked count
+    # (which lives in `pages_scraped`).
     return ScrapeResult(
-        repos=terminal.top_k,
-        pages_scraped=terminal.pages_scraped,
-        max_pages=min(max_pages, MAX_PAGES_CEILING),
-        estimated_total_pages=terminal.estimated_total_pages,
-        estimated_total_dependents=terminal.estimated_total_dependents,
-        complete=terminal.complete,
-        reason=terminal.reason,
-        matched_count=terminal.matched_count,
+        repos=_top_k(heap),
+        pages_scraped=page,
+        max_pages=max_pages,
+        estimated_total_pages=est_pages,
+        estimated_total_dependents=est_deps,
+        complete=reason is None,
+        reason=reason,
+        matched_count=matched,
     )

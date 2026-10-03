@@ -11,10 +11,12 @@ need a token, but passing one is harmless.
 
 from __future__ import annotations
 
+import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.scraper import scrape_dependents, stream_dependents
+from dep_rank.core.models import Repository, ScrapeSnapshot
+from dep_rank.core.scraper import scrape_dependents
 
 BASE = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
@@ -146,40 +148,48 @@ async def test_max_pages_reached_sets_reason() -> None:
     assert result.reason == ScrapeReason.MAX_PAGES_REACHED
 
 
-async def test_stream_emits_per_page_then_terminal() -> None:
+async def test_on_page_fires_per_page_and_result_carries_outcome() -> None:
+    seen: list[int] = []
+
+    async def on_page(snap: ScrapeSnapshot) -> None:
+        seen.append(snap.pages_scraped)
+
     p1 = _page(_item("a", "one", 100), next_page=2)
     p2 = _page(_item("b", "two", 80), next_page=None)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
         async with ClientSession() as session:
-            snaps = [
-                s
-                async for s in stream_dependents(
-                    session, BASE, rows=5, token="ghp_x", adaptive_stop=False
-                )
-            ]
-    assert [s.done for s in snaps] == [False, False, True]
-    assert snaps[-1].complete is True
-    assert snaps[-1].reason is None
+            result = await scrape_dependents(
+                session, BASE, rows=5, token="ghp_x", adaptive_stop=False, on_page=on_page
+            )
+    assert seen == [1, 2]
+    assert result.complete is True and result.reason is None
 
 
-async def test_on_partial_called_per_snapshot() -> None:
-    from dep_rank.core.models import ScrapeSnapshot
+async def test_rows_zero_walks_pages_and_reports_matches() -> None:
+    tops: list[list[Repository]] = []
 
-    seen: list[ScrapeSnapshot] = []
+    async def on_page(snap: ScrapeSnapshot) -> None:
+        tops.append(snap.top_k)
 
-    async def on_partial(snap: ScrapeSnapshot) -> None:
-        seen.append(snap)
-
-    p1 = _page(_item("a", "one", 100) + _item("b", "two", 80), next_page=None)
+    p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
-            await scrape_dependents(
-                session, BASE, rows=5, on_partial=on_partial, adaptive_stop=False
-            )
-    # one per-page snapshot (done=False) + one terminal snapshot (done=True)
-    assert len(seen) == 2
-    assert seen[0].done is False
-    assert seen[-1].done is True
+            result = await scrape_dependents(session, BASE, rows=0, on_page=on_page)
+    assert result.repos == []
+    assert result.matched_count == 2
+    assert tops == [[]]
+
+
+async def test_on_page_exception_propagates() -> None:
+    async def on_page(snap: ScrapeSnapshot) -> None:
+        raise RuntimeError("render failed")
+
+    p1 = _page(_item("a", "one", 100), next_page=None)
+    with aioresponses() as m:
+        m.get(FIRST, body=p1)
+        async with ClientSession() as session:
+            with pytest.raises(RuntimeError, match="render failed"):
+                await scrape_dependents(session, BASE, rows=5, on_page=on_page)

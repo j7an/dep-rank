@@ -95,6 +95,12 @@ class Repository(BaseModel):
     trust: TrustScore | None = None
 
 
+def _check_complete_matches_reason(model: ScrapeResult | DependentsResult) -> None:
+    if model.complete != (model.reason is None):
+        msg = f"{type(model).__name__} invariant violated: complete must equal (reason is None)"
+        raise ValueError(msg)
+
+
 class ScrapeResult(BaseModel):
     """Result of scraping dependents, including progress metadata."""
 
@@ -109,27 +115,18 @@ class ScrapeResult(BaseModel):
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> ScrapeResult:
-        if self.complete != (self.reason is None):
-            msg = "ScrapeResult invariant violated: complete must equal (reason is None)"
-            raise ValueError(msg)
+        _check_complete_matches_reason(self)
         return self
 
 
 class ScrapeSnapshot(BaseModel):
-    """One emission from the streaming scraper.
-
-    Per-page emissions have ``done=False``; exactly one terminal emission has
-    ``done=True`` and carries the authoritative ``complete``/``reason``.
-    """
+    """Running top-K handed to ``scrape_dependents``' ``on_page`` after each page."""
 
     top_k: list[Repository]
     pages_scraped: int
     estimated_total_pages: int
     estimated_total_dependents: int
     matched_count: int
-    done: bool = False
-    complete: bool = False
-    reason: ScrapeReason | None = None
 
 
 class TrustCheckResult(BaseModel):
@@ -160,9 +157,7 @@ class DependentsResult(BaseModel):
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:
-        if self.complete != (self.reason is None):
-            msg = "DependentsResult invariant violated: complete must equal (reason is None)"
-            raise ValueError(msg)
+        _check_complete_matches_reason(self)
         return self
 
 

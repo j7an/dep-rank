@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -11,7 +12,13 @@ from click.testing import CliRunner
 
 from dep_rank import __version__
 from dep_rank.cli.app import cli
-from dep_rank.core.models import DependentsResult, DependentType, Repository, ScrapeResult
+from dep_rank.core.models import (
+    DependentsResult,
+    DependentType,
+    Repository,
+    ScrapeResult,
+    ScrapeSnapshot,
+)
 
 
 @pytest.fixture
@@ -575,6 +582,74 @@ class TestDepsLiveTopK:
         assert "delta/app" in result.output
         # Live.update fired at least once per page snapshot (>=2).
         assert mock_live_update.call_count >= 2
+
+
+async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object) -> ScrapeResult:
+    await on_page(
+        ScrapeSnapshot(
+            top_k=[],
+            pages_scraped=1,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+            matched_count=0,
+        )
+    )
+    return ScrapeResult(
+        repos=[],
+        pages_scraped=1,
+        max_pages=200,
+        estimated_total_pages=30,
+        estimated_total_dependents=900,
+    )
+
+
+class TestOnPageCallbacks:
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("rich.live.Live.update")
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_on_page_updates_live(
+        self,
+        mock_scrape: AsyncMock,
+        mock_live_update: MagicMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_scrape.side_effect = _scrape_calling_on_page
+        result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
+        assert result.exit_code == 0, result.output
+        assert mock_live_update.call_count == 1
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("rich.progress.Progress.update")
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_search_on_page_updates_progress(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_progress_update: MagicMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        from dep_rank.core.models import CodeSearchResult
+
+        mock_scrape.side_effect = _scrape_calling_on_page
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/o/r", query="q", hits=[], searched_repos=0
+        )
+        result = runner.invoke(cli, ["search", "https://github.com/o/r", "q", "--token", "t"])
+        assert result.exit_code == 0, result.output
+        mock_progress_update.assert_called_once_with(
+            ANY, completed=1, est_text="1/~30 estimated pages (3.33%)"
+        )
 
 
 class TestRankByTrust:
