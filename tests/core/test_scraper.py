@@ -6,7 +6,6 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-import dep_rank.core.scraper as scraper
 from dep_rank.core.models import DependentType, Repository, ScrapeReason, ScrapeResult
 from dep_rank.core.rate_limiter import AUTH_RATE, RATE_PERIOD, UNAUTH_RATE, RateLimiter
 from dep_rank.core.scraper import parse_dependent_counts, parse_dependents_page, scrape_dependents
@@ -569,7 +568,7 @@ async def test_limiter_budget_follows_token(
         built.append((r, p))
         return real(100_000, 1.0)
 
-    monkeypatch.setattr(scraper, "RateLimiter", record)
+    monkeypatch.setattr("dep_rank.core.scraper.RateLimiter", record)
     first_url = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
     with aioresponses() as m:
         m.get(first_url, body=DEPENDENTS_HTML_LAST_PAGE)
