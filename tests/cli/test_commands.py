@@ -304,7 +304,6 @@ class TestDepsHardeningFlags:
         )
         assert result.exit_code == 0
         _, kwargs = mock_scrape.call_args
-        assert kwargs["concurrency"] == 5
         assert kwargs["adaptive_stop"] is False
         assert kwargs["rows"] == 10  # default --rows
         import json

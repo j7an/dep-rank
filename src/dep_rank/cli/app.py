@@ -88,7 +88,6 @@ async def run_deps(
                     token=token,
                     max_pages=max_pages,
                     rows=scrape_rows,
-                    concurrency=concurrency,
                     adaptive_stop=adaptive_stop,
                     on_partial=on_partial,
                 )
@@ -429,7 +428,6 @@ def search(
                         token=token,
                         max_pages=max_pages,
                         rows=max_repos,
-                        concurrency=concurrency,
                         adaptive_stop=False,
                     )
                 finally:

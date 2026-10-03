@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from dep_rank.core.cache import SqliteCache
-from dep_rank.core.rate_limiter import AdaptiveRateLimiter
+from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import SWRManager
 
 
@@ -43,8 +43,8 @@ class _FakeSession:
         return self._responses.pop(0)
 
 
-def _auth_limiter() -> AdaptiveRateLimiter:
-    return AdaptiveRateLimiter(60, 60.0, 3)
+def _auth_limiter() -> RateLimiter:
+    return RateLimiter(60, 60.0)
 
 
 async def _seed_expired(cache: SqliteCache, url: str, body: bytes, etag: str) -> None:
@@ -93,13 +93,10 @@ class TestSWRManager:
         assert entry["body"] == b"stale"  # body unchanged on 304
         assert entry["expired"] is False  # TTL bumped
 
-    async def test_429_feeds_aimd_then_suppresses(self, cache: SqliteCache) -> None:
-        """A background 429 must update the shared limiter (AIMD halves concurrency),
-        leave the stale body intact, and — once concurrency hits the floor — suppress
-        further background refreshes."""
+    async def test_429_pauses_background_refresh(self, cache: SqliteCache) -> None:
+        """A background 429 pauses further refreshes and preserves the stale body."""
         await _seed_expired(cache, URL, b"stale", '"old"')
-        limiter = AdaptiveRateLimiter(60, 60.0, concurrency=2, jitter=False)
-        assert limiter.current_max_concurrency == 2
+        limiter = RateLimiter(60, 60.0)
         resp = _FakeResp(429)
         resp.headers["Retry-After"] = "30"
         session = _FakeSession([resp])
@@ -107,18 +104,59 @@ class TestSWRManager:
         swr.schedule(URL)
         await swr.drain()
         assert session.calls == 1
-        # AIMD consumed the background 429: 2 -> 1.
-        assert limiter.current_max_concurrency == 1
+        # The shared limiter consumed the background 429.
+        assert limiter.background_paused() is True
         # The 429 did not overwrite the cached stale body.
         entry = await cache.get(URL)
         assert entry is not None and entry["body"] == b"stale"
-        # With concurrency at the floor, a fresh URL's refresh is now suppressed —
+        # While background work is paused, a fresh URL's refresh is suppressed —
         # if it were not, _FakeSession.get would pop an empty queue and raise.
         other = URL + "&x=2"
         await _seed_expired(cache, other, b"stale2", '"old2"')
         swr.schedule(other)
         await swr.drain()
         assert session.calls == 1  # no new request fired
+
+    async def test_queued_refresh_skips_after_429(self, cache: SqliteCache) -> None:
+        other = URL + "&x=2"
+        try:
+            await _seed_expired(cache, URL, b"stale", '"old"')
+            await _seed_expired(cache, other, b"stale", '"old2"')
+            fake = _FakeSession([_FakeResp(429, delay=0.01), _FakeResp(200, body=b"fresh")])
+            swr = SWRManager(fake, _auth_limiter(), {}, cache, enabled=True)
+            swr.schedule(URL)
+            swr.schedule(other)
+            await swr.drain()
+            entry = await cache.get(other)
+            assert fake.calls == 1
+            assert entry is not None
+            assert entry["body"] == b"stale"
+
+        finally:
+            await cache.close()
+
+    async def test_foreground_429_during_cache_lookup_blocks_refresh(
+        self, cache: SqliteCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        try:
+            await _seed_expired(cache, URL, b"stale", '"old"')
+            limiter = RateLimiter(60, 60.0)
+            real_get = cache.get
+
+            async def get_then_429(url: str) -> dict[str, Any] | None:
+                entry = await real_get(url)
+                limiter.note_429()
+                return entry
+
+            monkeypatch.setattr(cache, "get", get_then_429)
+            fake = _FakeSession([_FakeResp(200, body=b"fresh")])
+            swr = SWRManager(fake, limiter, {}, cache, enabled=True)
+            swr.schedule(URL)
+            await swr.drain()
+            assert fake.calls == 0
+
+        finally:
+            await cache.close()
 
     async def test_dedup_one_refresh_per_url(self, cache: SqliteCache) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
@@ -160,11 +198,11 @@ class TestSWRManager:
         """Spec §3 foreground-priority: at low headroom the refresh makes no request AND
         a concurrent foreground ``acquire()`` is not delayed by the refresh path."""
         await _seed_expired(cache, URL, b"stale", '"old"')
-        limiter = AdaptiveRateLimiter(60, 60.0, 3)
+        limiter = RateLimiter(60, 60.0)
         # Drain to exactly 1 token: below SWR headroom (a refresh needs >=2 via
         # try_acquire(reserve=1)) but the foreground can still take its single token.
-        while limiter.tokens_available() >= 2:
-            limiter.try_acquire()
+        while limiter.try_acquire(reserve=1):
+            pass
         session = _FakeSession([_FakeResp(200, body=b"fresh", etag='"new"')])
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
 
@@ -204,7 +242,6 @@ class TestSWRIntegration:
             session,
             URL,
             limiter,
-            asyncio.Semaphore(3),
             {},
             cache,
             swr=swr,
