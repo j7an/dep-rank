@@ -41,7 +41,7 @@ Tests are organized into two packages mirroring the `src/dep_rank/` layout. The 
 - **`test_validation.py`**: `validate_github_url` URL parsing and validation (https/http/www, trailing slashes, invalid characters, bare `owner/repo`, empty/whitespace edges).
 - **`test_models.py`**: Pydantic models — `Repository`, `DependentType`, `DependentsResult`, `ScrapeResult`, `CodeSearchResult` — including JSON round-trips.
 - **`test_scraper.py`**: HTML parsing (`parse_dependent_counts`, `parse_dependents_page`) and the async `scrape_dependents` flow including pagination, dedup, min-stars filtering, error/304 handling, cache integration, and progress callbacks.
-- **`test_graphql.py`**: GraphQL batch query construction and `enrich_with_graphql` star/description enrichment, including the 100-node batch boundary and fallback paths.
+- **`test_graphql.py`**: Trust-metadata query construction and enrichment, including batches, partial responses, and failure paths.
 - **`test_cache.py`**: SQLite cache get/put/expiry/clear/stats and the uninitialized-cache error contract.
 - **`test_rate_limiter.py`**: Token-bucket rate limiter — within-limit allow, over-limit block, and replenishment over time.
 - **`test_search.py`**: `search_code` over multiple repos with progress callbacks, max-repos limit, and non-200 / client-error skip behavior.

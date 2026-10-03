@@ -10,6 +10,7 @@ from typing import Literal
 
 import appdirs
 import click
+from rich.console import Console
 from rich.logging import RichHandler
 
 from dep_rank import __version__
@@ -19,7 +20,9 @@ from dep_rank.core.validation import validate_github_url
 logging.basicConfig(
     level=logging.WARNING,
     format="%(message)s",
-    handlers=[RichHandler(show_time=False, show_path=False, markup=True)],
+    handlers=[
+        RichHandler(console=Console(stderr=True), show_time=False, show_path=False, markup=True)
+    ],
 )
 
 
@@ -44,7 +47,7 @@ async def run_deps(
 
     from dep_rank.cli.formatters import build_topk_table, format_scrape_summary
     from dep_rank.core.cache import SqliteCache
-    from dep_rank.core.graphql import enrich_with_graphql
+    from dep_rank.core.graphql import enrich_with_trust_metadata
     from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
     from dep_rank.core.scraper import scrape_dependents
 
@@ -120,7 +123,6 @@ async def run_deps(
             # already enforces it) and narrows the type for the enrich call. A direct
             # caller passing rank_by="trust" without a token degrades to star ranking.
             if rank_by == "trust" and token:
-                from dep_rank.core.graphql import enrich_with_trust_metadata
                 from dep_rank.core.trust import compute_trust_scores
 
                 meta = await enrich_with_trust_metadata(
@@ -167,8 +169,10 @@ async def run_deps(
             else:
                 repos = repos[:rows]
                 if descriptions and token and repos:
-                    repos = await enrich_with_graphql(session, repos, token)
-                    repos = repos[:rows]
+                    meta = await enrich_with_trust_metadata(
+                        session, repos, token, include_description=True
+                    )
+                    repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
 
             return DependentsResult(
                 source=url,

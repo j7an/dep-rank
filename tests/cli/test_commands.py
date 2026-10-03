@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
+from aioresponses import aioresponses
 from click.testing import CliRunner
 
 from dep_rank import __version__
@@ -20,6 +23,7 @@ from dep_rank.core.models import (
     Repository,
     ScrapeResult,
     ScrapeSnapshot,
+    TrustMetadataResult,
 )
 
 
@@ -60,6 +64,52 @@ class TestImportCost:
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
         ).stdout.strip()
         assert out == "[]"
+
+
+class TestJsonStdout:
+    def test_enrichment_warning_stays_off_json_stdout(self) -> None:
+        code = """import tests.conftest
+import json
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
+from aioresponses import aioresponses
+from click.testing import CliRunner
+from dep_rank.cli.app import cli
+from dep_rank.core.models import Repository, ScrapeResult
+
+repos = [
+    Repository(owner="alpha", name="framework",
+               url="https://github.com/alpha/framework", stars=12500),
+    Repository(owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200),
+]
+payload = {
+    "data": {"repo_0": {"stargazerCount": 10, "description": "A"}, "repo_1": None},
+    "errors": [{"type": "NOT_FOUND", "message": "x"}],
+}
+with TemporaryDirectory() as cache_dir:
+    with patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value=cache_dir), \
+         patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock) as scrape:
+        scrape.return_value = ScrapeResult(
+            repos=repos, pages_scraped=1, max_pages=1000,
+            estimated_total_pages=30, estimated_total_dependents=900,
+        )
+        with aioresponses() as responses:
+            responses.post("https://api.github.com/graphql", payload=payload)
+            r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
+                                       "--token", "t", "--format", "json", "--rows", "2"])
+        print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
+"""
+        result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[2],
+        )
+        child = json.loads(result.stdout)
+        assert child["code"] == 0
+        assert json.loads(child["stdout"])["repos"]
+        assert "partial errors" in child["stderr"]
 
 
 class TestDepsCommand:
@@ -140,7 +190,7 @@ class TestDepsCommandFull:
     @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
     @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
     @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
-    @patch("dep_rank.core.graphql.enrich_with_graphql", new_callable=AsyncMock)
+    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_with_descriptions(
         self,
@@ -150,16 +200,9 @@ class TestDepsCommandFull:
         mock_close: AsyncMock,
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
+        mock_result: DependentsResult,
     ) -> None:
-        repos = [
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=12500,
-                description="A framework",
-            ),
-        ]
+        repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
             repos=repos,
             pages_scraped=1,
@@ -167,19 +210,94 @@ class TestDepsCommandFull:
             estimated_total_pages=30,
             estimated_total_dependents=900,
         )
-        mock_enrich.return_value = repos
-        result = runner.invoke(
-            cli,
-            [
-                "deps",
-                "https://github.com/django/django",
-                "--descriptions",
-                "--token",
-                "test-token",
+        mock_enrich.return_value = TrustMetadataResult(
+            repos=[
+                repos[0].model_copy(update={"stars": 10, "description": "A"}),
+                repos[1].model_copy(update={"stars": 900, "description": "B"}),
             ],
+            failed=False,
+            complete=True,
         )
+        with aioresponses():
+            result = runner.invoke(
+                cli,
+                [
+                    "deps",
+                    mock_result.source,
+                    "--descriptions",
+                    "--token",
+                    "test-token",
+                    "--rows",
+                    "2",
+                    "--format",
+                    "json",
+                ],
+            )
         assert result.exit_code == 0
-        assert "alpha" in result.output
+        assert mock_enrich.call_args.kwargs["include_description"] is True
+        assert result.stdout.index('"toolkit"') < result.stdout.index('"framework"')
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_descriptions_fetch_failure_falls_back(
+        self,
+        mock_scrape: AsyncMock,
+        mock_enrich: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+        mock_result: DependentsResult,
+    ) -> None:
+        repos = mock_result.repos
+        mock_scrape.return_value = ScrapeResult(
+            repos=repos,
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
+        mock_enrich.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
+        with aioresponses():
+            result = runner.invoke(
+                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
+            )
+        assert result.exit_code == 0
+        assert result.stdout.index("alpha/framework") < result.stdout.index("beta/toolkit")
+        assert "Trust metadata fetch failed" not in result.stderr
+
+    @patch("dep_rank.cli.app.appdirs.user_cache_dir", return_value="/tmp/test-cache")  # noqa: S108
+    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
+    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
+    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_descriptions_rows_zero_skips_graphql(
+        self,
+        mock_scrape: AsyncMock,
+        mock_enrich: AsyncMock,
+        mock_init: AsyncMock,
+        mock_close: AsyncMock,
+        mock_cache_dir: AsyncMock,
+        runner: CliRunner,
+        mock_result: DependentsResult,
+    ) -> None:
+        repos = mock_result.repos
+        mock_scrape.return_value = ScrapeResult(
+            repos=repos,
+            pages_scraped=1,
+            max_pages=1000,
+            estimated_total_pages=30,
+            estimated_total_dependents=900,
+        )
+        with aioresponses():
+            result = runner.invoke(
+                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
+            )
+        assert result.exit_code == 0
+        mock_enrich.assert_not_called()
 
     def test_deps_descriptions_without_token(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps", "https://github.com/django/django", "--descriptions"])
