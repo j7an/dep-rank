@@ -57,15 +57,22 @@ shape and uniformity, and the release policy invariants from `AGENTS.md`.
 
 ## Shared fixtures (`tests/conftest.py`)
 
-- **`dependents_page`** builds dependents HTML with repository rows, pagination,
-  and repository/package counts. The `DEPENDENTS_HTML_*` constants are built with
-  it and imported by scraper and CLI tests.
+Request these by name as test parameters:
+
 - **`mock_http`** yields an active `aioresponses` mock; **`session`** yields a
   real `aiohttp.ClientSession`.
 - **`cache`** initializes a temporary `SqliteCache` and closes it after the test.
+- **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
+
+## Shared helpers (`tests/conftest.py`)
+
+Import these with `from tests.conftest import ...`:
+
+- **`dependents_page`** builds dependents HTML with repository rows, pagination,
+  and repository/package counts. The `DEPENDENTS_HTML_*` constants are built with
+  it and imported by scraper and CLI tests.
 - **`fast_limiter`** returns a high-budget rate limiter for multi-page walks.
 - **`make_repo`** builds a `Repository` with the standard GitHub URL.
-- **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
 
 ## Writing tests
 

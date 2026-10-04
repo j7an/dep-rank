@@ -11,13 +11,17 @@ class TestValidateGithubUrl:
     @pytest.mark.parametrize(
         ("url", "expected"),
         [
-            ("https://github.com/django/django", ("django", "django")),
-            ("http://github.com/owner/repo", ("owner", "repo")),
-            ("https://www.github.com/owner/repo", ("owner", "repo")),
-            ("https://github.com/owner/repo/", ("owner", "repo")),
-            ("https://github.com/my-org/my.repo_name", ("my-org", "my.repo_name")),
-            ("django/django", ("django", "django")),  # owner/repo shorthand
-            ("  django/django  ", ("django", "django")),  # surrounding whitespace is trimmed
+            pytest.param("https://github.com/django/django", ("django", "django"), id="https"),
+            pytest.param("http://github.com/owner/repo", ("owner", "repo"), id="http"),
+            pytest.param("https://www.github.com/owner/repo", ("owner", "repo"), id="www-host"),
+            pytest.param("https://github.com/owner/repo/", ("owner", "repo"), id="trailing-slash"),
+            pytest.param(
+                "https://github.com/my-org/my.repo_name",
+                ("my-org", "my.repo_name"),
+                id="dash-dot-underscore-names",
+            ),
+            pytest.param("django/django", ("django", "django"), id="owner-repo-shorthand"),
+            pytest.param("  django/django  ", ("django", "django"), id="surrounding-whitespace"),
         ],
     )
     def test_valid_urls(self, url: str, expected: tuple[str, str]) -> None:
@@ -26,15 +30,19 @@ class TestValidateGithubUrl:
     @pytest.mark.parametrize(
         ("url", "message"),
         [
-            ("https://gitlab.com/owner/repo", "github.com"),
-            ("https://github.com/owner/repo/extra", "owner/repository"),
-            ("https://github.com/owner", "owner/repository"),
-            ("https://github.com/owner/repo@bad", "alphanumeric"),
-            ("", "URL cannot be empty"),
-            ("/", "missing repository path"),
-            ("ow ner/repo", "Invalid owner name"),
-            ("owner/re po", "Invalid repository name"),
-            ("https://github.com", "missing repository path"),
+            pytest.param("https://gitlab.com/owner/repo", "github.com", id="non-github-host"),
+            pytest.param(
+                "https://github.com/owner/repo/extra", "owner/repository", id="extra-path-segment"
+            ),
+            pytest.param("https://github.com/owner", "owner/repository", id="missing-repo"),
+            pytest.param(
+                "https://github.com/owner/repo@bad", "alphanumeric", id="invalid-character"
+            ),
+            pytest.param("", "URL cannot be empty", id="empty-string"),
+            pytest.param("/", "missing repository path", id="slash-only"),
+            pytest.param("ow ner/repo", "Invalid owner name", id="space-in-owner"),
+            pytest.param("owner/re po", "Invalid repository name", id="space-in-repo"),
+            pytest.param("https://github.com", "missing repository path", id="bare-host"),
         ],
     )
     def test_invalid_urls(self, url: str, message: str) -> None:

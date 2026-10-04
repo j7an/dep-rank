@@ -276,7 +276,8 @@ class TestTrustTableAndJson:
             ranked_by=ranked_by,
         )
 
-    def test_trust_table_renders_score_and_stars(self) -> None:
+    def test_trust_table_renders_score_and_stars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(console, "width", 200)  # independent of the test terminal's width
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         out = _render(print_dependents_table, result)
         assert "alpha/framework" in out

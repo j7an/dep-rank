@@ -24,7 +24,9 @@ from dep_rank.core.models import (
 REASONS = list(ScrapeReason)
 
 
-def _build(model: type[ScrapeResult | DependentsResult], **overrides: Any) -> Any:
+def _build(
+    model: type[ScrapeResult | DependentsResult], **overrides: Any
+) -> ScrapeResult | DependentsResult:
     if model is ScrapeResult:
         fields: dict[str, Any] = {
             "repos": [],
@@ -132,7 +134,7 @@ def test_model_defaults(model: type[ScrapeResult | DependentsResult]) -> None:
     result = _build(model)
     assert result.complete is True
     assert result.reason is None
-    if model is ScrapeResult:
+    if isinstance(result, ScrapeResult):
         assert result.matched_count == 0
     else:
         assert result.pages_scraped == 0
