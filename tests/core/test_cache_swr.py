@@ -64,6 +64,8 @@ class TestSWRManager:
         swr.schedule(URL)
         await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
+        request = next(iter(mock_http.requests.values()))[0]
+        assert request.kwargs["headers"]["If-None-Match"] == '"old"'  # conditional revalidation
         entry = await cache.get(URL)
         assert entry is not None
         assert entry["body"] == b"stale"  # body unchanged on 304

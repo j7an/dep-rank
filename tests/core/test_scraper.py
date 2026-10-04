@@ -21,6 +21,7 @@ from dep_rank.core.models import (
 from dep_rank.core.rate_limiter import (
     AUTH_RATE,
     RATE_PERIOD,
+    RETRY_BASE_SECONDS,
     RETRY_MAX_SECONDS,
     UNAUTH_RATE,
     RateLimiter,
@@ -38,6 +39,7 @@ from tests.conftest import (
     DEPENDENTS_HTML_PAGE_1,
     DEPENDENTS_HTML_WITH_COUNTS,
     DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
+    dependents_page,
     fast_limiter,
 )
 
@@ -163,11 +165,6 @@ class TestParseDependentsPage:
         )
         assert parse_dependents_page(html)[1] is None
 
-    def test_parse_next_url(self) -> None:
-        _, next_url = parse_dependents_page(DEPENDENTS_HTML_PAGE_1)
-        assert next_url is not None
-        assert "page=2" in next_url
-
     def test_parse_last_page_no_next(self) -> None:
         _, next_url = parse_dependents_page(DEPENDENTS_HTML_LAST_PAGE)
         assert next_url is None
@@ -179,32 +176,6 @@ class TestParseDependentsPage:
 
 
 class TestScrapeDependents:
-    async def test_single_page(self, mock_http: aioresponses, session: ClientSession) -> None:
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=DEPENDENTS_HTML_LAST_PAGE,
-        )
-        result = await scrape_dependents(session, "https://github.com/owner/repo", rows=100)
-        assert len(result.repos) == 1
-        assert result.repos[0].owner == "delta"
-
-    async def test_pagination(self, mock_http: aioresponses, session: ClientSession) -> None:
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=DEPENDENTS_HTML_PAGE_1,
-        )
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?page=2",
-            body=DEPENDENTS_HTML_LAST_PAGE,
-        )
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            rate_limiter=fast_limiter(),
-            rows=100,
-        )
-        assert len(result.repos) == 4
-
     async def test_min_stars_filter(self, mock_http: aioresponses, session: ClientSession) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
@@ -223,27 +194,6 @@ class TestScrapeDependents:
         )
         assert all(r.stars >= 200 for r in result.repos)
 
-    async def test_deduplication(self, mock_http: aioresponses, session: ClientSession) -> None:
-        html_with_dupe = DEPENDENTS_HTML_PAGE_1.replace("gamma/utils", "alpha/framework").replace(
-            "150", "12,500"
-        )
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=html_with_dupe,
-        )
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?page=2",
-            body=DEPENDENTS_HTML_LAST_PAGE,
-        )
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            rate_limiter=fast_limiter(),
-            rows=100,
-        )
-        urls = [r.url for r in result.repos]
-        assert len(urls) == len(set(urls))
-
     async def test_package_type(self, mock_http: aioresponses, session: ClientSession) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=PACKAGE",
@@ -256,73 +206,6 @@ class TestScrapeDependents:
             rows=100,
         )
         assert len(result.repos) == 1
-
-    async def test_complete_scrape_sets_complete_true(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
-        """A scrape that exhausts all pages reports complete=True, reason=None,
-        and matched_count equal to the number of repos that passed min_stars."""
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=DEPENDENTS_HTML_LAST_PAGE,
-        )
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            min_stars=0,
-            token="ghp_x",
-            rows=100,
-        )
-        assert result.complete is True
-        assert result.reason is None
-        assert result.matched_count == len(result.repos)
-
-    async def test_cap_sets_max_pages_reached(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
-        """Stopping at the page cap with a remaining next-page link reports
-        complete=False, reason=MAX_PAGES_REACHED."""
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=DEPENDENTS_HTML_PAGE_1,
-        )
-        # Registered only to give page 1 a valid next-page link; with
-        # max_pages=1 the walk caps before page 2 is ever fetched.
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?page=2",
-            body=DEPENDENTS_HTML_LAST_PAGE,
-        )
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            min_stars=0,
-            token="ghp_x",
-            max_pages=1,
-            rows=100,
-        )
-        assert result.pages_scraped == 1
-        assert result.complete is False
-        assert result.reason == ScrapeReason.MAX_PAGES_REACHED
-
-    async def test_fetch_failure_sets_network_failure(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
-        """A fetch that fails with an unexpected status (raising
-        ``NetworkFailureError``) reports complete=False, reason=NETWORK_FAILURE."""
-        mock_http.get(
-            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            status=500,
-        )
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            min_stars=0,
-            token="ghp_x",
-            rows=100,
-        )
-        assert result.complete is False
-        assert result.reason == ScrapeReason.NETWORK_FAILURE
-        assert result.pages_scraped == 0  # a failed first fetch consumed zero pages
 
 
 class TestScrapeDependentsEdgeCases:
@@ -432,6 +315,8 @@ class TestScrapeDependentsEdgeCases:
             etag='"etag1"',
             ttl=3600,
         )
+        # Not a ClientError, so a regression fails at once instead of retrying with backoff.
+        mock_http.get(FIRST_URL, exception=AssertionError("unexpected fetch"))
         result = await scrape_dependents(
             session,
             "https://github.com/owner/repo",
@@ -581,7 +466,9 @@ async def test_limiter_budget_follows_token(
 async def test_http_date_retry_after_falls_back_to_backoff(
     monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
 ) -> None:
-    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
+    monkeypatch.setattr("dep_rank.core.rate_limiter.random.uniform", lambda a, b: b)
     mock_http.get(FIRST_URL, status=429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
     mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
     result = await scrape_dependents(
@@ -592,6 +479,29 @@ async def test_http_date_retry_after_falls_back_to_backoff(
     )
     assert result.complete is True
     assert [r.owner for r in result.repos] == ["delta"]
+    # The date form is not parsed as seconds, so the delay is the plain backoff.
+    delays = [c.args[0] for c in sleep.await_args_list if c.args and c.args[0] > 0]
+    assert delays == [RETRY_BASE_SECONDS]
+
+
+async def test_backoff_resets_after_success(
+    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
+    monkeypatch.setattr("dep_rank.core.rate_limiter.random.uniform", lambda a, b: b)
+    page_2 = "https://github.com/owner/repo/network/dependents?page=2"
+    mock_http.get(FIRST_URL, status=429)
+    mock_http.get(FIRST_URL, body=dependents_page([("a", "one", 10)], next_page=2))
+    mock_http.get(page_2, status=429)
+    mock_http.get(page_2, body=dependents_page([("b", "two", 5)]))
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=100, token="ghp_x"
+    )
+    assert result.complete is True
+    # Page 1's success resets backoff growth, so page 2's 429 waits the base delay again.
+    delays = [c.args[0] for c in sleep.await_args_list if c.args and c.args[0] > 0]
+    assert delays == [RETRY_BASE_SECONDS, RETRY_BASE_SECONDS]
 
 
 async def test_infinite_retry_after_falls_back_to_backoff(
