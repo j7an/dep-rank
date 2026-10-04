@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import inspect
-import os
-from collections.abc import Generator, Iterator
 from typing import Any
 from unittest.mock import Mock
 
@@ -199,32 +196,7 @@ DEPENDENTS_HTML_WITH_COUNTS = """
 """
 
 
-@contextlib.contextmanager
-def isolated_dep_rank_token() -> Iterator[None]:
-    """Remove ``DEP_RANK_TOKEN`` for the duration of the block, then restore it.
-
-    ``pop`` (not ``get``) is used so the variable is actually removed from the
-    environment, regardless of whether the developer has it exported in their
-    shell. On exit the variable is unconditionally cleared first — a block may
-    have set it even when it was absent originally, and that value must not
-    outlive the block — then the original value, if any, is restored. See
-    issue #70.
-    """
-    original = os.environ.pop("DEP_RANK_TOKEN", None)
-    try:
-        yield
-    finally:
-        os.environ.pop("DEP_RANK_TOKEN", None)
-        if original is not None:
-            os.environ["DEP_RANK_TOKEN"] = original
-
-
 @pytest.fixture(autouse=True)
-def clean_env() -> Generator[None, None, None]:
-    """Ensure DEP_RANK_TOKEN is not leaked between tests.
-
-    Thin wrapper around :func:`isolated_dep_rank_token`; the logic lives there
-    so it can be exercised directly by ``tests/test_conftest.py``.
-    """
-    with isolated_dep_rank_token():
-        yield
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure DEP_RANK_TOKEN is not leaked between tests."""
+    monkeypatch.delenv("DEP_RANK_TOKEN", raising=False)
