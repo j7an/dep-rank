@@ -321,6 +321,7 @@ async def test_unauthenticated_expired_hit_serves_stale_without_request(
     cache: SqliteCache, mock_http: aioresponses, session: ClientSession
 ) -> None:
     await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)
+    mock_http.get(FIRST, exception=AssertionError("unexpected foreground fetch"))
     result = await scrape_dependents(session, "https://github.com/owner/repo", rows=5, cache=cache)
     assert [r.name for r in result.repos] == ["one"]
     assert sum(len(v) for v in mock_http.requests.values()) == 0

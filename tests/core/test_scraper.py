@@ -422,27 +422,23 @@ class TestScrapeDependentsEdgeCases:
         assert result.reason == ScrapeReason.RATE_LIMITED
         assert result.pages_scraped == 0  # never got a parseable page
 
-    async def test_cache_hit_skips_network(self) -> None:
+    async def test_cache_hit_skips_network(
+        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+    ) -> None:
         """When cache has a valid (non-expired) entry, no network request is made."""
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache = SqliteCache(tmpdir)
-            await cache.initialize()
-            await cache.put(
-                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-                DEPENDENTS_HTML_LAST_PAGE.encode("utf-8"),
-                etag='"etag1"',
-                ttl=3600,
-            )
-            # No aioresponses mock needed — if it tries to fetch, it will fail
-            async with ClientSession() as session:
-                result = await scrape_dependents(
-                    session,
-                    "https://github.com/owner/repo",
-                    cache=cache,
-                    rows=100,
-                )
-            await cache.close()
+        await cache.put(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            DEPENDENTS_HTML_LAST_PAGE.encode("utf-8"),
+            etag='"etag1"',
+            ttl=3600,
+        )
+        result = await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            cache=cache,
+            rows=100,
+        )
+        assert sum(len(v) for v in mock_http.requests.values()) == 0
         assert len(result.repos) == 1
         assert result.repos[0].owner == "delta"
 
