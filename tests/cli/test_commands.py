@@ -22,6 +22,7 @@ from dep_rank.cli import app as cli_app
 from dep_rank.cli.app import _cache_dir, _open_cache, cli
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
+    CodeSearchHit,
     CodeSearchResult,
     DependentsResult,
     DependentType,
@@ -38,6 +39,29 @@ from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, ma
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+def _scrape_result(
+    repos: list[Repository],
+    *,
+    pages_scraped: int = 1,
+    max_pages: int = 1000,
+    estimated_total_pages: int = 30,
+    estimated_total_dependents: int = 900,
+    matched_count: int = 0,
+    complete: bool = True,
+    reason: ScrapeReason | None = None,
+) -> ScrapeResult:
+    return ScrapeResult(
+        repos=repos,
+        pages_scraped=pages_scraped,
+        max_pages=max_pages,
+        estimated_total_pages=estimated_total_pages,
+        estimated_total_dependents=estimated_total_dependents,
+        matched_count=matched_count,
+        complete=complete,
+        reason=reason,
+    )
 
 
 @pytest.fixture
@@ -210,15 +234,8 @@ with TemporaryDirectory() as cache_dir:
 class TestDepsCommand:
     def test_missing_url(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps"])
-        assert result.exit_code != 0
-
-    @patch("dep_rank.cli.app.run_deps")
-    def test_basic_invocation(
-        self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
-    ) -> None:
-        mock_run.return_value = mock_result
-        result = runner.invoke(cli, ["deps", "https://github.com/django/django"])
-        assert result.exit_code == 0
+        assert result.exit_code == 2
+        assert "Missing argument 'URL'" in result.output
 
     @patch("dep_rank.cli.app.run_deps")
     def test_json_output(
@@ -243,34 +260,8 @@ class TestSearchCommand:
         assert result.exit_code != 0
 
 
-class TestCacheCommand:
-    def test_cache_help(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["cache", "--help"])
-        assert result.exit_code == 0
-        assert "clear" in result.output or "stats" in result.output
-
-
 class TestDepsCommandFull:
     """Tests that exercise the full deps command body with mocked core functions."""
-
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
-    def test_deps_table_output(
-        self,
-        mock_scrape: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
-        mock_scrape.return_value = ScrapeResult(
-            repos=[
-                make_repo("alpha", "framework", stars=12500),
-            ],
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-        )
-        result = runner.invoke(cli, ["deps", "https://github.com/django/django"])
-        assert result.exit_code == 0
-        assert "alpha" in result.output
 
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -283,13 +274,7 @@ class TestDepsCommandFull:
         mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
-        mock_scrape.return_value = ScrapeResult(
-            repos=repos,
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-        )
+        mock_scrape.return_value = _scrape_result(repos)
         mock_enrich.return_value = TrustMetadataResult(
             repos=[
                 repos[0].model_copy(update={"stars": 10, "description": "A"}),
@@ -327,13 +312,7 @@ class TestDepsCommandFull:
         mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
-        mock_scrape.return_value = ScrapeResult(
-            repos=repos,
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-        )
+        mock_scrape.return_value = _scrape_result(repos)
         mock_enrich.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
         result = runner.invoke(
             cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
@@ -353,13 +332,7 @@ class TestDepsCommandFull:
         mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
-        mock_scrape.return_value = ScrapeResult(
-            repos=repos,
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-        )
+        mock_scrape.return_value = _scrape_result(repos)
         result = runner.invoke(
             cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
         )
@@ -374,36 +347,6 @@ class TestDepsCommandFull:
 
 class TestSearchCommandFull:
     """Tests that exercise the full search command body."""
-
-    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
-    def test_search_full(
-        self,
-        mock_scrape: AsyncMock,
-        mock_search: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
-
-        mock_scrape.return_value = ScrapeResult(
-            repos=[
-                make_repo("alpha", "framework", stars=5000),
-            ],
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-        )
-        mock_search.return_value = CodeSearchResult(
-            source="https://github.com/django/django",
-            query="import os",
-            hits=[],
-            searched_repos=1,
-        )
-        result = runner.invoke(
-            cli,
-            ["search", "https://github.com/django/django", "import os", "--token", "test-token"],
-        )
-        assert result.exit_code == 0
 
     def test_search_invalid_url(self, runner: CliRunner) -> None:
         result = runner.invoke(
@@ -457,15 +400,15 @@ class TestDepsHardeningFlags:
         runner: CliRunner,
     ) -> None:
 
-        mock_scrape.return_value = ScrapeResult(
-            repos=[make_repo("a", "b", stars=900)],
+        mock_scrape.return_value = _scrape_result(
+            [make_repo("a", "b", stars=900)],
             pages_scraped=200,
             max_pages=200,
             estimated_total_pages=500,
             estimated_total_dependents=15000,
+            matched_count=4200,
             complete=False,
             reason=ScrapeReason.MAX_PAGES_REACHED,
-            matched_count=4200,
         )
         result = runner.invoke(
             cli,
@@ -502,8 +445,8 @@ class TestDepsHardeningFlags:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        mock_scrape.return_value = ScrapeResult(
-            repos=[make_repo("a", "b", stars=900)],
+        mock_scrape.return_value = _scrape_result(
+            [make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
@@ -515,6 +458,26 @@ class TestDepsHardeningFlags:
         )
         assert result.exit_code == 0
         assert "Found" in result.output  # summary shown in table mode
+
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_table_mode_prints_partial_warning(
+        self,
+        mock_scrape: AsyncMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_scrape.return_value = _scrape_result(
+            [make_repo("a", "b", stars=900)],
+            pages_scraped=200,
+            max_pages=200,
+            matched_count=1,
+            complete=False,
+            reason=ScrapeReason.MAX_PAGES_REACHED,
+        )
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/django/django", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0
+        assert "Stopped at the page cap" in result.stderr
 
     @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
     def test_unauthenticated_warning(
@@ -575,16 +538,25 @@ class TestSearchHardening:
         runner: CliRunner,
     ) -> None:
 
-        mock_scrape.return_value = ScrapeResult(
-            repos=[make_repo("a", "b", stars=900)],
+        mock_scrape.return_value = _scrape_result(
+            [make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
             estimated_total_dependents=90,
             matched_count=1,
         )
+        hit = CodeSearchHit(
+            repo=make_repo("a", "b", stars=900),
+            file_url="https://github.com/a/b/blob/main/setup.py",
+            file_path="setup.py",
+            matches=2,
+        )
         mock_search.return_value = CodeSearchResult(
-            source="https://github.com/django/django", query="import os", hits=[], searched_repos=1
+            source="https://github.com/django/django",
+            query="import os",
+            hits=[hit],
+            searched_repos=1,
         )
         result = runner.invoke(
             cli,
@@ -607,6 +579,7 @@ class TestSearchHardening:
         assert "concurrency" not in kwargs
         assert kwargs["rows"] == 7  # bounded to --max-repos
         assert kwargs["adaptive_stop"] is False  # never heuristic on the search path
+        assert "a/b" in result.output  # search results are printed
 
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -618,13 +591,8 @@ class TestSearchHardening:
     ) -> None:
         """`search` mirrors `deps`: --max-pages above the ceiling warns and clamps."""
 
-        mock_scrape.return_value = ScrapeResult(
-            repos=[],
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=1,
-            estimated_total_dependents=0,
-            matched_count=0,
+        mock_scrape.return_value = _scrape_result(
+            [], estimated_total_pages=1, estimated_total_dependents=0
         )
         mock_search.return_value = CodeSearchResult(
             source="https://github.com/django/django", query="import os", hits=[], searched_repos=0
@@ -657,8 +625,8 @@ class TestSearchHardening:
         """Once `search` bounds `repos` to top-K (`rows=max_repos`), the scrape
         summary must report `matched_count`, not `len(repos)`."""
 
-        mock_scrape.return_value = ScrapeResult(
-            repos=[
+        mock_scrape.return_value = _scrape_result(
+            [
                 make_repo("a", "b", stars=900),
                 make_repo("c", "d", stars=800),
             ],
@@ -725,13 +693,7 @@ async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object)
             matched_count=0,
         )
     )
-    return ScrapeResult(
-        repos=[],
-        pages_scraped=1,
-        max_pages=200,
-        estimated_total_pages=30,
-        estimated_total_dependents=900,
-    )
+    return _scrape_result([], max_pages=200)
 
 
 class TestOnPageCallbacks:
@@ -771,16 +733,6 @@ class TestOnPageCallbacks:
 
 
 class TestRankByTrust:
-    def _scrape_result(self, repos: list[Repository]) -> ScrapeResult:
-        return ScrapeResult(
-            repos=repos,
-            pages_scraped=1,
-            max_pages=1000,
-            estimated_total_pages=30,
-            estimated_total_dependents=900,
-            matched_count=len(repos),
-        )
-
     def test_trust_without_token_errors(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli, ["deps", "https://github.com/django/django", "--rank-by", "trust"]
@@ -803,7 +755,7 @@ class TestRankByTrust:
         # pool_size = 0 if rows <= 0 else max(rows, min(100, rows * 10))
 
         repos = [make_repo("a", "b", stars=10)]
-        mock_scrape.return_value = self._scrape_result(repos)
+        mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
@@ -836,7 +788,7 @@ class TestRankByTrust:
             make_repo("a", "b", stars=10),
             make_repo("c", "d", stars=20),
         ]
-        mock_scrape.return_value = self._scrape_result(repos)
+        mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
@@ -861,37 +813,6 @@ class TestRankByTrust:
         assert "score" in payload["repos"][0]["trust"]
         assert payload["repos"][0]["trust"]["cautions"] == []  # zero or more, always a list
 
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
-    def test_trust_fetch_failure_falls_back_to_stars(
-        self,
-        mock_scrape: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
-
-        repos = [make_repo("a", "b", stars=10)]
-        mock_scrape.return_value = self._scrape_result(repos)
-        with patch(
-            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
-        ) as mock_trust:
-            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
-            result = runner.invoke(
-                cli,
-                [
-                    "deps",
-                    "https://github.com/django/django",
-                    "--token",
-                    "ghp_x",
-                    "--rank-by",
-                    "trust",
-                    "--format",
-                    "json",
-                ],
-            )
-        assert result.exit_code == 0
-        payload = json.loads(result.stdout)
-        assert payload["ranked_by"] == "stars"  # honest fallback
-        assert payload["repos"][0]["trust"] is None
-
     def test_star_json_unchanged_has_no_rank_metadata(self, runner: CliRunner) -> None:
 
         with patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock) as mock_run:
@@ -911,59 +832,48 @@ class TestRankByTrust:
         assert "ranked_by" not in payload
         assert "trust" not in result.stdout
 
+    @pytest.mark.parametrize(
+        ("failed", "complete", "fmt"),
+        [(True, False, "json"), (True, False, "table"), (False, False, "table")],
+        ids=["failed-json", "failed-table", "partial-table"],
+    )
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
-    def test_fallback_emits_warning_in_table_mode(
+    def test_trust_metadata_fallbacks(
         self,
         mock_scrape: AsyncMock,
+        failed: bool,
+        complete: bool,
+        fmt: str,
         runner: CliRunner,
     ) -> None:
-
         repos = [make_repo("a", "b", stars=10)]
-        mock_scrape.return_value = self._scrape_result(repos)
+        mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
+        args = [
+            "deps",
+            "https://github.com/django/django",
+            "--token",
+            "ghp_x",
+            "--rank-by",
+            "trust",
+        ]
+        if fmt == "json":
+            args += ["--format", "json"]
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
-            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
-            result = runner.invoke(
-                cli,
-                [
-                    "deps",
-                    "https://github.com/django/django",
-                    "--token",
-                    "ghp_x",
-                    "--rank-by",
-                    "trust",
-                ],  # table mode (no --format json)
+            mock_trust.return_value = TrustMetadataResult(
+                repos=repos, failed=failed, complete=complete
             )
+            result = runner.invoke(cli, args)
         assert result.exit_code == 0
-        assert "falling back to star ranking" in result.output
-
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
-    def test_partial_metadata_emits_warning_in_table_mode(
-        self,
-        mock_scrape: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
-
-        repos = [make_repo("a", "b", stars=10)]
-        mock_scrape.return_value = self._scrape_result(repos)
-        with patch(
-            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
-        ) as mock_trust:
-            mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=False)
-            result = runner.invoke(
-                cli,
-                [
-                    "deps",
-                    "https://github.com/django/django",
-                    "--token",
-                    "ghp_x",
-                    "--rank-by",
-                    "trust",
-                ],  # table mode
-            )
-        assert result.exit_code == 0
-        assert "partial data" in result.output
+        if fmt == "json":
+            payload = json.loads(result.stdout)
+            assert payload["ranked_by"] == "stars"  # honest fallback
+            assert payload["repos"][0]["trust"] is None
+        elif failed:
+            assert "falling back to star ranking" in result.output
+        else:
+            assert "partial data" in result.output
 
     def test_trust_check_requires_rank_by_trust(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps", "https://github.com/a/b", "--trust-check"])
@@ -991,7 +901,7 @@ class TestRankByTrust:
             make_repo("c", "d", stars=20),
             make_repo("e", "f", stars=30),
         ]
-        mock_scrape.return_value = self._scrape_result(repos)
+        mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
 
         async def check(
             session: aiohttp.ClientSession,
@@ -1057,7 +967,7 @@ class TestRankByTrust:
     ) -> None:
 
         repos = [make_repo("a", "b", stars=10)]
-        mock_scrape.return_value = self._scrape_result(repos)
+        mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
 
         async def check(
             session: aiohttp.ClientSession,
