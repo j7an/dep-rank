@@ -17,8 +17,8 @@ import pytest
 from aioresponses import aioresponses
 from click.testing import CliRunner
 
-import dep_rank.cli.app
 from dep_rank import __version__
+from dep_rank.cli import app as cli_app
 from dep_rank.cli.app import _cache_dir, _open_cache, cli
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
@@ -70,7 +70,7 @@ class TestCacheDir:
     def test_paths(
         self, platform: str, case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        assert _cache_dir is not dep_rank.cli.app._cache_dir
+        assert _cache_dir is not cli_app._cache_dir
 
         monkeypatch.setattr(sys, "platform", platform)
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
@@ -415,7 +415,7 @@ class TestSearchCommandFull:
 
 
 async def _seed_cli_cache(*bodies: bytes) -> None:
-    cache = SqliteCache(dep_rank.cli.app._cache_dir())
+    cache = SqliteCache(cli_app._cache_dir())
     await cache.initialize()
     try:
         for index, body in enumerate(bodies):
