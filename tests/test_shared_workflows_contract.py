@@ -158,41 +158,40 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
 
 
 def test_release_workflow_retains_caller_owned_contract() -> None:
+    """Pin the AGENTS.md "Release Policy" invariants, not implementation text."""
     release = (WORKFLOWS_DIR / "release.yml").read_text()
 
     required_lines = (
-        'VERIFY_PYTHON: "3.13"',
+        # Release chain: CI gate, build, TestPyPI publish, verify, PyPI publish, release.
         "needs: test",
         "needs: build",
         "needs: publish-testpypi",
         "needs: verify-testpypi",
         "needs: publish-pypi",
-        r"grep -qE '^[0-9]+(\.[0-9]+){1,2}$'",
-        r"grep -qE '^[A-Za-z0-9][A-Za-z0-9._-]*$'",
-        "for SLEEP_SECONDS in 30 60 90 120 150; do",
-        "rm -rf .verify",
-        "mkdir -p .verify",
-        ".verify/pyproject.toml",
+        # TestPyPI verification runs on the explicit Python version.
+        'uv sync --python "$VERIFY_PYTHON"',
         'requires-python = ">=${VERIFY_PYTHON}"',
-        '"${PACKAGE_NAME}==${VERSION}",',
+        # Ephemeral project whose explicit TestPyPI source applies only to the package.
+        ".verify/pyproject.toml",
         "[tool.uv.sources]",
         '"${PACKAGE_NAME}" = { index = "testpypi" }',
         "[[tool.uv.index]]",
         'url = "https://test.pypi.org/simple/"',
         "explicit = true",
-        'uv sync --python "$VERIFY_PYTHON" --refresh-package "$PACKAGE_NAME"',
-        'uv run --no-sync bash -euo pipefail -c "$VERIFY_COMMAND"',
+        # Hard gates: the exact built version, and tag ancestry on main.
+        '"${PACKAGE_NAME}==${VERSION}",',
         'git merge-base --is-ancestor "$TAG_SHA" origin/main',
+        # Caller-owned trusted publishing; a re-publish fails instead of skipping.
         "name: testpypi",
         "\n      name: pypi\n",
         "skip-existing: false",
-        "if: env.ATTACH_ASSETS == 'true'",
-        'if [ "$DRAFT_RELEASE" = "true" ]; then',
     )
 
     for line in required_lines:
         assert line in release
 
+    # An explicit X.Y version, checked by shape so a Python bump needs no test edit.
+    assert re.search(r'^  VERIFY_PYTHON: "\d+\.\d+"$', release, re.MULTILINE)
     assert "--index-url" not in release
     assert "--extra-index-url" not in release
 

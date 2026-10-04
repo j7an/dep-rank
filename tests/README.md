@@ -1,141 +1,96 @@
-# Test Suite Documentation
+# Test Suite
 
-## Overview
+Tests mirror the `src/dep_rank/` layout. The authoritative list of tests is
+`uv run pytest -o addopts='' --collect-only -q` (the configured `-v` in `addopts`
+cancels `-q`, so clear it when you only want test IDs).
 
-This test suite provides comprehensive coverage of the dep-rank codebase. The tests are organized into logical modules covering unit tests, integration tests, and CLI functionality tests.
+## Running tests
 
-## Running Tests
-
-### Run all tests
 ```bash
-uv run pytest tests/ -v
+uv run pytest                                   # full suite with coverage reports
+uv run pytest --no-cov -q                       # fast run without coverage
+uv run pytest tests/core/test_validation.py -v  # one file
+uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one class
 ```
 
-### Run with coverage report
-```bash
-uv run pytest tests/
-```
-Coverage runs automatically (see [Running Coverage Report](#running-coverage-report) below).
-
-### Run specific test file
-```bash
-uv run pytest tests/core/test_validation.py -v
-```
-
-### Run specific test class
-```bash
-uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v
-```
-
-## Test Structure
-
-Tests are organized into two packages mirroring the `src/dep_rank/` layout. The authoritative test count and per-module breakdown is `uv run pytest tests/ --collect-only -q`.
+## Layout
 
 ### `tests/cli/` — CLI surface
 
-- **`test_commands.py`**: Click command invocations for `deps`, `search`, `cache`, and `--version`. Covers help output, missing-token errors, table/JSON modes, and full-flow runs against mocked HTTP layers.
-- **`test_formatters.py`**: Pure formatter helpers — `humanize` star formatting, `print_dependents_table`, `print_search_results`, and `format_scrape_summary`.
+- **`conftest.py`**: autouse fixture pointing `dep_rank.cli.app._cache_dir` at a
+  per-test temporary directory, so CLI tests use a real SQLite cache without
+  touching the developer's cache.
+- **`test_commands.py`**: `deps`, `search`, `cache`, and `--version` through
+  Click's `CliRunner` — argument and token validation, table/JSON output, trust
+  ranking and its fallbacks, live progress, the cache directory resolver, and the
+  subprocess checks that need the real logging setup.
+- **`test_formatters.py`**: Rich tables and JSON output — `humanize`, the
+  dependents table (star and trust layouts, cautions, footer), search results,
+  scrape summaries, and partial-result warnings.
 
-### `tests/core/` — Pure logic
+### `tests/core/` — library logic
 
-- **`test_validation.py`**: `validate_github_url` URL parsing and validation (https/http/www, trailing slashes, invalid characters, bare `owner/repo`, empty/whitespace edges).
-- **`test_models.py`**: Pydantic models — `Repository`, `DependentType`, `DependentsResult`, `ScrapeResult`, `CodeSearchResult` — including JSON round-trips.
-- **`test_scraper.py`**: HTML parsing (`parse_dependent_counts`, `parse_dependents_page`) and the async `scrape_dependents` flow including pagination, dedup, min-stars filtering, error/304 handling, cache integration, and progress callbacks.
-- **`test_graphql.py`**: Trust-metadata query construction and enrichment, including batches, partial responses, and failure paths.
-- **`test_cache.py`**: SQLite cache get/put/expiry/clear/stats and the uninitialized-cache error contract.
-- **`test_rate_limiter.py`**: Token-bucket rate limiter — within-limit allow, over-limit block, and replenishment over time.
-- **`test_search.py`**: `search_code` over multiple repos with progress callbacks, max-repos limit, and non-200 / client-error skip behavior.
+- **`test_validation.py`**: `validate_github_url` accepted forms and error messages.
+- **`test_models.py`**: model behavior the project defines — the
+  `complete == (reason is None)` invariant, defaults, enum wire values, and JSON
+  field exclusions.
+- **`test_scraper.py`**: page parsing, the `scrape_dependents` walk, retries,
+  `Retry-After` and backoff handling, and cache hits.
+- **`test_scraper_streaming.py`**: top-K aggregation, dedup, the `on_page`
+  callback, and stop reasons.
+- **`test_scraper_adaptive_stop.py`**: the adaptive-stop heuristic.
+- **`test_cache.py`**: SQLite get/put/expiry/clear/stats and the uninitialized-cache error.
+- **`test_cache_swr.py`**: stale-while-revalidate refreshes — dedup, cooldown,
+  429 pause, foreground headroom, conditional `If-None-Match` requests, and drain.
+- **`test_rate_limiter.py`**: token bucket, 429 backoff, and the background pause.
+- **`test_graphql.py`**: trust-metadata query construction and enrichment,
+  including batches, partial responses, and failure fallbacks.
+- **`test_trust.py`**: the pool-relative trust score and caution signals.
+- **`test_star_history.py`**: the sampled star-history trust check.
+- **`test_search.py`**: `search_code` over the bounded dependent set.
+- **`test_drift_check.py`**: the drift canary's evaluation and exit codes.
 
-## Shared fixtures
+### `tests/test_shared_workflows_contract.py`
 
-`tests/conftest.py` provides shared fixtures and data helpers:
+Semantic checks on GitHub workflows: the shared-workflow caller set, SHA pin
+shape and uniformity, and the release policy invariants from `AGENTS.md`.
+
+## Shared fixtures (`tests/conftest.py`)
 
 - **`dependents_page`** builds dependents HTML with repository rows, pagination,
-  and repository/package counts.
-- **`mock_http`** yields an active `aioresponses` mock; **`session`** yields a real
-  `aiohttp.ClientSession` for deterministic HTTP tests.
-- **`cache`** initializes a real temporary `SqliteCache` and closes it after the test.
-- **`fast_limiter`** creates a high-budget rate limiter for tests without budget delays.
-- **`make_repo`** creates a repository with the standard GitHub URL and optional fields.
-- **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` before each test using
-  `monkeypatch`, which restores environment changes after the test.
+  and repository/package counts. The `DEPENDENTS_HTML_*` constants are built with
+  it and imported by scraper and CLI tests.
+- **`mock_http`** yields an active `aioresponses` mock; **`session`** yields a
+  real `aiohttp.ClientSession`.
+- **`cache`** initializes a temporary `SqliteCache` and closes it after the test.
+- **`fast_limiter`** returns a high-budget rate limiter for multi-page walks.
+- **`make_repo`** builds a `Repository` with the standard GitHub URL.
+- **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
 
-The autouse CLI cache fixture in `tests/cli/conftest.py` points
-`dep_rank.cli.app._cache_dir` at a per-test temporary directory. CLI tests use a
-real SQLite cache without reading or modifying the developer's cache.
+## Writing tests
 
-Module-level HTML constants are also defined in `conftest.py` and imported directly by `tests/core/test_scraper.py`:
+- Mock HTTP with `aioresponses` (the `mock_http` fixture), never live GitHub.
+- When asserting that **no** request was made, count `mock_http.requests`. An
+  unregistered URL raises `aiohttp.ClientConnectionError`, which the scraper
+  retries with backoff and the background refresher swallows, so an assertion
+  that relies on that error passes for the wrong reason or fails slowly. To make
+  an unexpected request fail at once, register it with
+  `exception=AssertionError(...)`.
+- Prefer parametrized tests for input tables, and keep every case's assertions.
+- Remove a test only when another test fails under the same source mutation.
 
-- `DEPENDENTS_HTML_PAGE_1`: dependents page with three repos and a "Next" link.
-- `DEPENDENTS_HTML_LAST_PAGE`: terminal page with one repo and a "Previous" link.
-- `DEPENDENTS_HTML_NO_RESULTS`: empty dependents page (zero repositories).
-- `DEPENDENTS_HTML_WITH_COUNTS_PAGE_1`: page 1 with both "Repositories" and "Packages" tab counts visible.
-- `DEPENDENTS_HTML_WITH_COUNTS`: terminal page with both tab counts.
+## Coverage
 
-## Coverage Report
+`uv run pytest` measures branch coverage and writes terminal, `htmlcov/`, and
+`coverage.xml` reports; the settings live in `pyproject.toml`
+(`[tool.pytest.ini_options] addopts` and `[tool.coverage.*]`).
 
-Run `uv run pytest` to generate the current coverage report. With `[tool.coverage.run] branch = true` enabled, the terminal output includes branch columns (`Branch` and `BrPart`) in addition to missing lines. The HTML report is written to `htmlcov/index.html`; `coverage.xml` is also written for `diff-cover` consumption (used by CI on PRs and available locally for the same gate). Coverage activation, configuration file pointer, and report formats are all configured in `pyproject.toml` `[tool.pytest.ini_options] addopts`; measurement policy (source, branch mode, omit, threshold, exclusions) is owned by `pyproject.toml` `[tool.coverage.*]`.
-
-## Running Coverage Report
-
-```bash
-uv run pytest tests/
-open htmlcov/index.html
-```
-
-Coverage runs automatically because `[tool.pytest.ini_options] addopts` in `pyproject.toml` includes `--cov`, `--cov-config=pyproject.toml`, `--cov-report=html`, `--cov-report=term-missing`, and `--cov-report=xml`. Branch coverage is enabled by `pyproject.toml` `[tool.coverage.run] branch = true`, so no extra `--cov-branch` flag is needed after this change.
-
-## Running Diff Coverage Locally
-
-CI enforces a minimum coverage threshold on changed lines via [`diff-cover`](https://github.com/Bachmann1234/diff_cover). The gate runs on PRs only, in the dedicated `coverage` job (`ubuntu-latest` + Python 3.11), through the shared `j7an/shared-workflows/actions/coverage` action with a minimum of 80% over `src/dep_rank/` (excluding the generated `_version.py`). It compares against the PR's base commit, passes as not-applicable when no production lines changed, and uploads its report as an artifact and job summary. The `test` matrix runs with `--no-cov` and measures no coverage. To check the same gate locally before pushing:
+On pull requests, the CI `coverage` job enforces at least 90% total branch
+coverage and at least 80% on changed lines of `src/dep_rank/` (excluding the
+generated `_version.py`). The `test` matrix runs with `--no-cov`. To check the
+changed-line gate locally:
 
 ```bash
-uv run pytest                                              # produces coverage.xml
-uv run diff-cover coverage.xml \
-  --fail-under=80 \
-  --compare-branch=origin/main
+uv run pytest
+uv run diff-cover coverage.xml --fail-under=80 --compare-branch=origin/main
 ```
-
-`diff-cover` reads `coverage.xml`, computes the git diff between `HEAD` and `origin/main`, and reports the percentage of changed lines covered by tests. If your branch is based off a base other than `main`, replace `origin/main` accordingly.
-
-The local gate uses the same threshold and coverage report as CI. A PR that passes locally should pass in CI; if they disagree, the most likely cause is stale local state — re-run `git fetch origin` and re-check `coverage.xml` is current.
-
-## Best Practices
-
-1. **Use fixtures**: Reuse common test data via pytest fixtures
-2. **Mock external services**: Use `unittest.mock` to isolate units from external dependencies
-3. **Organize by feature**: Group related tests into test classes
-4. **Clear naming**: Use descriptive test names that explain what is being tested
-5. **Test edge cases**: Include boundary conditions and error scenarios
-
-## Adding New Tests
-
-When adding new tests:
-
-1. Identify which module the test belongs to (or create new module)
-2. Create a test class for logical grouping
-3. Use descriptive test names starting with `test_`
-4. Add docstrings explaining what the test verifies
-5. Use existing fixtures or create new ones as needed
-6. Ensure test is isolated and doesn't depend on external state
-
-Example:
-```python
-class TestMyFeature:
-    """Tests for my new feature."""
-
-    def test_basic_functionality(self):
-        """Test that basic functionality works."""
-        result = my_function(test_input)
-        assert result == expected_output
-```
-
-## Continuous Integration
-
-These tests run with a minimum 90% coverage enforcement. Configuration lives in `pyproject.toml`: `[tool.pytest.ini_options]` (activation and report formatting) and `[tool.coverage.*]` (measurement policy). Specifically:
-
-- Coverage minimum threshold: 90% overall with branch coverage enabled (via `[tool.coverage.run] branch = true` and `[tool.coverage.report] fail_under`)
-- Coverage report formats: html, term-missing, xml (the terminal report now includes `Branch` / `BrPart`; xml still feeds the PR-only `coverage` job's diff gate at 80%)
-- Warnings filtered appropriately
-
-Failed tests, overall coverage (branch-enabled total) below 90%, or diff coverage below 80% on changed lines will cause CI to fail. Both coverage thresholds are enforced on PRs only, by the `coverage` job; the `test` matrix legs run with `--no-cov`.

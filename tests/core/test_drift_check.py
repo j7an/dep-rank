@@ -8,6 +8,7 @@ inconclusive case returns a stubbed result.
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,83 +49,96 @@ def test_missing_token_fails_before_scraping(
     assert "DRIFT_CHECK_TOKEN" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("reason", [ScrapeReason.NETWORK_FAILURE, ScrapeReason.RATE_LIMITED])
-def test_inconclusive_with_token_warns_but_exits_zero(
-    reason: ScrapeReason,
+def _stub(
+    *,
+    repos: list[Repository],
+    pages_scraped: int,
+    estimated_total_dependents: int,
+    reason: ScrapeReason | None,
+) -> ScrapeResult:
+    return ScrapeResult(
+        repos=repos,
+        pages_scraped=pages_scraped,
+        max_pages=2,
+        estimated_total_pages=pages_scraped,
+        estimated_total_dependents=estimated_total_dependents,
+        complete=reason is None,
+        reason=reason,
+        matched_count=len(repos),
+    )
+
+
+HEALTHY_REPO = Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)
+
+
+@pytest.mark.parametrize(
+    ("stub", "code", "stream", "needles"),
+    [
+        # A transport failure *with* a token is inconclusive: exit 0 (don't page on a
+        # flaky GitHub response) but emit a visible ``::warning::`` annotation.
+        pytest.param(
+            _stub(
+                repos=[],
+                pages_scraped=0,
+                estimated_total_dependents=0,
+                reason=ScrapeReason.NETWORK_FAILURE,
+            ),
+            0,
+            "err",
+            ("::warning::", "INCONCLUSIVE"),
+            id="inconclusive-network",
+        ),
+        pytest.param(
+            _stub(
+                repos=[],
+                pages_scraped=0,
+                estimated_total_dependents=0,
+                reason=ScrapeReason.RATE_LIMITED,
+            ),
+            0,
+            "err",
+            ("::warning::", "INCONCLUSIVE"),
+            id="inconclusive-rate-limited",
+        ),
+        # A reachable scrape that parses zero repos AND a zero header count is real
+        # drift: the path that fails the weekly CI job.
+        pytest.param(
+            _stub(
+                repos=[],
+                pages_scraped=2,
+                estimated_total_dependents=0,
+                reason=ScrapeReason.MAX_PAGES_REACHED,
+            ),
+            1,
+            "err",
+            ("DRIFT DETECTED",),
+            id="drift",
+        ),
+        # A reachable, complete scrape is healthy; reason=None also exercises the
+        # ``'complete'`` branch of the summary's reason ternary.
+        pytest.param(
+            _stub(
+                repos=[HEALTHY_REPO], pages_scraped=2, estimated_total_dependents=15000, reason=None
+            ),
+            0,
+            "out",
+            ("OK:",),
+            id="healthy",
+        ),
+    ],
+)
+def test_exit_codes(
+    stub: ScrapeResult,
+    code: int,
+    stream: str,
+    needles: tuple[str, ...],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A transport failure *with* a token is inconclusive: exit 0 (don't page on a flaky
-    GitHub response) but emit a visible ``::warning::`` annotation, not a silent pass."""
     monkeypatch.setenv("DRIFT_CHECK_TOKEN", "ghp_x")
-    stub = ScrapeResult(
-        repos=[],
-        pages_scraped=0,
-        max_pages=2,
-        estimated_total_pages=0,
-        estimated_total_dependents=0,
-        complete=False,
-        reason=reason,
-        matched_count=0,
-    )
-
-    async def _fake_scrape(*args: object, **kwargs: object) -> ScrapeResult:
-        return stub
-
-    monkeypatch.setattr(drift_check, "scrape_dependents", _fake_scrape)
-    assert asyncio.run(drift_check._run()) == 0
-    err = capsys.readouterr().err
-    assert "::warning::" in err
-    assert "INCONCLUSIVE" in err
-
-
-def test_drift_detected_with_token_exits_one(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A reachable scrape (non-transport reason) that parses zero repos AND a zero header
-    count is real drift: exit 1 with a 'DRIFT DETECTED' message on stderr. This is the
-    path that fails the weekly CI job — the canary's whole reason to exist."""
-    monkeypatch.setenv("DRIFT_CHECK_TOKEN", "ghp_x")
-    stub = ScrapeResult(
-        repos=[],
-        pages_scraped=2,
-        max_pages=2,
-        estimated_total_pages=2,
-        estimated_total_dependents=0,
-        complete=False,
-        reason=ScrapeReason.MAX_PAGES_REACHED,
-        matched_count=0,
-    )
-
-    async def _fake_scrape(*args: object, **kwargs: object) -> ScrapeResult:
-        return stub
-
-    monkeypatch.setattr(drift_check, "scrape_dependents", _fake_scrape)
-    assert asyncio.run(drift_check._run()) == 1
-    assert "DRIFT DETECTED" in capsys.readouterr().err
-
-
-def test_healthy_scrape_with_token_exits_zero(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A reachable, complete scrape with parsed repos and a non-zero header count is
-    healthy: exit 0 with an 'OK:' summary on stdout. Uses reason=None to also exercise
-    the ``'complete'`` branch of the summary's reason ternary."""
-    monkeypatch.setenv("DRIFT_CHECK_TOKEN", "ghp_x")
-    stub = ScrapeResult(
-        repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
-        pages_scraped=2,
-        max_pages=2,
-        estimated_total_pages=2,
-        estimated_total_dependents=15000,
-        complete=True,
-        reason=None,
-        matched_count=1,
-    )
-
-    async def _fake_scrape(*args: object, **kwargs: object) -> ScrapeResult:
-        return stub
-
-    monkeypatch.setattr(drift_check, "scrape_dependents", _fake_scrape)
-    assert asyncio.run(drift_check._run()) == 0
-    assert "OK:" in capsys.readouterr().out
+    monkeypatch.setattr(drift_check, "scrape_dependents", AsyncMock(return_value=stub))
+    assert asyncio.run(drift_check._run()) == code
+    captured = capsys.readouterr()
+    text = captured.err if stream == "err" else captured.out
+    for needle in needles:
+        assert needle in text

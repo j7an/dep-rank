@@ -2,14 +2,42 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.graphql import build_trust_query, enrich_with_trust_metadata
+from dep_rank.core.graphql import GRAPHQL_URL, build_trust_query, enrich_with_trust_metadata
+from dep_rank.core.models import Repository, TrustMetadataResult
 from tests.conftest import make_repo
+
+RunTrust = Callable[..., Awaitable[tuple[TrustMetadataResult, dict[Any, list[Any]]]]]
+
+
+@pytest.fixture
+def run_trust(mock_http: aioresponses, session: ClientSession) -> RunTrust:
+    """Queue GraphQL responses (dict = JSON payload, int = HTTP status) and run enrichment."""
+
+    async def _run_trust(
+        repos: list[Repository],
+        *responses: dict[str, Any] | int,
+        include_description: bool = False,
+        token: str = "fake",  # noqa: S107 (test placeholder, not a credential)
+    ) -> tuple[TrustMetadataResult, dict[Any, list[Any]]]:
+        for response in responses:
+            if isinstance(response, int):
+                mock_http.post(GRAPHQL_URL, status=response)
+            else:
+                mock_http.post(GRAPHQL_URL, payload=response)
+        result = await enrich_with_trust_metadata(
+            session, repos, token=token, include_description=include_description
+        )
+        return result, mock_http.requests
+
+    return _run_trust
 
 
 class TestBuildTrustQuery:
@@ -43,23 +71,18 @@ class TestBuildTrustQuery:
 class TestEnrichWithTrustMetadata:
     @pytest.mark.parametrize("description", ["Fresh description", None], ids=["text", "null"])
     async def test_applies_requested_description(
-        self, description: str | None, mock_http: aioresponses, session: ClientSession
+        self, description: str | None, run_trust: RunTrust
     ) -> None:
 
         repos = [make_repo("a", "b", stars=123).model_copy(update={"description": "Old"})]
         payload = {"data": {"repo_0": {"stargazerCount": 456, "description": description}}}
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=True
-        )
-        request = next(iter(mock_http.requests.values()))[0]
+        result, requests = await run_trust(repos, payload, include_description=True)
+        request = next(iter(requests.values()))[0]
         assert "description" in request.kwargs["json"]["query"]
         assert result.repos[0].description == description
         assert result.repos[0].stars == 456
 
-    async def test_populates_signals_and_marks_complete(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_populates_signals_and_marks_complete(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("django", "django", stars=80000)]
         payload = {
@@ -76,10 +99,7 @@ class TestEnrichWithTrustMetadata:
                 }
             }
         }
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is False
         assert result.complete is True
         repo = result.repos[0]
@@ -93,22 +113,17 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.is_disabled is False
         assert repo.trust_signals.created_at == datetime(2005, 7, 13, tzinfo=UTC)
 
-    async def test_malformed_created_at_degrades_to_missing(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_malformed_created_at_degrades_to_missing(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("django", "django", stars=80000)]
         payload = {"data": {"repo_0": {"stargazerCount": 82400, "createdAt": "not-a-date"}}}
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is False
         assert result.repos[0].trust_signals is not None
         assert result.repos[0].trust_signals.created_at is None
 
     async def test_malformed_pushed_at_degrades_recency_not_crash(
-        self, mock_http: aioresponses, session: ClientSession
+        self, run_trust: RunTrust
     ) -> None:
         # A non-ISO pushedAt must not abort the run; recency degrades to "missing"
         # (pushed_at=None) while the rest of the signals are still applied.
@@ -125,47 +140,32 @@ class TestEnrichWithTrustMetadata:
                 }
             }
         }
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is False
         repo = result.repos[0]
         assert repo.trust_signals is not None
         assert repo.trust_signals.pushed_at is None  # unparseable -> missing recency
         assert repo.trust_signals.forks == 31000  # other signals intact
 
-    async def test_401_short_circuits_to_failed(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_401_short_circuits_to_failed(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
-        mock_http.post("https://api.github.com/graphql", status=401)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="bad", include_description=False
-        )
+        result, _ = await run_trust(repos, 401, token="bad")
         assert result.failed is True
         assert result.complete is False
         assert result.repos == expected
 
-    async def test_graphql_error_marks_failed_when_only_batch(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_graphql_error_marks_failed_when_only_batch(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
-        mock_http.post("https://api.github.com/graphql", payload={"errors": [{"message": "boom"}]})
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, {"errors": [{"message": "boom"}]})
         assert result.failed is True  # the only batch errored -> no usable metadata
         assert result.complete is False
         assert result.repos == expected
 
-    async def test_missing_repo_data_is_partial_not_failed(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_missing_repo_data_is_partial_not_failed(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("a", "b"), make_repo("c", "d")]
         expected = [repo.model_copy(deep=True) for repo in repos]
@@ -181,10 +181,7 @@ class TestEnrichWithTrustMetadata:
                 # repo_1 missing
             }
         }
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is False
         assert result.complete is False
         assert result.repos[0].trust_signals is not None
@@ -192,9 +189,7 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].stars == 10
         assert result.repos[1] == expected[1]
 
-    async def test_data_with_errors_is_partial_not_failed(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_data_with_errors_is_partial_not_failed(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo("a", "b"), make_repo("c", "d")]
         payload = {
@@ -210,10 +205,7 @@ class TestEnrichWithTrustMetadata:
             },
             "errors": [{"message": "Could not resolve repo_1"}],
         }
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is False  # usable data present
         assert result.complete is False  # errors -> incomplete
         assert result.repos[0].trust_signals is not None
@@ -221,25 +213,20 @@ class TestEnrichWithTrustMetadata:
 
     @pytest.mark.parametrize("data", [None, {"repo_0": None}], ids=["data-null", "repos-null"])
     async def test_data_all_null_is_failed(
-        self, data: dict[str, None] | None, mock_http: aioresponses, session: ClientSession
+        self, data: dict[str, None] | None, run_trust: RunTrust
     ) -> None:
 
         # Null data and all-null repository data both preserve the scraped fallback.
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
         payload = {"data": data, "errors": [{"message": "Could not resolve"}]}
-        mock_http.post("https://api.github.com/graphql", payload=payload)
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, payload)
         assert result.failed is True
         assert result.complete is False
         assert result.repos[0].trust_signals is None
         assert result.repos == expected
 
-    async def test_multi_batch_one_failed_is_partial(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_multi_batch_one_failed_is_partial(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches (100 + 50)
         good = {
@@ -254,27 +241,17 @@ class TestEnrichWithTrustMetadata:
                 for i in range(100)
             }
         }
-        mock_http.post("https://api.github.com/graphql", payload=good)  # batch 1 succeeds
-        mock_http.post("https://api.github.com/graphql", status=500)  # batch 2 fails
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, good, 500)
         assert result.failed is False  # at least one batch succeeded
         assert result.complete is False  # the other batch failed
         assert len(result.repos) == 150
         assert result.repos[0].trust_signals is not None
         assert result.repos[100].trust_signals is None  # from the failed batch
 
-    async def test_multi_batch_all_failed_is_failed(
-        self, mock_http: aioresponses, session: ClientSession
-    ) -> None:
+    async def test_multi_batch_all_failed_is_failed(self, run_trust: RunTrust) -> None:
 
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches
-        mock_http.post("https://api.github.com/graphql", status=500)  # batch 1 fails
-        mock_http.post("https://api.github.com/graphql", status=500)  # batch 2 fails
-        result = await enrich_with_trust_metadata(
-            session, repos, token="fake", include_description=False
-        )
+        result, _ = await run_trust(repos, 500, 500)
         assert result.failed is True  # no usable metadata at all
         assert result.complete is False
 
