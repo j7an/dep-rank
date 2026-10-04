@@ -167,6 +167,14 @@ async def run_deps(
 
             if not quiet:
                 _print_scrape_outcome(console, scrape_result, min_stars)
+            if scrape_result.stale_pages and not token:
+                # Without a token nothing refreshes expired pages, so say so even in JSON
+                # mode (stderr only; stdout stays parseable).
+                from dep_rank.cli.formatters import stale_cache_notice
+
+                console.print(
+                    stale_cache_notice(scrape_result.stale_pages, scrape_result.pages_scraped)
+                )
 
             ranked_by: Literal["stars", "trust"] = "stars"
             trust_check_result: TrustCheckResult | None = None

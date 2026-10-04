@@ -326,6 +326,7 @@ class TestScrapeDependentsEdgeCases:
         assert sum(len(v) for v in mock_http.requests.values()) == 0
         assert len(result.repos) == 1
         assert result.repos[0].owner == "delta"
+        assert result.stale_pages == 0  # a fresh hit is not stale
 
     async def test_200_response_stores_in_cache(
         self, mock_http: aioresponses, session: ClientSession

@@ -51,6 +51,7 @@ def _scrape_result(
     matched_count: int = 0,
     complete: bool = True,
     reason: ScrapeReason | None = None,
+    stale_pages: int = 0,
 ) -> ScrapeResult:
     return ScrapeResult(
         repos=repos,
@@ -61,6 +62,7 @@ def _scrape_result(
         matched_count=matched_count,
         complete=complete,
         reason=reason,
+        stale_pages=stale_pages,
     )
 
 
@@ -478,6 +480,34 @@ class TestDepsHardeningFlags:
         )
         assert result.exit_code == 0
         assert "Stopped at the page cap" in result.stderr
+
+    @pytest.mark.parametrize(
+        ("extra_args", "shown"),
+        [
+            pytest.param([], True, id="unauthenticated"),
+            pytest.param(["--token", "ghp_x"], False, id="authenticated-refreshes-in-background"),
+            pytest.param(["--format", "json"], True, id="json-stderr-only"),
+        ],
+    )
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_stale_cache_notice(
+        self,
+        mock_scrape: AsyncMock,
+        runner: CliRunner,
+        extra_args: list[str],
+        shown: bool,
+    ) -> None:
+        mock_scrape.return_value = _scrape_result(
+            [make_repo("a", "b", stars=900)], pages_scraped=10, matched_count=1, stale_pages=3
+        )
+        result = runner.invoke(cli, ["deps", "https://github.com/django/django", *extra_args])
+        assert result.exit_code == 0
+        stderr = " ".join(result.stderr.split())  # Rich wraps long lines
+        assert ("3 of 10 pages came from expired cache entries" in stderr) is shown
+        if shown:
+            assert "dep-rank cache clear" in stderr
+        if "json" in extra_args:
+            json.loads(result.stdout)  # the notice never reaches stdout
 
     @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
     def test_unauthenticated_warning(

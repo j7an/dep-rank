@@ -243,21 +243,22 @@ async def _read_page(
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
     swr: SWRManager,
-) -> str:
-    """Return a page's HTML; fresh-hit skips network, stale-hit serves stale + refreshes.
+) -> tuple[str, bool]:
+    """Return ``(html, stale)``; fresh-hit skips network, stale-hit serves stale + refreshes.
 
     Fresh cache hit -> cached body (no request). Expired-with-body -> serve stale
-    immediately and ask ``swr`` for a background revalidation (a no-op when SWR is
-    disabled). Miss -> ``_fetch_page``.
+    immediately (``stale`` is True) and ask ``swr`` for a background revalidation (a
+    no-op when SWR is disabled). Miss -> ``_fetch_page``.
     """
     if cache:
         cached = await cache.get(url)
         if cached and cached["body"] is not None:
             body: bytes = cached["body"]
-            if cached.get("expired"):
+            stale = bool(cached.get("expired"))
+            if stale:
                 swr.schedule(url)
-            return body.decode("utf-8")
-    return await _fetch_page(session, url, limiter, auth_headers, cache)
+            return body.decode("utf-8"), stale
+    return await _fetch_page(session, url, limiter, auth_headers, cache), False
 
 
 class SWRManager:
@@ -445,12 +446,15 @@ async def scrape_dependents(
     est_deps = 0
     recent_max: deque[int] = deque(maxlen=ADAPTIVE_WINDOW)
     page = 0
+    stale_pages = 0
     reason: ScrapeReason | None = None
 
     try:
         while current_url and page < max_pages:
             try:
-                html = await _read_page(session, current_url, limiter, auth_headers, cache, swr)
+                html, stale = await _read_page(
+                    session, current_url, limiter, auth_headers, cache, swr
+                )
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
                 break
@@ -458,6 +462,7 @@ async def scrape_dependents(
                 reason = ScrapeReason.NETWORK_FAILURE
                 break
             page += 1  # increment only after a page is actually consumed (spec §2)
+            stale_pages += stale
 
             if page == 1:
                 counts = parse_dependent_counts(html)
@@ -509,4 +514,5 @@ async def scrape_dependents(
         complete=reason is None,
         reason=reason,
         matched_count=matched,
+        stale_pages=stale_pages,
     )

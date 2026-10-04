@@ -112,6 +112,7 @@ class ScrapeResult(BaseModel):
     complete: bool = True
     reason: ScrapeReason | None = None
     matched_count: int = 0
+    stale_pages: int = 0  # pages served from expired cache entries during this scrape
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> ScrapeResult:
