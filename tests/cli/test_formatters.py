@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
+from rich.console import Console
 
 from dep_rank.cli.formatters import (
+    build_topk_table,
     console,
     format_scrape_summary,
     humanize,
+    partial_warning,
     print_dependents_json,
     print_dependents_table,
     print_search_results,
@@ -23,10 +27,13 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeReason,
+    ScrapeSnapshot,
     TrustCheckResult,
     TrustComponents,
     TrustScore,
 )
+from tests.conftest import make_repo
 
 
 class TestHumanize:
@@ -56,12 +63,7 @@ class TestPrintDependentsTable:
             total_count=100,
             filtered_count=50,
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=12500,
-                ),
+                make_repo("alpha", "framework", stars=12500),
             ],
             dependent_type=DependentType.REPOSITORY,
             scraped_at=datetime.now(tz=UTC),
@@ -75,20 +77,8 @@ class TestPrintDependentsTable:
             total_count=100,
             filtered_count=50,
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=12500,
-                    description="A web framework",
-                ),
-                Repository(
-                    owner="beta",
-                    name="toolkit",
-                    url="https://github.com/beta/toolkit",
-                    stars=3200,
-                    description=None,
-                ),
+                make_repo("alpha", "framework", stars=12500, description="A web framework"),
+                make_repo("beta", "toolkit", stars=3200, description=None),
             ],
             dependent_type=DependentType.REPOSITORY,
             scraped_at=datetime.now(tz=UTC),
@@ -109,12 +99,7 @@ class TestPrintSearchResults:
         print_search_results(result)
 
     def test_with_hits(self) -> None:
-        repo = Repository(
-            owner="alpha",
-            name="framework",
-            url="https://github.com/alpha/framework",
-            stars=5000,
-        )
+        repo = make_repo("alpha", "framework", stars=5000)
         result = CodeSearchResult(
             source="https://github.com/django/django",
             query="import os",
@@ -182,8 +167,6 @@ class TestFormatScrapeSummary:
 
 class TestPartialWarning:
     def test_reasons_have_distinct_messages(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         msgs = {
             partial_warning(r)
@@ -197,28 +180,20 @@ class TestPartialWarning:
         assert len(msgs) == 4  # each reason renders a distinct line
 
     def test_max_pages_mentions_flag(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         assert "--max-pages" in partial_warning(ScrapeReason.MAX_PAGES_REACHED)
 
     def test_converged_mentions_opt_out(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         assert "--no-adaptive-stop" in partial_warning(ScrapeReason.TREND_CONVERGED)
 
 
 class TestBuildTopKTable:
     def test_lists_repos_with_humanized_stars(self) -> None:
-        from rich.console import Console
-
-        from dep_rank.cli.formatters import build_topk_table
-        from dep_rank.core.models import Repository, ScrapeSnapshot
 
         snap = ScrapeSnapshot(
             top_k=[
-                Repository(owner="a", name="b", url="https://github.com/a/b", stars=1500),
+                make_repo("a", "b", stars=1500),
             ],
             pages_scraped=2,
             estimated_total_pages=5,
@@ -238,10 +213,6 @@ class TestBuildTopKTable:
     def test_empty_top_k_still_renders_progress(self) -> None:
         """A snapshot with no top-K (e.g. high --min-stars early on) must still render
         progress context and a placeholder row, never a blank frame."""
-        from rich.console import Console
-
-        from dep_rank.cli.formatters import build_topk_table
-        from dep_rank.core.models import ScrapeSnapshot
 
         snap = ScrapeSnapshot(
             top_k=[],
@@ -260,10 +231,9 @@ class TestBuildTopKTable:
 
 class TestTrustTableAndJson:
     def _trust_repo(self, cautions: list[CautionSignal] | None = None) -> Repository:
-        return Repository(
-            owner="alpha",
-            name="framework",
-            url="https://github.com/alpha/framework",
+        return make_repo(
+            "alpha",
+            "framework",
             stars=12500,
             trust=TrustScore(
                 score=87.4,
@@ -300,9 +270,7 @@ class TestTrustTableAndJson:
 
     def test_fallback_renders_star_table(self) -> None:
         # ranked_by == "stars" even though a star repo has no trust -> star layout.
-        star_repo = Repository(
-            owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
-        )
+        star_repo = make_repo("beta", "toolkit", stars=3200)
         result = self._result(ranked_by="stars", repos=[star_repo])
         with console.capture() as cap:
             print_dependents_table(result)
@@ -323,15 +291,8 @@ class TestTrustTableAndJson:
         # The printer — not raw model serialization — is the back-compat boundary.
         # Prove pre-trust fields survive unchanged, including an explicit `null`
         # description (the field must remain present, not be dropped by exclude_none).
-        import json
 
-        repo = Repository(
-            owner="alpha",
-            name="framework",
-            url="https://github.com/alpha/framework",
-            stars=12500,
-            description=None,  # must serialize as "description": null, not vanish
-        )
+        repo = make_repo("alpha", "framework", stars=12500, description=None)
         result = self._result(ranked_by="stars", repos=[repo])
         with console.capture() as cap:
             print_dependents_json(result, include_rank_metadata=False)
@@ -379,7 +340,6 @@ class TestTrustTableAndJson:
         assert "not evidence of fake stars" not in out
 
     def test_json_trust_mode_includes_caution_code_and_description(self) -> None:
-        import json
 
         stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
         result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
@@ -391,7 +351,6 @@ class TestTrustTableAndJson:
         ]
 
     def test_json_trust_mode_without_check_has_no_trust_check_key(self) -> None:
-        import json
 
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         with console.capture() as cap:
@@ -399,9 +358,6 @@ class TestTrustTableAndJson:
         assert "trust_check" not in json.loads(cap.get())
 
     def test_json_trust_mode_with_check_includes_it(self) -> None:
-        import json
-
-        from dep_rank.core.models import TrustCheckResult
 
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         result.trust_check = TrustCheckResult(
@@ -414,11 +370,7 @@ class TestTrustTableAndJson:
     @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
     def test_footer_prints_matched_count_once(self, ranked_by: Literal["stars", "trust"]) -> None:
         repo = (
-            self._trust_repo()
-            if ranked_by == "trust"
-            else Repository(
-                owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
-            )
+            self._trust_repo() if ranked_by == "trust" else make_repo("beta", "toolkit", stars=3200)
         )
         result = self._result(ranked_by=ranked_by, repos=[repo])
         original_width = console.width
@@ -466,9 +418,7 @@ class TestTrustTableAndJson:
         assert "1 insufficient history" in out
 
     def test_fallback_star_table_prints_footer(self) -> None:
-        repo = Repository(
-            owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
-        )
+        repo = make_repo("beta", "toolkit", stars=3200)
         result = self._result(ranked_by="stars", repos=[repo])
         result.trust_check = TrustCheckResult(
             complete=False, window_weeks=30, repos_checked=1, unavailable=["beta/toolkit"]

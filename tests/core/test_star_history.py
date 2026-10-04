@@ -156,12 +156,12 @@ def concentrated_payload() -> list[dict[str, object]]:
 
 
 class TestCheckStarHistory:
-    async def test_concentrated_caution_merged_into_trust(self) -> None:
+    async def test_concentrated_caution_merged_into_trust(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
         repo = history_repo("a")
-        with aioresponses() as m:
-            m.get(history_url("a"), payload=concentrated_payload())
-            async with aiohttp.ClientSession() as session:
-                repos, result = await check_star_history(session, [repo], "tok", now=NOW)
+        mock_http.get(history_url("a"), payload=concentrated_payload())
+        repos, result = await check_star_history(session, [repo], "tok", now=NOW)
         assert repos[0].trust is not None
         assert repo.trust is not None
         assert repos[0].trust.cautions[:-1] == repo.trust.cautions
@@ -174,40 +174,40 @@ class TestCheckStarHistory:
         assert result.complete is True
         assert result.repos_checked == 1
 
-    async def test_request_carries_api_version_and_bearer(self) -> None:
-        with aioresponses() as m:
-            m.get(history_url("a"), payload=[])
-            async with aiohttp.ClientSession() as session:
-                await check_star_history(session, [history_repo("a")], "tok", now=NOW)
-            headers = next(iter(m.requests.values()))[0].kwargs["headers"]
+    async def test_request_carries_api_version_and_bearer(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
+        mock_http.get(history_url("a"), payload=[])
+        await check_star_history(session, [history_repo("a")], "tok", now=NOW)
+        headers = next(iter(mock_http.requests.values()))[0].kwargs["headers"]
         # contract literal: documented API version for this endpoint
         assert headers["X-GitHub-Api-Version"] == "2026-03-10"
         assert headers["Authorization"] == "Bearer tok"
         assert headers["Accept"] == "application/vnd.github+json"
 
-    async def test_caps_at_25_repos(self) -> None:
+    async def test_caps_at_25_repos(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
         repos = [history_repo(str(i)) for i in range(40)]
-        with aioresponses() as m:
-            for i in range(25):
-                m.get(history_url(str(i)), payload=[])
-            async with aiohttp.ClientSession() as session:
-                returned, result = await check_star_history(session, repos, "tok", now=NOW)
-            assert sum(len(calls) for calls in m.requests.values()) == 25
+        for i in range(25):
+            mock_http.get(history_url(str(i)), payload=[])
+        returned, result = await check_star_history(session, repos, "tok", now=NOW)
+        assert sum(len(calls) for calls in mock_http.requests.values()) == 25
         assert result.repos_checked == 25
         assert result.complete is True
         assert returned == repos
         assert [repo.name for repo in returned] == [str(i) for i in range(40)]
 
-    async def test_mixed_failures_are_unavailable(self) -> None:
+    async def test_mixed_failures_are_unavailable(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
         repos = [history_repo(name) for name in "abcde"]
-        with aioresponses() as m:
-            m.get(history_url("a"), payload=concentrated_payload())
-            m.get(history_url("b"), status=404)
-            m.get(history_url("c"), exception=aiohttp.ClientError("network failure"))
-            m.get(history_url("d"), payload={"message": "x"})
-            m.get(history_url("e"), payload=[])
-            async with aiohttp.ClientSession() as session:
-                returned, result = await check_star_history(session, repos, "tok", now=NOW)
+        mock_http.get(history_url("a"), payload=concentrated_payload())
+        mock_http.get(history_url("b"), status=404)
+        mock_http.get(history_url("c"), exception=aiohttp.ClientError("network failure"))
+        mock_http.get(history_url("d"), payload={"message": "x"})
+        mock_http.get(history_url("e"), payload=[])
+        returned, result = await check_star_history(session, repos, "tok", now=NOW)
         assert result.unavailable == ["o/b", "o/c", "o/d"]
         assert result.insufficient_history == ["o/e"]
         assert result.complete is False
@@ -215,59 +215,59 @@ class TestCheckStarHistory:
         assert returned[1:] == repos[1:]
 
     @pytest.mark.parametrize("status", [401, 403, 429])
-    async def test_error_status_does_not_stop_later_checks(self, status: int) -> None:
-        with aioresponses() as m:
-            m.get(history_url("a"), status=status)
-            m.get(history_url("b"), payload=[])
-            async with aiohttp.ClientSession() as session:
-                _, result = await check_star_history(
-                    session, [history_repo("a"), history_repo("b")], "tok", now=NOW
-                )
+    async def test_error_status_does_not_stop_later_checks(
+        self, status: int, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
+        mock_http.get(history_url("a"), status=status)
+        mock_http.get(history_url("b"), payload=[])
+        _, result = await check_star_history(
+            session, [history_repo("a"), history_repo("b")], "tok", now=NOW
+        )
         assert result.unavailable == ["o/a"]
         assert result.insufficient_history == ["o/b"]
         assert result.repos_checked == 2
 
-    async def test_timeout_and_bad_json_are_unavailable(self) -> None:
-        with aioresponses() as m:
-            m.get(history_url("a"), exception=TimeoutError())
-            m.get(history_url("b"), body="{", content_type="application/json")
-            async with aiohttp.ClientSession() as session:
-                _, result = await check_star_history(
-                    session, [history_repo("a"), history_repo("b")], "tok", now=NOW
-                )
+    async def test_timeout_and_bad_json_are_unavailable(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
+        mock_http.get(history_url("a"), exception=TimeoutError())
+        mock_http.get(history_url("b"), body="{", content_type="application/json")
+        _, result = await check_star_history(
+            session, [history_repo("a"), history_repo("b")], "tok", now=NOW
+        )
         assert result.unavailable == ["o/a", "o/b"]
         assert result.complete is False
 
-    async def test_concentrated_repo_without_trust_is_preserved(self) -> None:
+    async def test_concentrated_repo_without_trust_is_preserved(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
         repo = history_repo("a").model_copy(update={"trust": None})
-        with aioresponses() as m:
-            m.get(history_url("a"), payload=concentrated_payload())
-            async with aiohttp.ClientSession() as session:
-                returned, result = await check_star_history(session, [repo], "tok", now=NOW)
+        mock_http.get(history_url("a"), payload=concentrated_payload())
+        returned, result = await check_star_history(session, [repo], "tok", now=NOW)
         assert returned == [repo]
         assert returned[0].trust is None
         assert result.complete is True
         assert result.insufficient_history == []
 
-    async def test_sufficient_spread_history_preserves_existing_cautions(self) -> None:
+    async def test_sufficient_spread_history_preserves_existing_cautions(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
         repos = [history_repo("a")]
         payload = [
             {"week": 1788652800, "total": 210, "days": [30] * 7},
             {"week": 1789257600, "total": 210, "days": [30] * 7},
         ]
-        with aioresponses() as m:
-            m.get(history_url("a"), payload=payload)
-            async with aiohttp.ClientSession() as session:
-                returned, result = await check_star_history(session, repos, "tok", now=NOW)
+        mock_http.get(history_url("a"), payload=payload)
+        returned, result = await check_star_history(session, repos, "tok", now=NOW)
         assert returned == repos
         assert result.complete is True
         assert result.insufficient_history == []
 
-    async def test_empty_repos(self) -> None:
-        with aioresponses() as m:
-            async with aiohttp.ClientSession() as session:
-                returned = await check_star_history(session, [], "tok", now=NOW)
-            assert m.requests == {}
+    async def test_empty_repos(
+        self, mock_http: aioresponses, session: aiohttp.ClientSession
+    ) -> None:
+        returned = await check_star_history(session, [], "tok", now=NOW)
+        assert mock_http.requests == {}
         assert returned == ([], TrustCheckResult(complete=True, window_weeks=30, repos_checked=0))
 
     def test_skipped_trust_check_marks_top_25_unavailable(self) -> None:

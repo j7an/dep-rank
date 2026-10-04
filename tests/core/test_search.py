@@ -6,16 +6,12 @@ import aiohttp
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.models import Repository
 from dep_rank.core.search import search_code
-
-
-def make_repo(owner: str, name: str, stars: int = 100) -> Repository:
-    return Repository(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars)
+from tests.conftest import make_repo
 
 
 class TestSearchCode:
-    async def test_basic_search(self) -> None:
+    async def test_basic_search(self, mock_http: aioresponses, session: ClientSession) -> None:
         repos = [make_repo("alpha", "framework", stars=5000)]
         search_response = {
             "total_count": 2,
@@ -32,57 +28,54 @@ class TestSearchCode:
                 },
             ],
         }
-        with aioresponses() as m:
-            m.get(
-                "https://api.github.com/search/code?q=import%20pandas%20repo%3Aalpha%2Fframework",
-                payload=search_response,
-            )
-            async with ClientSession() as session:
-                result = await search_code(session, repos, "import pandas", token="fake")
+        mock_http.get(
+            "https://api.github.com/search/code?q=import%20pandas%20repo%3Aalpha%2Fframework",
+            payload=search_response,
+        )
+        result = await search_code(session, repos, "import pandas", token="fake")
         assert result.searched_repos == 1
         assert len(result.hits) == 2
         assert result.hits[0].file_path == "src/app.py"
 
-    async def test_respects_max_repos(self) -> None:
+    async def test_respects_max_repos(
+        self, mock_http: aioresponses, session: ClientSession
+    ) -> None:
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(5)]
-        with aioresponses() as m:
-            for i in range(2):
-                m.get(
-                    f"https://api.github.com/search/code?q=test%20repo%3Ao{i}%2Fr{i}",
-                    payload={"total_count": 0, "items": []},
-                )
-            async with ClientSession() as session:
-                result = await search_code(session, repos, "test", token="fake", max_repos=2)
+        for i in range(2):
+            mock_http.get(
+                f"https://api.github.com/search/code?q=test%20repo%3Ao{i}%2Fr{i}",
+                payload={"total_count": 0, "items": []},
+            )
+        result = await search_code(session, repos, "test", token="fake", max_repos=2)
         assert result.searched_repos == 2
 
-    async def test_empty_repos_list(self) -> None:
-        async with ClientSession() as session:
-            result = await search_code(session, [], "query", token="fake")
+    async def test_empty_repos_list(self, session: ClientSession) -> None:
+        result = await search_code(session, [], "query", token="fake")
         assert result.searched_repos == 0
         assert len(result.hits) == 0
 
-    async def test_non_200_status_skipped(self) -> None:
+    async def test_non_200_status_skipped(
+        self, mock_http: aioresponses, session: ClientSession
+    ) -> None:
         """Non-200 responses are silently skipped."""
         repos = [make_repo("alpha", "framework")]
-        with aioresponses() as m:
-            m.get(
-                "https://api.github.com/search/code?q=import%20os%20repo%3Aalpha%2Fframework",
-                status=403,
-            )
-            async with ClientSession() as session:
-                result = await search_code(session, repos, "import os", token="fake")
+        mock_http.get(
+            "https://api.github.com/search/code?q=import%20os%20repo%3Aalpha%2Fframework",
+            status=403,
+        )
+        result = await search_code(session, repos, "import os", token="fake")
         assert result.searched_repos == 1
         assert len(result.hits) == 0
 
-    async def test_client_error_skipped(self) -> None:
+    async def test_client_error_skipped(
+        self, mock_http: aioresponses, session: ClientSession
+    ) -> None:
         """ClientError exceptions are silently skipped."""
         repos = [make_repo("alpha", "framework")]
-        with aioresponses() as m:
-            m.get(
-                "https://api.github.com/search/code?q=import%20os%20repo%3Aalpha%2Fframework",
-                exception=aiohttp.ClientError("connection failed"),
-            )
-            async with ClientSession() as session:
-                result = await search_code(session, repos, "import os", token="fake")
+        mock_http.get(
+            "https://api.github.com/search/code?q=import%20os%20repo%3Aalpha%2Fframework",
+            exception=aiohttp.ClientError("connection failed"),
+        )
+        result = await search_code(session, repos, "import os", token="fake")
         assert result.searched_repos == 1
         assert len(result.hits) == 0

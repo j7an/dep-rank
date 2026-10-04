@@ -9,24 +9,13 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import Repository, ScrapeReason
-from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import (
     ADAPTIVE_W_MIN,
     ADAPTIVE_WINDOW,
     _should_stop,
     scrape_dependents,
 )
-
-
-def _fast_limiter() -> RateLimiter:
-    """A non-throttling limiter for the long end-to-end walks below.
-
-    These tests page through ``ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5`` (~55) pages. The
-    default unauthenticated limiter is 1/min, and even the authenticated 60/min bucket
-    leaves only a ~5-token margin over this walk — fragile if the window constants grow.
-    Inject a high-capacity bucket so ``acquire()`` never blocks regardless of page count.
-    """
-    return RateLimiter(rate=100_000, period=1.0)
+from tests.conftest import dependents_page, fast_limiter
 
 
 def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:
@@ -74,80 +63,61 @@ class TestShouldStopPredicate:
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-def _item(name: str, stars: int) -> str:
-    return (
-        f'<div class="flex-items-center"><span>'
-        f'<a class="text-bold" href="/o/{name}">o/{name}</a></span>'
-        f"<div><span>{stars}</span></div></div>"
-    )
-
-
 def _decaying_page(page_num: int, total_pages: int) -> str:
     # Page 1 seeds three high-star repos; later pages are all low-star.
-    if page_num == 1:
-        body = _item("a", 9000) + _item("b", 8000) + _item("c", 7000)
-    else:
-        body = _item(f"low{page_num}", 10)
-    nav = (
-        f'<a href="/owner/repo/network/dependents?page={page_num + 1}">Next</a>'
-        if page_num < total_pages
-        else '<a href="/owner/repo/network/dependents?page=0">Previous</a>'
+    items = (
+        [("o", "a", 9000), ("o", "b", 8000), ("o", "c", 7000)]
+        if page_num == 1
+        else [("o", f"low{page_num}", 10)]
     )
-    return f"""
-    <html><body>
-    <div class="table-list-header-toggle states flex-auto pl-0">
-        <a class="btn-link selected"
-           href="/owner/repo/network/dependents?dependent_type=REPOSITORY">3000 Repositories</a>
-    </div>
-    <div id="dependents"><div class="Box">{body}</div>
-    <div class="paginate-container"><div>{nav}</div></div></div>
-    </body></html>
-    """
+    return dependents_page(
+        items, next_page=page_num + 1 if page_num < total_pages else None, repos=3000
+    )
 
 
-async def test_decaying_stream_stops_with_trend_converged() -> None:
+async def test_decaying_stream_stops_with_trend_converged(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
-    with aioresponses() as m:
-        m.get(FIRST, body=_decaying_page(1, total))
-        for p in range(2, total + 1):
-            m.get(
-                f"https://github.com/owner/repo/network/dependents?page={p}",
-                body=_decaying_page(p, total),
-            )
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session,
-                "https://github.com/owner/repo",
-                rows=3,
-                min_stars=5,
-                max_pages=1000,
-                rate_limiter=_fast_limiter(),
-            )
+    mock_http.get(FIRST, body=_decaying_page(1, total))
+    for p in range(2, total + 1):
+        mock_http.get(
+            f"https://github.com/owner/repo/network/dependents?page={p}",
+            body=_decaying_page(p, total),
+        )
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=3,
+        min_stars=5,
+        max_pages=1000,
+        rate_limiter=fast_limiter(),
+    )
     assert result.reason == ScrapeReason.TREND_CONVERGED
     assert result.complete is False
     assert result.pages_scraped < total  # stopped before exhausting
     assert [r.name for r in result.repos] == ["a", "b", "c"]
 
 
-async def test_no_adaptive_stop_runs_to_exhaustion() -> None:
+async def test_no_adaptive_stop_runs_to_exhaustion(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5
-    with aioresponses() as m:
-        m.get(FIRST, body=_decaying_page(1, total))
-        for p in range(2, total + 1):
-            m.get(
-                f"https://github.com/owner/repo/network/dependents?page={p}",
-                body=_decaying_page(p, total),
-            )
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session,
-                "https://github.com/owner/repo",
-                rows=3,
-                min_stars=5,
-                max_pages=1000,
-                adaptive_stop=False,
-                rate_limiter=_fast_limiter(),
-            )
+    mock_http.get(FIRST, body=_decaying_page(1, total))
+    for p in range(2, total + 1):
+        mock_http.get(
+            f"https://github.com/owner/repo/network/dependents?page={p}",
+            body=_decaying_page(p, total),
+        )
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=3,
+        min_stars=5,
+        max_pages=1000,
+        adaptive_stop=False,
+        rate_limiter=fast_limiter(),
+    )
     assert result.complete is True
     assert result.reason is None
     assert result.pages_scraped == total

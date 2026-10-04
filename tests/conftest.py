@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import contextlib
 import inspect
-import os
-from collections.abc import Generator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import aiohttp
 import pytest
+from aioresponses import aioresponses
+
+from dep_rank.core.cache import SqliteCache
+from dep_rank.core.models import Repository
+from dep_rank.core.rate_limiter import RateLimiter
 
 # aiohttp 3.14 added a required keyword-only ``stream_writer`` argument to
 # ``ClientResponse.__init__``. aioresponses (<=0.7.8) builds mocked responses
@@ -32,199 +36,97 @@ if "stream_writer" in inspect.signature(_response_init).parameters:
     # deliberately accepts its complete call surface to add the missing keyword.
     aiohttp.ClientResponse.__init__ = _patched_response_init  # type: ignore[method-assign]
 
-DEPENDENTS_HTML_PAGE_1 = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                90
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/beta/toolkit">beta/toolkit</a>
-                    </span>
-                    <div>
-                        <span>3,200</span>
-                    </div>
-                </div>
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/gamma/utils">gamma/utils</a>
-                    </span>
-                    <div>
-                        <span>150</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=2">Next</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
 
-DEPENDENTS_HTML_LAST_PAGE = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                90
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/delta/app">delta/app</a>
-                    </span>
-                    <div>
-                        <span>80</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=1">Previous</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
-
-DEPENDENTS_HTML_NO_RESULTS = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                0
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-            </div>
-        </div>
-    </body>
-</html>
-"""
-
-DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                900
-                Repositories
-            </a>
-            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
-                150
-                Packages
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=2">Next</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
-
-DEPENDENTS_HTML_WITH_COUNTS = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                900
-                Repositories
-            </a>
-            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
-                150
-                Packages
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=1">Previous</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
-
-
-@contextlib.contextmanager
-def isolated_dep_rank_token() -> Iterator[None]:
-    """Remove ``DEP_RANK_TOKEN`` for the duration of the block, then restore it.
-
-    ``pop`` (not ``get``) is used so the variable is actually removed from the
-    environment, regardless of whether the developer has it exported in their
-    shell. On exit the variable is unconditionally cleared first — a block may
-    have set it even when it was absent originally, and that value must not
-    outlive the block — then the original value, if any, is restored. See
-    issue #70.
+def dependents_page(
+    items: Sequence[tuple[str, str, int]],
+    *,
+    next_page: int | None = None,
+    repos: int = 90,
+    packages: int | None = None,
+) -> str:
+    """Build a valid dependents page with counts, repository rows, and pagination."""
+    package_link = (
+        f'<a class="btn-link" href="/owner/repo/network/dependents?dependent_type=PACKAGE">'
+        f"{packages} Packages</a>"
+        if packages is not None
+        else ""
+    )
+    rows = "".join(
+        f'<div class="flex-items-center">'
+        f'<span><a class="text-bold" href="/{owner}/{name}">{owner}/{name}</a></span>'
+        f"<div><span>{stars:,}</span></div></div>"
+        for owner, name, stars in items
+    )
+    nav = (
+        f'<a href="/owner/repo/network/dependents?page={next_page}">Next</a>'
+        if next_page is not None
+        else '<a href="/owner/repo/network/dependents?page=1">Previous</a>'
+    )
+    return f"""
+    <html><body>
+    <div class="table-list-header-toggle states flex-auto pl-0">
+        <a class="btn-link selected"
+           href="/owner/repo/network/dependents?dependent_type=REPOSITORY">{repos} Repositories</a>
+        {package_link}
+    </div>
+    <div id="dependents"><div class="Box">{rows}</div>
+    <div class="paginate-container"><div>{nav}</div></div></div>
+    </body></html>
     """
-    original = os.environ.pop("DEP_RANK_TOKEN", None)
-    try:
-        yield
-    finally:
-        os.environ.pop("DEP_RANK_TOKEN", None)
-        if original is not None:
-            os.environ["DEP_RANK_TOKEN"] = original
+
+
+DEPENDENTS_HTML_PAGE_1 = dependents_page(
+    [("alpha", "framework", 12500), ("beta", "toolkit", 3200), ("gamma", "utils", 150)],
+    next_page=2,
+)
+DEPENDENTS_HTML_LAST_PAGE = dependents_page([("delta", "app", 80)])
+DEPENDENTS_HTML_NO_RESULTS = dependents_page([], repos=0)
+DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = dependents_page(
+    [("alpha", "framework", 12500)], next_page=2, repos=900, packages=150
+)
+DEPENDENTS_HTML_WITH_COUNTS = dependents_page(
+    [("alpha", "framework", 12500)], repos=900, packages=150
+)
 
 
 @pytest.fixture(autouse=True)
-def clean_env() -> Generator[None, None, None]:
-    """Ensure DEP_RANK_TOKEN is not leaked between tests.
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure DEP_RANK_TOKEN is not leaked between tests."""
+    monkeypatch.delenv("DEP_RANK_TOKEN", raising=False)
 
-    Thin wrapper around :func:`isolated_dep_rank_token`; the logic lives there
-    so it can be exercised directly by ``tests/test_conftest.py``.
-    """
-    with isolated_dep_rank_token():
-        yield
+
+@pytest.fixture
+async def cache(tmp_path: Path) -> AsyncIterator[SqliteCache]:
+    """Initialize an isolated cache and close it after each test."""
+    instance = SqliteCache(str(tmp_path))
+    await instance.initialize()
+    try:
+        yield instance
+    finally:
+        await instance.close()
+
+
+def fast_limiter() -> RateLimiter:
+    """Avoid throttling in tests focused on pagination rather than request budgets."""
+    return RateLimiter(rate=100_000, period=1.0)
+
+
+def make_repo(owner: str, name: str, stars: int = 100, **fields: Any) -> Repository:
+    """Build a repository with its standard GitHub URL and optional model fields."""
+    return Repository(
+        owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars, **fields
+    )
+
+
+@pytest.fixture
+def mock_http() -> Iterator[aioresponses]:
+    """Mock HTTP requests for the duration of a test."""
+    with aioresponses() as responses:
+        yield responses
+
+
+@pytest.fixture
+async def session(mock_http: aioresponses) -> AsyncIterator[aiohttp.ClientSession]:
+    """Close the HTTP session before its request mock is removed."""
+    async with aiohttp.ClientSession() as instance:
+        yield instance

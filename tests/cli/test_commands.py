@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -17,15 +18,21 @@ from aioresponses import aioresponses
 from click.testing import CliRunner
 
 from dep_rank import __version__
-from dep_rank.cli.app import cli
+from dep_rank.cli import app as cli_app
+from dep_rank.cli.app import _cache_dir, _open_cache, cli
+from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
+    CodeSearchResult,
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeReason,
     ScrapeResult,
     ScrapeSnapshot,
+    TrustCheckResult,
     TrustMetadataResult,
 )
+from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, make_repo
 
 
 @pytest.fixture
@@ -40,15 +47,8 @@ def mock_result() -> DependentsResult:
         total_count=3000,
         filtered_count=150,
         repos=[
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=12500,
-            ),
-            Repository(
-                owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
-            ),
+            make_repo("alpha", "framework", stars=12500),
+            make_repo("beta", "toolkit", stars=3200),
         ],
         dependent_type=DependentType.REPOSITORY,
         scraped_at=datetime.now(tz=UTC),
@@ -70,7 +70,7 @@ class TestCacheDir:
     def test_paths(
         self, platform: str, case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from dep_rank.cli.app import _cache_dir
+        assert _cache_dir is not cli_app._cache_dir
 
         monkeypatch.setattr(sys, "platform", platform)
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
@@ -95,10 +95,8 @@ class TestCacheDir:
 
 
 class TestOpenCache:
-    async def test_closes_on_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        from dep_rank.cli.app import _open_cache
+    async def test_closes_on_error(self) -> None:
 
-        monkeypatch.setattr("dep_rank.cli.app._cache_dir", lambda: str(tmp_path))
         with pytest.raises(RuntimeError, match="boom"):
             async with _open_cache() as cache:
                 held = cache
@@ -255,26 +253,15 @@ class TestCacheCommand:
 class TestDepsCommandFull:
     """Tests that exercise the full deps command body with mocked core functions."""
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_table_output(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=12500,
-                ),
+                make_repo("alpha", "framework", stars=12500),
             ],
             pages_scraped=1,
             max_pages=1000,
@@ -285,20 +272,15 @@ class TestDepsCommandFull:
         assert result.exit_code == 0
         assert "alpha" in result.output
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_with_descriptions(
         self,
         mock_scrape: AsyncMock,
         mock_enrich: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -316,39 +298,33 @@ class TestDepsCommandFull:
             failed=False,
             complete=True,
         )
-        with aioresponses():
-            result = runner.invoke(
-                cli,
-                [
-                    "deps",
-                    mock_result.source,
-                    "--descriptions",
-                    "--token",
-                    "test-token",
-                    "--rows",
-                    "2",
-                    "--format",
-                    "json",
-                ],
-            )
+        result = runner.invoke(
+            cli,
+            [
+                "deps",
+                mock_result.source,
+                "--descriptions",
+                "--token",
+                "test-token",
+                "--rows",
+                "2",
+                "--format",
+                "json",
+            ],
+        )
         assert result.exit_code == 0
         assert mock_enrich.call_args.kwargs["include_description"] is True
         assert result.stdout.index('"toolkit"') < result.stdout.index('"framework"')
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_descriptions_fetch_failure_falls_back(
         self,
         mock_scrape: AsyncMock,
         mock_enrich: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -359,28 +335,22 @@ class TestDepsCommandFull:
             estimated_total_dependents=900,
         )
         mock_enrich.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
-        with aioresponses():
-            result = runner.invoke(
-                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
-            )
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
+        )
         assert result.exit_code == 0
         assert result.stdout.index("alpha/framework") < result.stdout.index("beta/toolkit")
         assert "Trust metadata fetch failed" not in result.stderr
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_descriptions_rows_zero_skips_graphql(
         self,
         mock_scrape: AsyncMock,
         mock_enrich: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -390,10 +360,9 @@ class TestDepsCommandFull:
             estimated_total_pages=30,
             estimated_total_dependents=900,
         )
-        with aioresponses():
-            result = runner.invoke(
-                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
-            )
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
+        )
         assert result.exit_code == 0
         mock_enrich.assert_not_called()
 
@@ -406,30 +375,18 @@ class TestDepsCommandFull:
 class TestSearchCommandFull:
     """Tests that exercise the full search command body."""
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_search_full(
         self,
         mock_scrape: AsyncMock,
         mock_search: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=5000,
-                ),
+                make_repo("alpha", "framework", stars=5000),
             ],
             pages_scraped=1,
             max_pages=1000,
@@ -457,39 +414,31 @@ class TestSearchCommandFull:
         assert "Error: URL must be a github.com repository URL, got: gitlab.com" in result.stderr
 
 
+async def _seed_cli_cache(*bodies: bytes) -> None:
+    cache = SqliteCache(cli_app._cache_dir())
+    await cache.initialize()
+    try:
+        for index, body in enumerate(bodies):
+            await cache.put(f"https://github.com/owner/repo/{index}", body, etag=None, ttl=3600)
+    finally:
+        await cache.close()
+
+
 class TestCacheCommandsFull:
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.clear", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
-    def test_cache_clear(
-        self,
-        mock_init: AsyncMock,
-        mock_clear: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
+    def test_cache_clear(self, runner: CliRunner) -> None:
+        asyncio.run(_seed_cli_cache(b"cached response"))
         result = runner.invoke(cli, ["cache", "clear"])
         assert result.exit_code == 0
         assert "Cache cleared" in result.output
+        stats = runner.invoke(cli, ["cache", "stats"])
+        assert stats.exit_code == 0
+        assert "Entries: 0" in stats.output
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.stats", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
-    def test_cache_stats(
-        self,
-        mock_init: AsyncMock,
-        mock_stats: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
-        runner: CliRunner,
-    ) -> None:
-        mock_stats.return_value = {"entries": 42, "size_bytes": 12345}
+    def test_cache_stats(self, runner: CliRunner) -> None:
+        asyncio.run(_seed_cli_cache(b"a" * 6000, b"b" * 6345))
         result = runner.invoke(cli, ["cache", "stats"])
         assert result.exit_code == 0
-        assert "42" in result.output
+        assert "Entries: 2" in result.output
         assert "12,345" in result.output
 
 
@@ -501,22 +450,15 @@ class TestVersionOption:
 
 
 class TestDepsHardeningFlags:
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_flags_pass_through_and_counts_use_matched(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import ScrapeReason
 
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=200,
             max_pages=200,
             estimated_total_pages=500,
@@ -545,7 +487,6 @@ class TestDepsHardeningFlags:
         assert "deprecated" in result.stderr
         assert kwargs["adaptive_stop"] is False
         assert kwargs["rows"] == 10  # default --rows
-        import json
 
         payload = json.loads(result.stdout)
         assert payload["complete"] is False
@@ -555,20 +496,14 @@ class TestDepsHardeningFlags:
         assert "Found" not in result.stdout
         assert "⚠" not in result.stdout
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_table_mode_shows_summary(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
@@ -631,24 +566,17 @@ class TestDepsHardeningFlags:
 
 
 class TestSearchHardening:
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_search_uses_bounded_non_adaptive_topk(
         self,
         mock_scrape: AsyncMock,
         mock_search: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
@@ -680,22 +608,15 @@ class TestSearchHardening:
         assert kwargs["rows"] == 7  # bounded to --max-repos
         assert kwargs["adaptive_stop"] is False  # never heuristic on the search path
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_search_max_pages_above_ceiling_warns_and_clamps(
         self,
         mock_scrape: AsyncMock,
         mock_search: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
         """`search` mirrors `deps`: --max-pages above the ceiling warns and clamps."""
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[],
@@ -725,28 +646,21 @@ class TestSearchHardening:
         _, kwargs = mock_scrape.call_args
         assert kwargs["max_pages"] == 1000  # clamped before the scrape
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_search_summary_reports_matched_count_not_len_repos(
         self,
         mock_scrape: AsyncMock,
         mock_search: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
         """Once `search` bounds `repos` to top-K (`rows=max_repos`), the scrape
         summary must report `matched_count`, not `len(repos)`."""
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(owner="a", name="b", url="https://github.com/a/b", stars=900),
-                Repository(owner="c", name="d", url="https://github.com/c/d", stars=800),
+                make_repo("a", "b", stars=900),
+                make_repo("c", "d", stars=800),
             ],
             pages_scraped=200,
             max_pages=200,
@@ -774,37 +688,24 @@ class TestSearchHardening:
 
 
 class TestDepsLiveTopK:
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.get", new_callable=AsyncMock, return_value=None)
-    @patch("dep_rank.core.cache.SqliteCache.put", new_callable=AsyncMock)
     @patch("rich.live.Live.update")
     def test_live_path_drives_and_renders(
         self,
         mock_live_update: MagicMock,
-        mock_put: AsyncMock,
-        mock_get: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
+        mock_http: aioresponses,
     ) -> None:
-        from aioresponses import aioresponses
-
-        from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1
 
         first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
         page2 = "https://github.com/owner/repo/network/dependents?page=2"
-        with aioresponses() as m:
-            # Two pages so the top-K refines across more than one snapshot: page 1 has
-            # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
-            m.get(first, body=DEPENDENTS_HTML_PAGE_1)
-            m.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
-            result = runner.invoke(
-                cli,
-                ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
-            )
+        # Two pages so the top-K refines across more than one snapshot: page 1 has
+        # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
+        mock_http.get(first, body=DEPENDENTS_HTML_PAGE_1)
+        mock_http.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
+        result = runner.invoke(
+            cli,
+            ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
+        )
         assert result.exit_code == 0
         # Repos from BOTH pages appear in the final (post-Live) summary table -> the walk
         # consumed both pages.
@@ -834,18 +735,12 @@ async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object)
 
 
 class TestOnPageCallbacks:
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("rich.live.Live.update")
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_deps_on_page_updates_live(
         self,
         mock_scrape: AsyncMock,
         mock_live_update: MagicMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
         mock_scrape.side_effect = _scrape_calling_on_page
@@ -853,9 +748,6 @@ class TestOnPageCallbacks:
         assert result.exit_code == 0, result.output
         assert mock_live_update.call_count == 1
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
@@ -864,12 +756,8 @@ class TestOnPageCallbacks:
         mock_scrape: AsyncMock,
         mock_search: AsyncMock,
         mock_progress_update: MagicMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.side_effect = _scrape_calling_on_page
         mock_search.return_value = CodeSearchResult(
@@ -904,24 +792,17 @@ class TestRankByTrust:
         ("rows", "expected_pool"),
         [(0, 0), (5, 50), (10, 100), (50, 100), (200, 200)],
     )
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_trust_pool_size_formula(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         rows: int,
         expected_pool: int,
     ) -> None:
         # pool_size = 0 if rows <= 0 else max(rows, min(100, rows * 10))
-        from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -944,25 +825,16 @@ class TestRankByTrust:
         _, kwargs = mock_scrape.call_args
         assert kwargs["rows"] == expected_pool
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_trust_json_includes_metadata(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [
-            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
-            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
+            make_repo("a", "b", stars=10),
+            make_repo("c", "d", stars=20),
         ]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
@@ -989,23 +861,14 @@ class TestRankByTrust:
         assert "score" in payload["repos"][0]["trust"]
         assert payload["repos"][0]["trust"]["cautions"] == []  # zero or more, always a list
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_trust_fetch_failure_falls_back_to_stars(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        import json
 
-        from dep_rank.core.models import TrustMetadataResult
-
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1030,14 +893,13 @@ class TestRankByTrust:
         assert payload["repos"][0]["trust"] is None
 
     def test_star_json_unchanged_has_no_rank_metadata(self, runner: CliRunner) -> None:
-        import json
 
         with patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = DependentsResult(
                 source="https://github.com/django/django",
                 total_count=1,
                 filtered_count=1,
-                repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)],
+                repos=[make_repo("a", "b", stars=10)],
                 dependent_type=DependentType.REPOSITORY,
                 scraped_at=datetime.now(tz=UTC),
             )
@@ -1049,21 +911,14 @@ class TestRankByTrust:
         assert "ranked_by" not in payload
         assert "trust" not in result.stdout
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_fallback_emits_warning_in_table_mode(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1083,21 +938,14 @@ class TestRankByTrust:
         assert result.exit_code == 0
         assert "falling back to star ranking" in result.output
 
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_partial_metadata_emits_warning_in_table_mode(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1130,27 +978,18 @@ class TestRankByTrust:
         assert "requires a GitHub token" in result.stderr
 
     @pytest.mark.parametrize("trust_check", [False, True])
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_trust_check_json_includes_only_requested_result(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         trust_check: bool,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
 
         repos = [
-            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
-            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
-            Repository(owner="e", name="f", url="https://github.com/e/f", stars=30),
+            make_repo("a", "b", stars=10),
+            make_repo("c", "d", stars=20),
+            make_repo("e", "f", stars=30),
         ]
         mock_scrape.return_value = self._scrape_result(repos)
 
@@ -1208,25 +1047,16 @@ class TestRankByTrust:
 
     @pytest.mark.parametrize("output_format", ["table", "json"])
     @pytest.mark.parametrize("metadata_failed", [False, True])
-    @patch("dep_rank.cli.app._cache_dir", return_value="/tmp/test-cache")  # noqa: S108
-    @patch("dep_rank.core.cache.SqliteCache.close", new_callable=AsyncMock)
-    @patch("dep_rank.core.cache.SqliteCache.initialize", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_trust_check_unavailable_status_and_warning(
         self,
         mock_scrape: AsyncMock,
-        mock_init: AsyncMock,
-        mock_close: AsyncMock,
-        mock_cache_dir: AsyncMock,
         runner: CliRunner,
         metadata_failed: bool,
         output_format: str,
     ) -> None:
-        import json
 
-        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
-
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
 
         async def check(
