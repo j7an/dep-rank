@@ -16,6 +16,7 @@ from dep_rank.core.scraper import (
     _should_stop,
     scrape_dependents,
 )
+from tests.conftest import dependents_page
 
 
 def _fast_limiter() -> RateLimiter:
@@ -74,35 +75,16 @@ class TestShouldStopPredicate:
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-def _item(name: str, stars: int) -> str:
-    return (
-        f'<div class="flex-items-center"><span>'
-        f'<a class="text-bold" href="/o/{name}">o/{name}</a></span>'
-        f"<div><span>{stars}</span></div></div>"
-    )
-
-
 def _decaying_page(page_num: int, total_pages: int) -> str:
     # Page 1 seeds three high-star repos; later pages are all low-star.
-    if page_num == 1:
-        body = _item("a", 9000) + _item("b", 8000) + _item("c", 7000)
-    else:
-        body = _item(f"low{page_num}", 10)
-    nav = (
-        f'<a href="/owner/repo/network/dependents?page={page_num + 1}">Next</a>'
-        if page_num < total_pages
-        else '<a href="/owner/repo/network/dependents?page=0">Previous</a>'
+    items = (
+        [("o", "a", 9000), ("o", "b", 8000), ("o", "c", 7000)]
+        if page_num == 1
+        else [("o", f"low{page_num}", 10)]
     )
-    return f"""
-    <html><body>
-    <div class="table-list-header-toggle states flex-auto pl-0">
-        <a class="btn-link selected"
-           href="/owner/repo/network/dependents?dependent_type=REPOSITORY">3000 Repositories</a>
-    </div>
-    <div id="dependents"><div class="Box">{body}</div>
-    <div class="paginate-container"><div>{nav}</div></div></div>
-    </body></html>
-    """
+    return dependents_page(
+        items, next_page=page_num + 1 if page_num < total_pages else None, repos=3000
+    )
 
 
 async def test_decaying_stream_stops_with_trend_converged() -> None:

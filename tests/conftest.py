@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Sequence
 from typing import Any
 from unittest.mock import Mock
 
@@ -29,171 +30,57 @@ if "stream_writer" in inspect.signature(_response_init).parameters:
     # deliberately accepts its complete call surface to add the missing keyword.
     aiohttp.ClientResponse.__init__ = _patched_response_init  # type: ignore[method-assign]
 
-DEPENDENTS_HTML_PAGE_1 = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                90
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/beta/toolkit">beta/toolkit</a>
-                    </span>
-                    <div>
-                        <span>3,200</span>
-                    </div>
-                </div>
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/gamma/utils">gamma/utils</a>
-                    </span>
-                    <div>
-                        <span>150</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=2">Next</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
 
-DEPENDENTS_HTML_LAST_PAGE = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                90
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/delta/app">delta/app</a>
-                    </span>
-                    <div>
-                        <span>80</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=1">Previous</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
+def dependents_page(
+    items: Sequence[tuple[str, str, int]],
+    *,
+    next_page: int | None = None,
+    repos: int = 90,
+    packages: int | None = None,
+) -> str:
+    """Build a valid dependents page with counts, repository rows, and pagination."""
+    package_link = (
+        f'<a class="btn-link" href="/owner/repo/network/dependents?dependent_type=PACKAGE">'
+        f"{packages} Packages</a>"
+        if packages is not None
+        else ""
+    )
+    rows = "".join(
+        f'<div class="flex-items-center">'
+        f'<span><a class="text-bold" href="/{owner}/{name}">{owner}/{name}</a></span>'
+        f"<div><span>{stars:,}</span></div></div>"
+        for owner, name, stars in items
+    )
+    nav = (
+        f'<a href="/owner/repo/network/dependents?page={next_page}">Next</a>'
+        if next_page is not None
+        else '<a href="/owner/repo/network/dependents?page=1">Previous</a>'
+    )
+    return f"""
+    <html><body>
+    <div class="table-list-header-toggle states flex-auto pl-0">
+        <a class="btn-link selected"
+           href="/owner/repo/network/dependents?dependent_type=REPOSITORY">{repos} Repositories</a>
+        {package_link}
+    </div>
+    <div id="dependents"><div class="Box">{rows}</div>
+    <div class="paginate-container"><div>{nav}</div></div></div>
+    </body></html>
+    """
 
-DEPENDENTS_HTML_NO_RESULTS = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                0
-                Repositories
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-            </div>
-        </div>
-    </body>
-</html>
-"""
 
-DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                900
-                Repositories
-            </a>
-            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
-                150
-                Packages
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=2">Next</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
-
-DEPENDENTS_HTML_WITH_COUNTS = """
-<html>
-    <body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                900
-                Repositories
-            </a>
-            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
-                150
-                Packages
-            </a>
-        </div>
-        <div id="dependents">
-            <div class="Box">
-                <div class="flex-items-center">
-                    <span>
-                        <a class="text-bold" href="/alpha/framework">alpha/framework</a>
-                    </span>
-                    <div>
-                        <span>12,500</span>
-                    </div>
-                </div>
-            </div>
-            <div class="paginate-container">
-                <div>
-                    <a href="/owner/repo/network/dependents?page=1">Previous</a>
-                </div>
-            </div>
-        </div>
-    </body>
-</html>
-"""
+DEPENDENTS_HTML_PAGE_1 = dependents_page(
+    [("alpha", "framework", 12500), ("beta", "toolkit", 3200), ("gamma", "utils", 150)],
+    next_page=2,
+)
+DEPENDENTS_HTML_LAST_PAGE = dependents_page([("delta", "app", 80)])
+DEPENDENTS_HTML_NO_RESULTS = dependents_page([], repos=0)
+DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = dependents_page(
+    [("alpha", "framework", 12500)], next_page=2, repos=900, packages=150
+)
+DEPENDENTS_HTML_WITH_COUNTS = dependents_page(
+    [("alpha", "framework", 12500)], repos=900, packages=150
+)
 
 
 @pytest.fixture(autouse=True)

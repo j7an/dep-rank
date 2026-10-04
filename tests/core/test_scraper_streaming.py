@@ -17,42 +17,16 @@ from aioresponses import aioresponses
 
 from dep_rank.core.models import Repository, ScrapeSnapshot
 from dep_rank.core.scraper import scrape_dependents
+from tests.conftest import dependents_page
 
 BASE = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-def _page(rows_html: str, next_page: int | None) -> str:
-    nav = (
-        f'<a href="/owner/repo/network/dependents?page={next_page}">Next</a>'
-        if next_page is not None
-        else '<a href="/owner/repo/network/dependents?page=0">Previous</a>'
-    )
-    return f"""
-    <html><body>
-    <div class="table-list-header-toggle states flex-auto pl-0">
-        <a class="btn-link selected"
-           href="/owner/repo/network/dependents?dependent_type=REPOSITORY">300 Repositories</a>
-    </div>
-    <div id="dependents"><div class="Box">{rows_html}</div>
-    <div class="paginate-container"><div>{nav}</div></div></div>
-    </body></html>
-    """
-
-
-def _item(owner: str, name: str, stars: int) -> str:
-    return f"""
-    <div class="flex-items-center">
-        <span><a class="text-bold" href="/{owner}/{name}">{owner}/{name}</a></span>
-        <div><span>{stars}</span></div>
-    </div>
-    """
-
-
 async def test_top_k_ordering_across_pages() -> None:
     """rows=2 keeps the two highest-star repos regardless of which page they were on."""
-    p1 = _page(_item("a", "one", 100) + _item("b", "two", 5000), next_page=2)
-    p2 = _page(_item("c", "three", 9000) + _item("d", "four", 200), next_page=None)
+    p1 = dependents_page([("a", "one", 100), ("b", "two", 5000)], next_page=2, repos=300)
+    p2 = dependents_page([("c", "three", 9000), ("d", "four", 200)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
@@ -67,7 +41,7 @@ async def test_top_k_ordering_across_pages() -> None:
 
 
 async def test_rows_zero_keeps_no_repos_but_counts() -> None:
-    p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
+    p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
@@ -77,7 +51,7 @@ async def test_rows_zero_keeps_no_repos_but_counts() -> None:
 
 
 async def test_rows_greater_than_total_returns_all() -> None:
-    p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
+    p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
@@ -87,7 +61,7 @@ async def test_rows_greater_than_total_returns_all() -> None:
 
 async def test_ties_keep_earlier_seen() -> None:
     """Equal stars: the repo seen first is retained when the heap is full."""
-    p1 = _page(_item("a", "first", 500) + _item("b", "second", 500), next_page=None)
+    p1 = dependents_page([("a", "first", 500), ("b", "second", 500)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
@@ -105,10 +79,7 @@ async def test_ties_evict_later_seen_when_displaced() -> None:
     keeps the earlier-seen one. ``test_ties_keep_earlier_seen`` above uses rows=1 and
     never evicts, so it passes under either ordering and cannot catch this.
     """
-    p1 = _page(
-        _item("a", "early", 500) + _item("b", "late", 500) + _item("c", "winner", 900),
-        next_page=None,
-    )
+    p1 = dependents_page([("a", "early", 500), ("b", "late", 500), ("c", "winner", 900)], repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
@@ -117,8 +88,8 @@ async def test_ties_evict_later_seen_when_displaced() -> None:
 
 
 async def test_duplicate_repos_counted_once() -> None:
-    p1 = _page(_item("a", "dup", 100), next_page=2)
-    p2 = _page(_item("a", "dup", 100) + _item("c", "new", 80), next_page=None)
+    p1 = dependents_page([("a", "dup", 100)], next_page=2, repos=300)
+    p2 = dependents_page([("a", "dup", 100), ("c", "new", 80)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
@@ -134,8 +105,10 @@ async def test_max_pages_reached_sets_reason() -> None:
     """Hitting the page cap with more pages available -> complete=False, max_pages_reached."""
     from dep_rank.core.models import ScrapeReason
 
-    p1 = _page(_item("a", "one", 100), next_page=2)
-    p2 = _page(_item("b", "two", 80), next_page=3)  # page 2 still advertises a next page
+    p1 = dependents_page([("a", "one", 100)], next_page=2, repos=300)
+    p2 = dependents_page(
+        [("b", "two", 80)], next_page=3, repos=300
+    )  # page 2 still advertises a next page
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
@@ -154,8 +127,8 @@ async def test_on_page_fires_per_page_and_result_carries_outcome() -> None:
     async def on_page(snap: ScrapeSnapshot) -> None:
         seen.append(snap.pages_scraped)
 
-    p1 = _page(_item("a", "one", 100), next_page=2)
-    p2 = _page(_item("b", "two", 80), next_page=None)
+    p1 = dependents_page([("a", "one", 100)], next_page=2, repos=300)
+    p2 = dependents_page([("b", "two", 80)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
@@ -173,7 +146,7 @@ async def test_rows_zero_walks_pages_and_reports_matches() -> None:
     async def on_page(snap: ScrapeSnapshot) -> None:
         tops.append(snap.top_k)
 
-    p1 = _page(_item("a", "one", 100) + _item("b", "two", 50), next_page=None)
+    p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:
@@ -187,7 +160,7 @@ async def test_on_page_exception_propagates() -> None:
     async def on_page(snap: ScrapeSnapshot) -> None:
         raise RuntimeError("render failed")
 
-    p1 = _page(_item("a", "one", 100), next_page=None)
+    p1 = dependents_page([("a", "one", 100)], next_page=None, repos=300)
     with aioresponses() as m:
         m.get(FIRST, body=p1)
         async with ClientSession() as session:

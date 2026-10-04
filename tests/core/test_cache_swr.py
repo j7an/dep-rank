@@ -13,6 +13,7 @@ from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import ScrapeSnapshot
 from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import SWRManager, scrape_dependents
+from tests.conftest import dependents_page
 
 
 class _FakeResp:
@@ -73,17 +74,7 @@ async def cache(tmp_path: Any) -> SqliteCache:
 
 URL = "https://github.com/o/r/network/dependents?page=5"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
-STALE_PAGE = (
-    '<html><body><div class="table-list-header-toggle states flex-auto pl-0">'
-    '<a class="btn-link selected" '
-    'href="/owner/repo/network/dependents?dependent_type=REPOSITORY">30 Repositories</a>'
-    '</div><div id="dependents"><div class="Box">'
-    '<div class="flex-items-center"><span>'
-    '<a class="text-bold" href="/a/one">a/one</a></span><div><span>100</span></div></div>'
-    '</div><div class="paginate-container"><div>'
-    '<a href="/owner/repo/network/dependents?page=0">Previous</a></div></div></div>'
-    "</body></html>"
-)
+STALE_PAGE = dependents_page([("a", "one", 100)], repos=30)
 
 
 class TestSWRManager:
