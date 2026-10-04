@@ -46,11 +46,23 @@ Tests are organized into two packages mirroring the `src/dep_rank/` layout. The 
 - **`test_rate_limiter.py`**: Token-bucket rate limiter — within-limit allow, over-limit block, and replenishment over time.
 - **`test_search.py`**: `search_code` over multiple repos with progress callbacks, max-repos limit, and non-200 / client-error skip behavior.
 
-## Test Fixtures
+## Shared fixtures
 
-### Defined in `tests/conftest.py`
+`tests/conftest.py` provides shared fixtures and data helpers:
 
-- **`clean_env`** (autouse): Removes `DEP_RANK_TOKEN` from the environment before each test and restores its original value (if any) after, so a token exported in the developer's shell does not leak into tests and tests that set or unset the token do not leak state across the suite. Its regression guard lives in `tests/test_conftest.py`.
+- **`dependents_page`** builds dependents HTML with repository rows, pagination,
+  and repository/package counts.
+- **`mock_http`** yields an active `aioresponses` mock; **`session`** yields a real
+  `aiohttp.ClientSession` for deterministic HTTP tests.
+- **`cache`** initializes a real temporary `SqliteCache` and closes it after the test.
+- **`fast_limiter`** creates a high-budget rate limiter for tests without budget delays.
+- **`make_repo`** creates a repository with the standard GitHub URL and optional fields.
+- **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` before each test using
+  `monkeypatch`, which restores environment changes after the test.
+
+The autouse CLI cache fixture in `tests/cli/conftest.py` points
+`dep_rank.cli.app._cache_dir` at a per-test temporary directory. CLI tests use a
+real SQLite cache without reading or modifying the developer's cache.
 
 Module-level HTML constants are also defined in `conftest.py` and imported directly by `tests/core/test_scraper.py`:
 

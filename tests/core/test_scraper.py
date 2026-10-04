@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from unittest.mock import AsyncMock
 
 import aiohttp
@@ -9,6 +10,7 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
+from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     DependentType,
     Repository,
@@ -388,7 +390,6 @@ class TestScrapeDependentsEdgeCases:
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
         """A non-200/304/429 response terminates with reason=network_failure."""
-        from dep_rank.core.models import ScrapeReason
 
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
@@ -404,9 +405,6 @@ class TestScrapeDependentsEdgeCases:
         self, monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
     ) -> None:
         """A persistent 429 (past the retry budget) terminates with reason=rate_limited."""
-        from unittest.mock import AsyncMock
-
-        from dep_rank.core.models import ScrapeReason
 
         # Patch the scraper's sleep so the (growing) 429 backoff does not actually wait.
         monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
@@ -426,9 +424,6 @@ class TestScrapeDependentsEdgeCases:
 
     async def test_cache_hit_skips_network(self) -> None:
         """When cache has a valid (non-expired) entry, no network request is made."""
-        import tempfile
-
-        from dep_rank.core.cache import SqliteCache
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = SqliteCache(tmpdir)
@@ -455,9 +450,6 @@ class TestScrapeDependentsEdgeCases:
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
         """200 response with cache stores the body and etag."""
-        import tempfile
-
-        from dep_rank.core.cache import SqliteCache
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache = SqliteCache(tmpdir)

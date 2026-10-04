@@ -19,17 +19,20 @@ from click.testing import CliRunner
 
 import dep_rank.cli.app
 from dep_rank import __version__
-from dep_rank.cli.app import _cache_dir, cli
+from dep_rank.cli.app import _cache_dir, _open_cache, cli
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
+    CodeSearchResult,
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeReason,
     ScrapeResult,
     ScrapeSnapshot,
+    TrustCheckResult,
     TrustMetadataResult,
 )
-from tests.conftest import make_repo
+from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, make_repo
 
 
 @pytest.fixture
@@ -93,7 +96,6 @@ class TestCacheDir:
 
 class TestOpenCache:
     async def test_closes_on_error(self) -> None:
-        from dep_rank.cli.app import _open_cache
 
         with pytest.raises(RuntimeError, match="boom"):
             async with _open_cache() as cache:
@@ -381,7 +383,6 @@ class TestSearchCommandFull:
         mock_search: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
@@ -455,7 +456,6 @@ class TestDepsHardeningFlags:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import ScrapeReason
 
         mock_scrape.return_value = ScrapeResult(
             repos=[make_repo("a", "b", stars=900)],
@@ -487,7 +487,6 @@ class TestDepsHardeningFlags:
         assert "deprecated" in result.stderr
         assert kwargs["adaptive_stop"] is False
         assert kwargs["rows"] == 10  # default --rows
-        import json
 
         payload = json.loads(result.stdout)
         assert payload["complete"] is False
@@ -575,7 +574,6 @@ class TestSearchHardening:
         mock_search: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[make_repo("a", "b", stars=900)],
@@ -619,7 +617,6 @@ class TestSearchHardening:
         runner: CliRunner,
     ) -> None:
         """`search` mirrors `deps`: --max-pages above the ceiling warns and clamps."""
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[],
@@ -659,7 +656,6 @@ class TestSearchHardening:
     ) -> None:
         """Once `search` bounds `repos` to top-K (`rows=max_repos`), the scrape
         summary must report `matched_count`, not `len(repos)`."""
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
@@ -699,7 +695,6 @@ class TestDepsLiveTopK:
         runner: CliRunner,
         mock_http: aioresponses,
     ) -> None:
-        from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1
 
         first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
         page2 = "https://github.com/owner/repo/network/dependents?page=2"
@@ -763,7 +758,6 @@ class TestOnPageCallbacks:
         mock_progress_update: MagicMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.side_effect = _scrape_calling_on_page
         mock_search.return_value = CodeSearchResult(
@@ -807,7 +801,6 @@ class TestRankByTrust:
         expected_pool: int,
     ) -> None:
         # pool_size = 0 if rows <= 0 else max(rows, min(100, rows * 10))
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
@@ -838,9 +831,6 @@ class TestRankByTrust:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [
             make_repo("a", "b", stars=10),
@@ -877,9 +867,6 @@ class TestRankByTrust:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
@@ -906,7 +893,6 @@ class TestRankByTrust:
         assert payload["repos"][0]["trust"] is None
 
     def test_star_json_unchanged_has_no_rank_metadata(self, runner: CliRunner) -> None:
-        import json
 
         with patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = DependentsResult(
@@ -931,7 +917,6 @@ class TestRankByTrust:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
@@ -959,7 +944,6 @@ class TestRankByTrust:
         mock_scrape: AsyncMock,
         runner: CliRunner,
     ) -> None:
-        from dep_rank.core.models import TrustMetadataResult
 
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
@@ -1001,9 +985,6 @@ class TestRankByTrust:
         runner: CliRunner,
         trust_check: bool,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
 
         repos = [
             make_repo("a", "b", stars=10),
@@ -1074,9 +1055,6 @@ class TestRankByTrust:
         metadata_failed: bool,
         output_format: str,
     ) -> None:
-        import json
-
-        from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
 
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)

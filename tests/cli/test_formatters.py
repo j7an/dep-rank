@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
+from rich.console import Console
 
 from dep_rank.cli.formatters import (
+    build_topk_table,
     console,
     format_scrape_summary,
     humanize,
+    partial_warning,
     print_dependents_json,
     print_dependents_table,
     print_search_results,
@@ -23,6 +27,8 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    ScrapeReason,
+    ScrapeSnapshot,
     TrustCheckResult,
     TrustComponents,
     TrustScore,
@@ -161,8 +167,6 @@ class TestFormatScrapeSummary:
 
 class TestPartialWarning:
     def test_reasons_have_distinct_messages(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         msgs = {
             partial_warning(r)
@@ -176,24 +180,16 @@ class TestPartialWarning:
         assert len(msgs) == 4  # each reason renders a distinct line
 
     def test_max_pages_mentions_flag(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         assert "--max-pages" in partial_warning(ScrapeReason.MAX_PAGES_REACHED)
 
     def test_converged_mentions_opt_out(self) -> None:
-        from dep_rank.cli.formatters import partial_warning
-        from dep_rank.core.models import ScrapeReason
 
         assert "--no-adaptive-stop" in partial_warning(ScrapeReason.TREND_CONVERGED)
 
 
 class TestBuildTopKTable:
     def test_lists_repos_with_humanized_stars(self) -> None:
-        from rich.console import Console
-
-        from dep_rank.cli.formatters import build_topk_table
-        from dep_rank.core.models import ScrapeSnapshot
 
         snap = ScrapeSnapshot(
             top_k=[
@@ -217,10 +213,6 @@ class TestBuildTopKTable:
     def test_empty_top_k_still_renders_progress(self) -> None:
         """A snapshot with no top-K (e.g. high --min-stars early on) must still render
         progress context and a placeholder row, never a blank frame."""
-        from rich.console import Console
-
-        from dep_rank.cli.formatters import build_topk_table
-        from dep_rank.core.models import ScrapeSnapshot
 
         snap = ScrapeSnapshot(
             top_k=[],
@@ -299,7 +291,6 @@ class TestTrustTableAndJson:
         # The printer — not raw model serialization — is the back-compat boundary.
         # Prove pre-trust fields survive unchanged, including an explicit `null`
         # description (the field must remain present, not be dropped by exclude_none).
-        import json
 
         repo = make_repo("alpha", "framework", stars=12500, description=None)
         result = self._result(ranked_by="stars", repos=[repo])
@@ -349,7 +340,6 @@ class TestTrustTableAndJson:
         assert "not evidence of fake stars" not in out
 
     def test_json_trust_mode_includes_caution_code_and_description(self) -> None:
-        import json
 
         stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
         result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
@@ -361,7 +351,6 @@ class TestTrustTableAndJson:
         ]
 
     def test_json_trust_mode_without_check_has_no_trust_check_key(self) -> None:
-        import json
 
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         with console.capture() as cap:
@@ -369,9 +358,6 @@ class TestTrustTableAndJson:
         assert "trust_check" not in json.loads(cap.get())
 
     def test_json_trust_mode_with_check_includes_it(self) -> None:
-        import json
-
-        from dep_rank.core.models import TrustCheckResult
 
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         result.trust_check = TrustCheckResult(

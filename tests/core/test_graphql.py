@@ -8,12 +8,12 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
+from dep_rank.core.graphql import build_trust_query, enrich_with_trust_metadata
 from tests.conftest import make_repo
 
 
 class TestBuildTrustQuery:
     def test_includes_engagement_and_recency_fields(self) -> None:
-        from dep_rank.core.graphql import build_trust_query
 
         q = build_trust_query([make_repo("django", "django")], include_description=False)
         assert "stargazerCount" in q
@@ -27,13 +27,11 @@ class TestBuildTrustQuery:
         assert "description" not in q
 
     def test_include_description_adds_field(self) -> None:
-        from dep_rank.core.graphql import build_trust_query
 
         q = build_trust_query([make_repo("a", "b")], include_description=True)
         assert "description" in q
 
     def test_two_repository_aliases(self) -> None:
-        from dep_rank.core.graphql import build_trust_query
 
         query = build_trust_query(
             [make_repo("a", "b"), make_repo("c", "d")], include_description=True
@@ -47,7 +45,6 @@ class TestEnrichWithTrustMetadata:
     async def test_applies_requested_description(
         self, description: str | None, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b", stars=123).model_copy(update={"description": "Old"})]
         payload = {"data": {"repo_0": {"stargazerCount": 456, "description": description}}}
@@ -63,7 +60,6 @@ class TestEnrichWithTrustMetadata:
     async def test_populates_signals_and_marks_complete(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("django", "django", stars=80000)]
         payload = {
@@ -100,7 +96,6 @@ class TestEnrichWithTrustMetadata:
     async def test_malformed_created_at_degrades_to_missing(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("django", "django", stars=80000)]
         payload = {"data": {"repo_0": {"stargazerCount": 82400, "createdAt": "not-a-date"}}}
@@ -117,7 +112,6 @@ class TestEnrichWithTrustMetadata:
     ) -> None:
         # A non-ISO pushedAt must not abort the run; recency degrades to "missing"
         # (pushed_at=None) while the rest of the signals are still applied.
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("django", "django", stars=80000)]
         payload = {
@@ -144,7 +138,6 @@ class TestEnrichWithTrustMetadata:
     async def test_401_short_circuits_to_failed(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
@@ -159,7 +152,6 @@ class TestEnrichWithTrustMetadata:
     async def test_graphql_error_marks_failed_when_only_batch(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
@@ -174,7 +166,6 @@ class TestEnrichWithTrustMetadata:
     async def test_missing_repo_data_is_partial_not_failed(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b"), make_repo("c", "d")]
         expected = [repo.model_copy(deep=True) for repo in repos]
@@ -204,7 +195,6 @@ class TestEnrichWithTrustMetadata:
     async def test_data_with_errors_is_partial_not_failed(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b"), make_repo("c", "d")]
         payload = {
@@ -233,7 +223,6 @@ class TestEnrichWithTrustMetadata:
     async def test_data_all_null_is_failed(
         self, data: dict[str, None] | None, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         # Null data and all-null repository data both preserve the scraped fallback.
         repos = [make_repo("a", "b")]
@@ -251,7 +240,6 @@ class TestEnrichWithTrustMetadata:
     async def test_multi_batch_one_failed_is_partial(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches (100 + 50)
         good = {
@@ -280,7 +268,6 @@ class TestEnrichWithTrustMetadata:
     async def test_multi_batch_all_failed_is_failed(
         self, mock_http: aioresponses, session: ClientSession
     ) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches
         mock_http.post("https://api.github.com/graphql", status=500)  # batch 1 fails
@@ -292,7 +279,6 @@ class TestEnrichWithTrustMetadata:
         assert result.complete is False
 
     async def test_empty_repos_is_clean(self, session: ClientSession) -> None:
-        from dep_rank.core.graphql import enrich_with_trust_metadata
 
         result = await enrich_with_trust_metadata(
             session, [], token="fake", include_description=False

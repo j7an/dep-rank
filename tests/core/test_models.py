@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from dep_rank.core.models import (
+    CautionCode,
     CodeSearchHit,
     CodeSearchResult,
     DependentsResult,
@@ -15,6 +16,7 @@ from dep_rank.core.models import (
     Repository,
     ScrapeReason,
     ScrapeResult,
+    TrustCheckResult,
     TrustComponents,
     TrustMetadataResult,
     TrustScore,
@@ -224,7 +226,6 @@ class TestScrapeResultContractFields:
 
 class TestDependentsResultContractFields:
     def test_defaults(self) -> None:
-        from datetime import UTC, datetime
 
         result = DependentsResult(
             source="https://github.com/x/y",
@@ -257,12 +258,6 @@ class TestDependentsResultContractFields:
 
 class TestDependentsResultInvariant:
     def test_complete_must_equal_reason_absence(self) -> None:
-        from datetime import datetime
-
-        import pytest
-        from pydantic import ValidationError
-
-        from dep_rank.core.models import DependentType, ScrapeReason
 
         base_dt = datetime(2026, 1, 1)  # noqa: DTZ001
         with pytest.raises(ValidationError):
@@ -300,9 +295,6 @@ class TestDependentsResultInvariant:
     def test_every_reason_marks_incomplete(self, reason: ScrapeReason) -> None:
         """All four terminal reasons construct cleanly on the user-facing model and
         satisfy the invariant."""
-        from datetime import datetime
-
-        from dep_rank.core.models import DependentType
 
         result = DependentsResult(
             source="https://github.com/x/y",
@@ -373,13 +365,11 @@ class TestTrustModels:
 
 
 def test_concentrated_starring_code_value() -> None:
-    from dep_rank.core.models import CautionCode
 
     assert CautionCode.CONCENTRATED_STARRING.value == "concentrated_starring"
 
 
 def test_trust_check_result_defaults() -> None:
-    from dep_rank.core.models import TrustCheckResult
 
     check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=0)
     assert check.insufficient_history == []

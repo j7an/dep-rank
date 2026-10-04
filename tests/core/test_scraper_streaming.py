@@ -15,7 +15,7 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.models import Repository, ScrapeSnapshot
+from dep_rank.core.models import Repository, ScrapeReason, ScrapeSnapshot
 from dep_rank.core.scraper import scrape_dependents
 from tests.conftest import dependents_page
 
@@ -97,7 +97,6 @@ async def test_max_pages_reached_sets_reason(
     mock_http: aioresponses, session: ClientSession
 ) -> None:
     """Hitting the page cap with more pages available -> complete=False, max_pages_reached."""
-    from dep_rank.core.models import ScrapeReason
 
     p1 = dependents_page([("a", "one", 100)], next_page=2, repos=300)
     p2 = dependents_page(
