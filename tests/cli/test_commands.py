@@ -26,6 +26,7 @@ from dep_rank.core.models import (
     ScrapeSnapshot,
     TrustMetadataResult,
 )
+from tests.conftest import make_repo
 
 
 @pytest.fixture
@@ -40,15 +41,8 @@ def mock_result() -> DependentsResult:
         total_count=3000,
         filtered_count=150,
         repos=[
-            Repository(
-                owner="alpha",
-                name="framework",
-                url="https://github.com/alpha/framework",
-                stars=12500,
-            ),
-            Repository(
-                owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
-            ),
+            make_repo("alpha", "framework", stars=12500),
+            make_repo("beta", "toolkit", stars=3200),
         ],
         dependent_type=DependentType.REPOSITORY,
         scraped_at=datetime.now(tz=UTC),
@@ -269,12 +263,7 @@ class TestDepsCommandFull:
     ) -> None:
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=12500,
-                ),
+                make_repo("alpha", "framework", stars=12500),
             ],
             pages_scraped=1,
             max_pages=1000,
@@ -424,12 +413,7 @@ class TestSearchCommandFull:
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(
-                    owner="alpha",
-                    name="framework",
-                    url="https://github.com/alpha/framework",
-                    stars=5000,
-                ),
+                make_repo("alpha", "framework", stars=5000),
             ],
             pages_scraped=1,
             max_pages=1000,
@@ -516,7 +500,7 @@ class TestDepsHardeningFlags:
         from dep_rank.core.models import ScrapeReason
 
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=200,
             max_pages=200,
             estimated_total_pages=500,
@@ -568,7 +552,7 @@ class TestDepsHardeningFlags:
         runner: CliRunner,
     ) -> None:
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
@@ -648,7 +632,7 @@ class TestSearchHardening:
         from dep_rank.core.models import CodeSearchResult
 
         mock_scrape.return_value = ScrapeResult(
-            repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=900)],
+            repos=[make_repo("a", "b", stars=900)],
             pages_scraped=3,
             max_pages=200,
             estimated_total_pages=3,
@@ -745,8 +729,8 @@ class TestSearchHardening:
 
         mock_scrape.return_value = ScrapeResult(
             repos=[
-                Repository(owner="a", name="b", url="https://github.com/a/b", stars=900),
-                Repository(owner="c", name="d", url="https://github.com/c/d", stars=800),
+                make_repo("a", "b", stars=900),
+                make_repo("c", "d", stars=800),
             ],
             pages_scraped=200,
             max_pages=200,
@@ -921,7 +905,7 @@ class TestRankByTrust:
         # pool_size = 0 if rows <= 0 else max(rows, min(100, rows * 10))
         from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -961,8 +945,8 @@ class TestRankByTrust:
         from dep_rank.core.models import TrustMetadataResult
 
         repos = [
-            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
-            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
+            make_repo("a", "b", stars=10),
+            make_repo("c", "d", stars=20),
         ]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
@@ -1005,7 +989,7 @@ class TestRankByTrust:
 
         from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1037,7 +1021,7 @@ class TestRankByTrust:
                 source="https://github.com/django/django",
                 total_count=1,
                 filtered_count=1,
-                repos=[Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)],
+                repos=[make_repo("a", "b", stars=10)],
                 dependent_type=DependentType.REPOSITORY,
                 scraped_at=datetime.now(tz=UTC),
             )
@@ -1063,7 +1047,7 @@ class TestRankByTrust:
     ) -> None:
         from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1097,7 +1081,7 @@ class TestRankByTrust:
     ) -> None:
         from dep_rank.core.models import TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
         with patch(
             "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
@@ -1148,9 +1132,9 @@ class TestRankByTrust:
         from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
 
         repos = [
-            Repository(owner="a", name="b", url="https://github.com/a/b", stars=10),
-            Repository(owner="c", name="d", url="https://github.com/c/d", stars=20),
-            Repository(owner="e", name="f", url="https://github.com/e/f", stars=30),
+            make_repo("a", "b", stars=10),
+            make_repo("c", "d", stars=20),
+            make_repo("e", "f", stars=30),
         ]
         mock_scrape.return_value = self._scrape_result(repos)
 
@@ -1226,7 +1210,7 @@ class TestRankByTrust:
 
         from dep_rank.core.models import TrustCheckResult, TrustMetadataResult
 
-        repos = [Repository(owner="a", name="b", url="https://github.com/a/b", stars=10)]
+        repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = self._scrape_result(repos)
 
         async def check(

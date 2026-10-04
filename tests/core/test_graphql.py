@@ -8,11 +8,7 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.models import Repository
-
-
-def make_repo(owner: str, name: str, stars: int = 100) -> Repository:
-    return Repository(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars)
+from tests.conftest import make_repo
 
 
 class TestBuildTrustQuery:

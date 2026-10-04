@@ -9,25 +9,13 @@ from aiohttp import ClientSession
 from aioresponses import aioresponses
 
 from dep_rank.core.models import Repository, ScrapeReason
-from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import (
     ADAPTIVE_W_MIN,
     ADAPTIVE_WINDOW,
     _should_stop,
     scrape_dependents,
 )
-from tests.conftest import dependents_page
-
-
-def _fast_limiter() -> RateLimiter:
-    """A non-throttling limiter for the long end-to-end walks below.
-
-    These tests page through ``ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5`` (~55) pages. The
-    default unauthenticated limiter is 1/min, and even the authenticated 60/min bucket
-    leaves only a ~5-token margin over this walk — fragile if the window constants grow.
-    Inject a high-capacity bucket so ``acquire()`` never blocks regardless of page count.
-    """
-    return RateLimiter(rate=100_000, period=1.0)
+from tests.conftest import dependents_page, fast_limiter
 
 
 def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:
@@ -103,7 +91,7 @@ async def test_decaying_stream_stops_with_trend_converged() -> None:
                 rows=3,
                 min_stars=5,
                 max_pages=1000,
-                rate_limiter=_fast_limiter(),
+                rate_limiter=fast_limiter(),
             )
     assert result.reason == ScrapeReason.TREND_CONVERGED
     assert result.complete is False
@@ -128,7 +116,7 @@ async def test_no_adaptive_stop_runs_to_exhaustion() -> None:
                 min_stars=5,
                 max_pages=1000,
                 adaptive_stop=False,
-                rate_limiter=_fast_limiter(),
+                rate_limiter=fast_limiter(),
             )
     assert result.complete is True
     assert result.reason is None

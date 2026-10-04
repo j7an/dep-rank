@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import aiohttp
 import pytest
+
+from dep_rank.core.cache import SqliteCache
+from dep_rank.core.models import Repository
+from dep_rank.core.rate_limiter import RateLimiter
 
 # aiohttp 3.14 added a required keyword-only ``stream_writer`` argument to
 # ``ClientResponse.__init__``. aioresponses (<=0.7.8) builds mocked responses
@@ -87,3 +92,26 @@ DEPENDENTS_HTML_WITH_COUNTS = dependents_page(
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure DEP_RANK_TOKEN is not leaked between tests."""
     monkeypatch.delenv("DEP_RANK_TOKEN", raising=False)
+
+
+@pytest.fixture
+async def cache(tmp_path: Path) -> AsyncIterator[SqliteCache]:
+    """Initialize an isolated cache and close it after each test."""
+    instance = SqliteCache(str(tmp_path))
+    await instance.initialize()
+    try:
+        yield instance
+    finally:
+        await instance.close()
+
+
+def fast_limiter() -> RateLimiter:
+    """Avoid throttling in tests focused on pagination rather than request budgets."""
+    return RateLimiter(rate=100_000, period=1.0)
+
+
+def make_repo(owner: str, name: str, stars: int = 100, **fields: Any) -> Repository:
+    """Build a repository with its standard GitHub URL and optional model fields."""
+    return Repository(
+        owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars, **fields
+    )

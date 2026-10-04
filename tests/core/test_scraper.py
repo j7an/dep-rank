@@ -36,20 +36,10 @@ from tests.conftest import (
     DEPENDENTS_HTML_PAGE_1,
     DEPENDENTS_HTML_WITH_COUNTS,
     DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
+    fast_limiter,
 )
 
 FIRST_URL = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
-
-
-def _fast_limiter() -> RateLimiter:
-    """A non-throttling limiter for multi-page tests not about rate limiting.
-
-    A token-less scrape builds the unauthenticated 1/min limiter, whose lone token is
-    drained by page 1; page 2's ``acquire()`` would then ``asyncio.sleep(~60)``. These
-    tests exercise pagination/filtering/progress/estimates, not throttling, so inject a
-    high-capacity bucket that never blocks.
-    """
-    return RateLimiter(rate=100_000, period=1.0)
 
 
 class TestParseDependentCounts:
@@ -212,7 +202,7 @@ class TestScrapeDependents:
                 result = await scrape_dependents(
                     session,
                     "https://github.com/owner/repo",
-                    rate_limiter=_fast_limiter(),
+                    rate_limiter=fast_limiter(),
                     rows=100,
                 )
             assert len(result.repos) == 4
@@ -232,7 +222,7 @@ class TestScrapeDependents:
                     session,
                     "https://github.com/owner/repo",
                     min_stars=200,
-                    rate_limiter=_fast_limiter(),
+                    rate_limiter=fast_limiter(),
                     rows=100,
                 )
             assert all(r.stars >= 200 for r in result.repos)
@@ -254,7 +244,7 @@ class TestScrapeDependents:
                 result = await scrape_dependents(
                     session,
                     "https://github.com/owner/repo",
-                    rate_limiter=_fast_limiter(),
+                    rate_limiter=fast_limiter(),
                     rows=100,
                 )
             urls = [r.url for r in result.repos]
@@ -580,7 +570,7 @@ class TestScrapeResultReturn:
                     session,
                     "https://github.com/owner/repo",
                     on_page=on_page,
-                    rate_limiter=_fast_limiter(),
+                    rate_limiter=fast_limiter(),
                     rows=100,
                 )
         assert result.pages_scraped == 2

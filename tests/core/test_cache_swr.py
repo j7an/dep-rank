@@ -65,13 +65,6 @@ async def _seed_expired(cache: SqliteCache, url: str, body: bytes, etag: str) ->
     await cache.put(url, body, etag=etag, ttl=-1)  # already expired
 
 
-@pytest.fixture
-async def cache(tmp_path: Any) -> SqliteCache:
-    c = SqliteCache(str(tmp_path))
-    await c.initialize()
-    return c
-
-
 URL = "https://github.com/o/r/network/dependents?page=5"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 STALE_PAGE = dependents_page([("a", "one", 100)], repos=30)

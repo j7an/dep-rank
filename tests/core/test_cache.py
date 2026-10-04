@@ -9,13 +9,6 @@ import pytest
 from dep_rank.core.cache import SqliteCache
 
 
-@pytest.fixture
-async def cache(tmp_path: Any) -> SqliteCache:
-    c = SqliteCache(str(tmp_path))
-    await c.initialize()
-    return c
-
-
 class TestSqliteCache:
     async def test_get_miss(self, cache: SqliteCache) -> None:
         result = await cache.get("https://example.com/missing")
