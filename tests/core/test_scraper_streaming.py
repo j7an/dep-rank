@@ -23,53 +23,49 @@ BASE = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-async def test_top_k_ordering_across_pages() -> None:
+async def test_top_k_ordering_across_pages(mock_http: aioresponses, session: ClientSession) -> None:
     """rows=2 keeps the two highest-star repos regardless of which page they were on."""
     p1 = dependents_page([("a", "one", 100), ("b", "two", 5000)], next_page=2, repos=300)
     p2 = dependents_page([("c", "three", 9000), ("d", "four", 200)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session, BASE, rows=2, token="ghp_x", adaptive_stop=False
-            )
+    mock_http.get(FIRST, body=p1)
+    mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
+    result = await scrape_dependents(session, BASE, rows=2, token="ghp_x", adaptive_stop=False)
     assert [r.name for r in result.repos] == ["three", "two"]
     assert result.repos[0].stars == 9000
     assert result.matched_count == 4  # all four passed min_stars=5
     assert result.complete is True
 
 
-async def test_rows_zero_keeps_no_repos_but_counts() -> None:
+async def test_rows_zero_keeps_no_repos_but_counts(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            result = await scrape_dependents(session, BASE, rows=0)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=0)
     assert result.repos == []
     assert result.matched_count == 2
 
 
-async def test_rows_greater_than_total_returns_all() -> None:
+async def test_rows_greater_than_total_returns_all(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            result = await scrape_dependents(session, BASE, rows=50)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=50)
     assert [r.name for r in result.repos] == ["one", "two"]
 
 
-async def test_ties_keep_earlier_seen() -> None:
+async def test_ties_keep_earlier_seen(mock_http: aioresponses, session: ClientSession) -> None:
     """Equal stars: the repo seen first is retained when the heap is full."""
     p1 = dependents_page([("a", "first", 500), ("b", "second", 500)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            result = await scrape_dependents(session, BASE, rows=1)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=1)
     assert [r.name for r in result.repos] == ["first"]
 
 
-async def test_ties_evict_later_seen_when_displaced() -> None:
+async def test_ties_evict_later_seen_when_displaced(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     """Regression for the eviction tiebreak (not just admission): when a
     higher-star repo displaces one of two equal-star repos in a full heap, the
     *later-seen* tie must be evicted and the earlier-seen one retained.
@@ -80,28 +76,26 @@ async def test_ties_evict_later_seen_when_displaced() -> None:
     never evicts, so it passes under either ordering and cannot catch this.
     """
     p1 = dependents_page([("a", "early", 500), ("b", "late", 500), ("c", "winner", 900)], repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            result = await scrape_dependents(session, BASE, rows=2, adaptive_stop=False)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=2, adaptive_stop=False)
     assert [r.name for r in result.repos] == ["winner", "early"]
 
 
-async def test_duplicate_repos_counted_once() -> None:
+async def test_duplicate_repos_counted_once(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     p1 = dependents_page([("a", "dup", 100)], next_page=2, repos=300)
     p2 = dependents_page([("a", "dup", 100), ("c", "new", 80)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session, BASE, rows=10, token="ghp_x", adaptive_stop=False
-            )
+    mock_http.get(FIRST, body=p1)
+    mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
+    result = await scrape_dependents(session, BASE, rows=10, token="ghp_x", adaptive_stop=False)
     assert result.matched_count == 2
     assert sorted(r.name for r in result.repos) == ["dup", "new"]
 
 
-async def test_max_pages_reached_sets_reason() -> None:
+async def test_max_pages_reached_sets_reason(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     """Hitting the page cap with more pages available -> complete=False, max_pages_reached."""
     from dep_rank.core.models import ScrapeReason
 
@@ -109,19 +103,19 @@ async def test_max_pages_reached_sets_reason() -> None:
     p2 = dependents_page(
         [("b", "two", 80)], next_page=3, repos=300
     )  # page 2 still advertises a next page
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session, BASE, rows=5, max_pages=2, token="ghp_x", adaptive_stop=False
-            )
+    mock_http.get(FIRST, body=p1)
+    mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
+    result = await scrape_dependents(
+        session, BASE, rows=5, max_pages=2, token="ghp_x", adaptive_stop=False
+    )
     assert result.pages_scraped == 2
     assert result.complete is False
     assert result.reason == ScrapeReason.MAX_PAGES_REACHED
 
 
-async def test_on_page_fires_per_page_and_result_carries_outcome() -> None:
+async def test_on_page_fires_per_page_and_result_carries_outcome(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     seen: list[int] = []
 
     async def on_page(snap: ScrapeSnapshot) -> None:
@@ -129,40 +123,38 @@ async def test_on_page_fires_per_page_and_result_carries_outcome() -> None:
 
     p1 = dependents_page([("a", "one", 100)], next_page=2, repos=300)
     p2 = dependents_page([("b", "two", 80)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        m.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session, BASE, rows=5, token="ghp_x", adaptive_stop=False, on_page=on_page
-            )
+    mock_http.get(FIRST, body=p1)
+    mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
+    result = await scrape_dependents(
+        session, BASE, rows=5, token="ghp_x", adaptive_stop=False, on_page=on_page
+    )
     assert seen == [1, 2]
     assert result.complete is True and result.reason is None
 
 
-async def test_rows_zero_walks_pages_and_reports_matches() -> None:
+async def test_rows_zero_walks_pages_and_reports_matches(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     tops: list[list[Repository]] = []
 
     async def on_page(snap: ScrapeSnapshot) -> None:
         tops.append(snap.top_k)
 
     p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            result = await scrape_dependents(session, BASE, rows=0, on_page=on_page)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=0, on_page=on_page)
     assert result.repos == []
     assert result.matched_count == 2
     assert tops == [[]]
 
 
-async def test_on_page_exception_propagates() -> None:
+async def test_on_page_exception_propagates(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     async def on_page(snap: ScrapeSnapshot) -> None:
         raise RuntimeError("render failed")
 
     p1 = dependents_page([("a", "one", 100)], next_page=None, repos=300)
-    with aioresponses() as m:
-        m.get(FIRST, body=p1)
-        async with ClientSession() as session:
-            with pytest.raises(RuntimeError, match="render failed"):
-                await scrape_dependents(session, BASE, rows=5, on_page=on_page)
+    mock_http.get(FIRST, body=p1)
+    with pytest.raises(RuntimeError, match="render failed"):
+        await scrape_dependents(session, BASE, rows=5, on_page=on_page)

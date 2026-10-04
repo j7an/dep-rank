@@ -288,6 +288,7 @@ class TestDepsCommandFull:
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -305,21 +306,20 @@ class TestDepsCommandFull:
             failed=False,
             complete=True,
         )
-        with aioresponses():
-            result = runner.invoke(
-                cli,
-                [
-                    "deps",
-                    mock_result.source,
-                    "--descriptions",
-                    "--token",
-                    "test-token",
-                    "--rows",
-                    "2",
-                    "--format",
-                    "json",
-                ],
-            )
+        result = runner.invoke(
+            cli,
+            [
+                "deps",
+                mock_result.source,
+                "--descriptions",
+                "--token",
+                "test-token",
+                "--rows",
+                "2",
+                "--format",
+                "json",
+            ],
+        )
         assert result.exit_code == 0
         assert mock_enrich.call_args.kwargs["include_description"] is True
         assert result.stdout.index('"toolkit"') < result.stdout.index('"framework"')
@@ -338,6 +338,7 @@ class TestDepsCommandFull:
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -348,10 +349,9 @@ class TestDepsCommandFull:
             estimated_total_dependents=900,
         )
         mock_enrich.return_value = TrustMetadataResult(repos=repos, failed=True, complete=False)
-        with aioresponses():
-            result = runner.invoke(
-                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
-            )
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "2"]
+        )
         assert result.exit_code == 0
         assert result.stdout.index("alpha/framework") < result.stdout.index("beta/toolkit")
         assert "Trust metadata fetch failed" not in result.stderr
@@ -370,6 +370,7 @@ class TestDepsCommandFull:
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
+        mock_http: aioresponses,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = ScrapeResult(
@@ -379,10 +380,9 @@ class TestDepsCommandFull:
             estimated_total_pages=30,
             estimated_total_dependents=900,
         )
-        with aioresponses():
-            result = runner.invoke(
-                cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
-            )
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--descriptions", "--token", "t", "--rows", "0"]
+        )
         assert result.exit_code == 0
         mock_enrich.assert_not_called()
 
@@ -773,22 +773,20 @@ class TestDepsLiveTopK:
         mock_close: AsyncMock,
         mock_cache_dir: AsyncMock,
         runner: CliRunner,
+        mock_http: aioresponses,
     ) -> None:
-        from aioresponses import aioresponses
-
         from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1
 
         first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
         page2 = "https://github.com/owner/repo/network/dependents?page=2"
-        with aioresponses() as m:
-            # Two pages so the top-K refines across more than one snapshot: page 1 has
-            # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
-            m.get(first, body=DEPENDENTS_HTML_PAGE_1)
-            m.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
-            result = runner.invoke(
-                cli,
-                ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
-            )
+        # Two pages so the top-K refines across more than one snapshot: page 1 has
+        # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
+        mock_http.get(first, body=DEPENDENTS_HTML_PAGE_1)
+        mock_http.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
+        result = runner.invoke(
+            cli,
+            ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
+        )
         assert result.exit_code == 0
         # Repos from BOTH pages appear in the final (post-Live) summary table -> the walk
         # consumed both pages.

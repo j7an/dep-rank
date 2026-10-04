@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import aiohttp
 import pytest
+from aioresponses import aioresponses
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import Repository
@@ -115,3 +116,17 @@ def make_repo(owner: str, name: str, stars: int = 100, **fields: Any) -> Reposit
     return Repository(
         owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars, **fields
     )
+
+
+@pytest.fixture
+def mock_http() -> Iterator[aioresponses]:
+    """Mock HTTP requests for the duration of a test."""
+    with aioresponses() as responses:
+        yield responses
+
+
+@pytest.fixture
+async def session(mock_http: aioresponses) -> AsyncIterator[aiohttp.ClientSession]:
+    """Close the HTTP session before its request mock is removed."""
+    async with aiohttp.ClientSession() as instance:
+        yield instance

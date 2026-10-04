@@ -75,49 +75,49 @@ def _decaying_page(page_num: int, total_pages: int) -> str:
     )
 
 
-async def test_decaying_stream_stops_with_trend_converged() -> None:
+async def test_decaying_stream_stops_with_trend_converged(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
-    with aioresponses() as m:
-        m.get(FIRST, body=_decaying_page(1, total))
-        for p in range(2, total + 1):
-            m.get(
-                f"https://github.com/owner/repo/network/dependents?page={p}",
-                body=_decaying_page(p, total),
-            )
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session,
-                "https://github.com/owner/repo",
-                rows=3,
-                min_stars=5,
-                max_pages=1000,
-                rate_limiter=fast_limiter(),
-            )
+    mock_http.get(FIRST, body=_decaying_page(1, total))
+    for p in range(2, total + 1):
+        mock_http.get(
+            f"https://github.com/owner/repo/network/dependents?page={p}",
+            body=_decaying_page(p, total),
+        )
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=3,
+        min_stars=5,
+        max_pages=1000,
+        rate_limiter=fast_limiter(),
+    )
     assert result.reason == ScrapeReason.TREND_CONVERGED
     assert result.complete is False
     assert result.pages_scraped < total  # stopped before exhausting
     assert [r.name for r in result.repos] == ["a", "b", "c"]
 
 
-async def test_no_adaptive_stop_runs_to_exhaustion() -> None:
+async def test_no_adaptive_stop_runs_to_exhaustion(
+    mock_http: aioresponses, session: ClientSession
+) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5
-    with aioresponses() as m:
-        m.get(FIRST, body=_decaying_page(1, total))
-        for p in range(2, total + 1):
-            m.get(
-                f"https://github.com/owner/repo/network/dependents?page={p}",
-                body=_decaying_page(p, total),
-            )
-        async with ClientSession() as session:
-            result = await scrape_dependents(
-                session,
-                "https://github.com/owner/repo",
-                rows=3,
-                min_stars=5,
-                max_pages=1000,
-                adaptive_stop=False,
-                rate_limiter=fast_limiter(),
-            )
+    mock_http.get(FIRST, body=_decaying_page(1, total))
+    for p in range(2, total + 1):
+        mock_http.get(
+            f"https://github.com/owner/repo/network/dependents?page={p}",
+            body=_decaying_page(p, total),
+        )
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=3,
+        min_stars=5,
+        max_pages=1000,
+        adaptive_stop=False,
+        rate_limiter=fast_limiter(),
+    )
     assert result.complete is True
     assert result.reason is None
     assert result.pages_scraped == total
