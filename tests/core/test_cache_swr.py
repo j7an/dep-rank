@@ -261,8 +261,9 @@ class TestSWRIntegration:
         mock_http.get(URL, status=200, body=b"<html>fresh</html>", headers={"ETag": '"new"'})
         limiter = _auth_limiter()
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
-        html = await _read_page(session, URL, limiter, {}, cache, swr)
+        html, stale = await _read_page(session, URL, limiter, {}, cache, swr)
         assert html == "<html>stale</html>"  # stale served synchronously
+        assert stale is True
         await swr.drain()
         entry = await cache.get(URL)
         assert entry is not None
@@ -327,6 +328,7 @@ async def test_unauthenticated_expired_hit_serves_stale_without_request(
     result = await scrape_dependents(session, "https://github.com/owner/repo", rows=5, cache=cache)
     assert [r.name for r in result.repos] == ["one"]
     assert sum(len(v) for v in mock_http.requests.values()) == 0
+    assert result.stale_pages == 1  # reported so the CLI can say the data was not refreshed
 
 
 async def test_on_page_exception_still_drains_refresh(

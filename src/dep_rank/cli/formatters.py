@@ -152,6 +152,15 @@ def partial_warning(reason: ScrapeReason | None) -> str:
     return f"[yellow]⚠ {text}[/yellow]"
 
 
+def stale_cache_notice(stale_pages: int, pages_scraped: int) -> str:
+    """Render the caveat for an unauthenticated run that served expired cache pages."""
+    return (
+        f"[yellow]⚠ {stale_pages} of {pages_scraped} pages came from expired cache entries, "
+        "which are only refreshed on authenticated runs. Set a GitHub token (--token or "
+        'DEP_RANK_TOKEN) or run "dep-rank cache clear" for current results.[/yellow]'
+    )
+
+
 def build_topk_table(snapshot: ScrapeSnapshot) -> Table:
     """Render the running top-K as a Rich table for the Live display during a scrape.
 
