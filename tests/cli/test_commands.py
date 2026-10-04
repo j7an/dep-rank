@@ -119,6 +119,50 @@ class TestImportCost:
         assert out == "[]"
 
 
+class TestLiveWarnings:
+    def test_scraper_warning_survives_transient_cli_live(self) -> None:
+        code = """import asyncio
+import json
+import logging
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+from rich.live import Live
+from dep_rank.cli.app import run_deps
+from dep_rank.core.models import ScrapeResult
+
+captured = []
+class CapturingLive(Live):
+    def start(self, *args, **kwargs):
+        self.console._force_terminal = True
+        self.capture = self.console.capture()
+        self.capture.__enter__()
+        super().start(*args, **kwargs)
+
+    def stop(self):
+        super().stop()
+        self.capture.__exit__(None, None, None)
+        captured.append(self.capture.get())
+
+async def scrape(*args, **kwargs):
+    logging.getLogger("dep_rank.core.scraper").warning("scraper warning survives")
+    return ScrapeResult(repos=[], pages_scraped=1, max_pages=1,
+                        estimated_total_pages=1, estimated_total_dependents=0)
+
+with TemporaryDirectory() as cache_dir:
+    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
+         patch("dep_rank.core.scraper.scrape_dependents", side_effect=scrape), \
+         patch("rich.live.Live", CapturingLive):
+        asyncio.run(run_deps("https://github.com/x/y", 2, 0, False, False, None))
+print(json.dumps(captured))
+"""
+        result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+        )
+        captures = json.loads(result.stdout)
+        assert len(captures) == 1
+        assert "scraper warning survives" in captures[0]
+
+
 class TestJsonStdout:
     def test_enrichment_warning_stays_off_json_stdout(self) -> None:
         code = """import tests.conftest

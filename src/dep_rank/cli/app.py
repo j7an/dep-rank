@@ -24,12 +24,12 @@ if TYPE_CHECKING:
     from dep_rank.core.cache import SqliteCache
     from dep_rank.core.models import ScrapeResult
 
+_stderr_console = Console(stderr=True)
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(message)s",
-    handlers=[
-        RichHandler(console=Console(stderr=True), show_time=False, show_path=False, markup=True)
-    ],
+    handlers=[RichHandler(console=_stderr_console, show_time=False, show_path=False, markup=True)],
 )
 
 
@@ -114,7 +114,6 @@ async def run_deps(
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import aiohttp
-    from rich.console import Console
     from rich.live import Live
 
     from dep_rank.cli.formatters import build_topk_table
@@ -122,7 +121,7 @@ async def run_deps(
     from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
     from dep_rank.core.scraper import scrape_dependents
 
-    console = Console(stderr=True)
+    console = _stderr_console
     async with _open_cache() as cache:
         dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
         async with aiohttp.ClientSession(
@@ -412,14 +411,13 @@ def search(
 
     async def _run() -> None:
         import aiohttp
-        from rich.console import Console
 
         from dep_rank.cli.formatters import print_search_results
         from dep_rank.core.models import ScrapeSnapshot
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
-        console = Console(stderr=True)
+        console = _stderr_console
         async with _open_cache() as cache:
             async with aiohttp.ClientSession(
                 headers={"User-Agent": "dep-rank/0.1"},
