@@ -131,7 +131,7 @@ caller-owned PyPI template:
 | `publish-testpypi` | Publishes the built artifacts to TestPyPI |
 | `verify-testpypi` | Uses Python 3.13 and an explicit uv source to install only `dep-rank` from TestPyPI while resolving ordinary dependencies from PyPI, then runs `dep-rank --version` |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
-| `github-release` | Creates a **draft** GitHub Release with auto-generated notes and attached artifacts |
+| `github-release` | Publishes the GitHub Release with auto-generated notes and attached artifacts |
 
 Monitor progress at:
 `https://github.com/j7an/dep-rank/actions`
@@ -143,7 +143,7 @@ Monitor progress at:
 - [ ] Approve the `pypi` environment deployment when GitHub prompts you
 - [ ] Verify the live package: `pip install "dep-rank==${VERSION}"`
 - [ ] Smoke-test: `dep-rank --version`
-- [ ] Open the draft GitHub Release, review auto-generated notes, and click **Publish release**
+- [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
 
 ---
 
@@ -181,5 +181,4 @@ skipped, create the release manually:
 
     gh release create "v${VERSION}" dist/* \
       --title "v${VERSION}" \
-      --generate-notes \
-      --draft
+      --generate-notes
