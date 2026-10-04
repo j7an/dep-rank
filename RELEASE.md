@@ -16,14 +16,7 @@ These are already configured. Verify once if something seems broken:
   trigger the downstream release workflow)
 - [ ] `RELEASE_BOT_APP_ID` repository variable set
   (Settings → Secrets and variables → Actions → Variables tab)
-- [ ] `RELEASE_BOT_PRIVATE_KEY` stored in **all three** required stores (same
-  key value in each — see "Release Bot Credential Topology" below):
-  - Repo **Actions** secret
-    (Settings → Secrets and variables → Actions → Repository secrets)
-  - Repo **Dependabot** secret
-    (Settings → Secrets and variables → Dependabot → Repository secrets)
-  - **`release` environment** secret
-    (Settings → Environments → `release` → Environment secrets)
+- [ ] `RELEASE_BOT_PRIVATE_KEY` stored, with the same key value, in each of the three stores listed in [Release Bot Credential Topology](#release-bot-credential-topology)
 - [ ] `release` environment restricted to `main`
   (Settings → Environments → `release` → Deployment branches and tags →
   "Selected branches and tags" → pattern `main`)
@@ -38,11 +31,11 @@ contexts that cannot share a single store. **All three intentionally hold the
 same key value** — this duplication is an accepted trade-off (a separate app
 per trust level was considered and deferred).
 
-| Store | Used by | Why this store |
-|-------|---------|----------------|
-| `release` environment secret | `tag-release` (Actions → Tag Release) | The pinned shared `tag-release` reusable workflow declares `environment: release`. GitHub uses the **environment** secret instead of the caller-passed one, which is what scopes the release credential to the environment. |
-| Repo **Actions** secret | `pre-commit-autoupdate.yml` | Reads the secret directly in a normal scheduled job. |
-| Repo **Dependabot** secret | `ci.yml` → `update-lockfile` | Dependabot-triggered runs can read **only** Dependabot secrets. |
+| Store | Where to set it | Used by | Why this store |
+|-------|-----------------|---------|----------------|
+| `release` environment secret | Settings → Environments → `release` → Environment secrets | `tag-release` (Actions → Tag Release) | The pinned shared `tag-release` reusable workflow declares `environment: release`. GitHub uses the **environment** secret instead of the caller-passed one, which is what scopes the release credential to the environment. |
+| Repo **Actions** secret | Settings → Secrets and variables → Actions → Repository secrets | `pre-commit-autoupdate.yml` | Reads the secret directly in a normal scheduled job. |
+| Repo **Dependabot** secret | Settings → Secrets and variables → Dependabot → Repository secrets | `ci.yml` → `update-lockfile` | Dependabot-triggered runs can read **only** Dependabot secrets. |
 
 **Access gating:**
 
@@ -69,11 +62,9 @@ add the new key everywhere, verify, then remove the old one.
 1. **Generate** a new private key for the Release Bot App
    (App settings → Private keys → Generate a private key → downloads a `.pem`).
    Leave the existing key active for now.
-2. **Update all three stores** with the new key's full `.pem` contents
-   (they must stay equal — see topology table):
-   - Settings → Secrets and variables → **Actions** → `RELEASE_BOT_PRIVATE_KEY`
-   - Settings → Secrets and variables → **Dependabot** → `RELEASE_BOT_PRIVATE_KEY`
-   - Settings → Environments → **`release`** → `RELEASE_BOT_PRIVATE_KEY`
+2. **Update `RELEASE_BOT_PRIVATE_KEY` in every store** in the
+   [topology table](#release-bot-credential-topology) with the new key's full
+   `.pem` contents (they must stay equal).
 3. **Verify each consumer** with the new key before deleting the old one:
    - **pre-commit autoupdate** (Actions store): `gh workflow run pre-commit-autoupdate.yml`,
      then confirm the run succeeds (it mints an app token early).
