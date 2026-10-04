@@ -55,6 +55,9 @@ class TestSqliteCache:
         result = await cache.get("https://example.com/a")
         assert result is None
 
+    async def test_stats_empty(self, cache: SqliteCache) -> None:
+        assert await cache.stats() == {"entries": 0, "size_bytes": 0}
+
     async def test_stats(self, cache: SqliteCache) -> None:
         await cache.put(url="https://example.com/1", body=b"x", etag=None, ttl=3600)
         await cache.put(url="https://example.com/2", body=b"y", etag=None, ttl=3600)

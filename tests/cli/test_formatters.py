@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
+import pytest
+
 from dep_rank.cli.formatters import (
     console,
     format_scrape_summary,
@@ -409,6 +411,28 @@ class TestTrustTableAndJson:
             print_dependents_json(result, include_rank_metadata=True)
         assert json.loads(cap.get())["trust_check"]["unavailable"] == ["alpha/framework"]
 
+    @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
+    def test_footer_prints_matched_count_once(self, ranked_by: Literal["stars", "trust"]) -> None:
+        repo = (
+            self._trust_repo()
+            if ranked_by == "trust"
+            else Repository(
+                owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200
+            )
+        )
+        result = self._result(ranked_by=ranked_by, repos=[repo])
+        original_width = console.width
+        try:
+            console.width = 200
+            with console.capture() as cap:
+                print_dependents_table(result)
+        finally:
+            console.width = original_width
+        out = cap.get()
+        assert out.count("100 dependents at or above the star threshold") == 1
+        assert "with stars above threshold" not in out
+        assert "total dependents" not in out
+
     def test_table_footer_counts(self) -> None:
         concentrated = CautionSignal(
             code=CautionCode.CONCENTRATED_STARRING, description="A concentrated day"
@@ -459,7 +483,7 @@ class TestTrustTableAndJson:
         out = cap.get()
         assert "Trust check (last 30 weeks of star history): 1 of 1 repos checked" in out
         assert "0 concentrated · 0 insufficient history · 1 unavailable" in out
-        assert out.index("Trust check") > out.index("total dependents")
+        assert out.index("Trust check") > out.index("star threshold")
 
     def test_no_footer_without_check(self) -> None:
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])

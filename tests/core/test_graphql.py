@@ -4,122 +4,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.graphql import build_batch_query, enrich_with_graphql
 from dep_rank.core.models import Repository
 
 
 def make_repo(owner: str, name: str, stars: int = 100) -> Repository:
     return Repository(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", stars=stars)
-
-
-class TestBuildBatchQuery:
-    def test_single_repo(self) -> None:
-        query = build_batch_query([make_repo("django", "django")])
-        assert "repository(owner:" in query
-        assert "stargazerCount" in query
-        assert "description" in query
-
-    def test_multiple_repos(self) -> None:
-        repos = [make_repo("a", "b"), make_repo("c", "d")]
-        query = build_batch_query(repos)
-        assert "repo_0:" in query
-        assert "repo_1:" in query
-
-    def test_batch_limit_100(self) -> None:
-        repos = [make_repo(f"owner{i}", f"repo{i}") for i in range(150)]
-        query = build_batch_query(repos[:100])
-        assert "repo_99:" in query
-
-
-class TestEnrichWithGraphql:
-    async def test_enriches_stars_and_description(self) -> None:
-        repos = [make_repo("django", "django", stars=80000)]
-        graphql_response = {
-            "data": {
-                "repo_0": {
-                    "stargazerCount": 82400,
-                    "description": "The Web framework for perfectionists with deadlines.",
-                }
-            }
-        }
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=graphql_response)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert enriched[0].stars == 82400
-        assert enriched[0].description == "The Web framework for perfectionists with deadlines."
-
-    async def test_handles_null_description(self) -> None:
-        repos = [make_repo("a", "b")]
-        graphql_response = {"data": {"repo_0": {"stargazerCount": 50, "description": None}}}
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=graphql_response)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert enriched[0].description is None
-
-    async def test_batches_over_100(self) -> None:
-        repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]
-        response_1 = {
-            "data": {f"repo_{i}": {"stargazerCount": i, "description": None} for i in range(100)}
-        }
-        response_2 = {
-            "data": {
-                f"repo_{i}": {"stargazerCount": 100 + i, "description": None} for i in range(50)
-            }
-        }
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=response_1)
-            m.post("https://api.github.com/graphql", payload=response_2)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert len(enriched) == 150
-
-    async def test_resorts_by_accurate_stars(self) -> None:
-        repos = [make_repo("a", "b", stars=200), make_repo("c", "d", stars=100)]
-        graphql_response = {
-            "data": {
-                "repo_0": {"stargazerCount": 50, "description": None},
-                "repo_1": {"stargazerCount": 300, "description": None},
-            }
-        }
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=graphql_response)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert enriched[0].owner == "c"
-        assert enriched[1].owner == "a"
-
-    async def test_empty_repos_returns_empty(self) -> None:
-        """enrich_with_graphql returns [] when passed empty list."""
-        async with ClientSession() as session:
-            enriched = await enrich_with_graphql(session, [], token="fake-token")
-        assert enriched == []
-
-    async def test_error_response_falls_back(self) -> None:
-        """When GraphQL returns errors instead of data, repos pass through unchanged."""
-        repos = [make_repo("a", "b", stars=100)]
-        graphql_response = {"errors": [{"message": "rate limited"}]}
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=graphql_response)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert len(enriched) == 1
-        assert enriched[0].stars == 100  # unchanged
-
-    async def test_missing_repo_data_falls_back(self) -> None:
-        """When a specific repo is missing from GraphQL data, it passes through unchanged."""
-        repos = [make_repo("a", "b", stars=100)]
-        graphql_response: dict[str, object] = {"data": {}}  # repo_0 is missing
-        with aioresponses() as m:
-            m.post("https://api.github.com/graphql", payload=graphql_response)
-            async with ClientSession() as session:
-                enriched = await enrich_with_graphql(session, repos, token="fake-token")
-        assert len(enriched) == 1
-        assert enriched[0].stars == 100  # unchanged
 
 
 class TestBuildTrustQuery:
@@ -143,8 +36,34 @@ class TestBuildTrustQuery:
         q = build_trust_query([make_repo("a", "b")], include_description=True)
         assert "description" in q
 
+    def test_two_repository_aliases(self) -> None:
+        from dep_rank.core.graphql import build_trust_query
+
+        query = build_trust_query(
+            [make_repo("a", "b"), make_repo("c", "d")], include_description=True
+        )
+        assert 'repo_0: repository(owner: "a", name: "b")' in query
+        assert 'repo_1: repository(owner: "c", name: "d")' in query
+
 
 class TestEnrichWithTrustMetadata:
+    @pytest.mark.parametrize("description", ["Fresh description", None], ids=["text", "null"])
+    async def test_applies_requested_description(self, description: str | None) -> None:
+        from dep_rank.core.graphql import enrich_with_trust_metadata
+
+        repos = [make_repo("a", "b", stars=123).model_copy(update={"description": "Old"})]
+        payload = {"data": {"repo_0": {"stargazerCount": 456, "description": description}}}
+        with aioresponses() as responses:
+            responses.post("https://api.github.com/graphql", payload=payload)
+            async with ClientSession() as session:
+                result = await enrich_with_trust_metadata(
+                    session, repos, token="fake", include_description=True
+                )
+            request = next(iter(responses.requests.values()))[0]
+            assert "description" in request.kwargs["json"]["query"]
+        assert result.repos[0].description == description
+        assert result.repos[0].stars == 456
+
     async def test_populates_signals_and_marks_complete(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
@@ -230,6 +149,7 @@ class TestEnrichWithTrustMetadata:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b")]
+        expected = [repo.model_copy(deep=True) for repo in repos]
         with aioresponses() as m:
             m.post("https://api.github.com/graphql", status=401)
             async with ClientSession() as session:
@@ -238,11 +158,13 @@ class TestEnrichWithTrustMetadata:
                 )
         assert result.failed is True
         assert result.complete is False
+        assert result.repos == expected
 
     async def test_graphql_error_marks_failed_when_only_batch(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b")]
+        expected = [repo.model_copy(deep=True) for repo in repos]
         with aioresponses() as m:
             m.post("https://api.github.com/graphql", payload={"errors": [{"message": "boom"}]})
             async with ClientSession() as session:
@@ -250,11 +172,14 @@ class TestEnrichWithTrustMetadata:
                     session, repos, token="fake", include_description=False
                 )
         assert result.failed is True  # the only batch errored -> no usable metadata
+        assert result.complete is False
+        assert result.repos == expected
 
     async def test_missing_repo_data_is_partial_not_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
         repos = [make_repo("a", "b"), make_repo("c", "d")]
+        expected = [repo.model_copy(deep=True) for repo in repos]
         payload = {
             "data": {
                 "repo_0": {
@@ -277,6 +202,8 @@ class TestEnrichWithTrustMetadata:
         assert result.complete is False
         assert result.repos[0].trust_signals is not None
         assert result.repos[1].trust_signals is None
+        assert result.repos[0].stars == 10
+        assert result.repos[1] == expected[1]
 
     async def test_data_with_errors_is_partial_not_failed(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
@@ -306,13 +233,14 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is not None
         assert result.repos[1].trust_signals is None
 
-    async def test_data_all_null_is_failed(self) -> None:
+    @pytest.mark.parametrize("data", [None, {"repo_0": None}], ids=["data-null", "repos-null"])
+    async def test_data_all_null_is_failed(self, data: dict[str, None] | None) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
 
-        # A data object whose every repo is null yields no usable trust_signals -> the
-        # batch produced nothing; with no other batch succeeding -> failed=True.
+        # Null data and all-null repository data both preserve the scraped fallback.
         repos = [make_repo("a", "b")]
-        payload = {"data": {"repo_0": None}, "errors": [{"message": "Could not resolve"}]}
+        expected = [repo.model_copy(deep=True) for repo in repos]
+        payload = {"data": data, "errors": [{"message": "Could not resolve"}]}
         with aioresponses() as m:
             m.post("https://api.github.com/graphql", payload=payload)
             async with ClientSession() as session:
@@ -322,6 +250,7 @@ class TestEnrichWithTrustMetadata:
         assert result.failed is True
         assert result.complete is False
         assert result.repos[0].trust_signals is None
+        assert result.repos == expected
 
     async def test_multi_batch_one_failed_is_partial(self) -> None:
         from dep_rank.core.graphql import enrich_with_trust_metadata
