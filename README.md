@@ -124,6 +124,9 @@ bounds when incomplete. `result.stale_pages` counts pages served from expired
 cache entries, and `result.trust_metadata_complete` is false when trust scores
 used partial metadata. Both fields exist on the result but are excluded from
 `model_dump()` and JSON serialization (`model_dump_json()`).
+If trust metadata cannot be fetched, results fall back to stars; check
+`result.ranked_by == "trust"` to confirm trust ranking, since
+`trust_metadata_complete` describes only metadata used for successful trust ranking.
 
 ## Authentication
 
