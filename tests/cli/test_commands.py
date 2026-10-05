@@ -174,7 +174,7 @@ async def scrape(*args, **kwargs):
 
 with TemporaryDirectory() as cache_dir:
     with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
-         patch("dep_rank.core.scraper.scrape_dependents", side_effect=scrape), \
+         patch("dep_rank.core.dependents.scrape_dependents", side_effect=scrape), \
          patch("rich.live.Live", CapturingLive):
         asyncio.run(run_deps("https://github.com/x/y", 2, 0, False, False, None))
 print(json.dumps(captured))
@@ -209,7 +209,7 @@ payload = {
 }
 with TemporaryDirectory() as cache_dir:
     with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
-         patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock) as scrape:
+         patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock) as scrape:
         scrape.return_value = ScrapeResult(
             repos=repos, pages_scraped=1, max_pages=1000,
             estimated_total_pages=30, estimated_total_dependents=900,
@@ -231,6 +231,49 @@ with TemporaryDirectory() as cache_dir:
         assert child["code"] == 0
         assert json.loads(child["stdout"])["repos"]
         assert "partial errors" in child["stderr"]
+
+    def test_scrape_summary_precedes_enrichment_warnings(self) -> None:
+        code = """import tests.conftest
+import json
+from tempfile import TemporaryDirectory
+from unittest.mock import AsyncMock, patch
+from aioresponses import aioresponses
+from click.testing import CliRunner
+from dep_rank.cli.app import cli
+from dep_rank.core.models import Repository, ScrapeResult
+
+repos = [
+    Repository(owner="alpha", name="framework",
+               url="https://github.com/alpha/framework", stars=12500),
+    Repository(owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200),
+]
+payload = {
+    "data": {"repo_0": {"stargazerCount": 10, "description": "A"}, "repo_1": None},
+    "errors": [{"type": "NOT_FOUND", "message": "x"}],
+}
+with TemporaryDirectory() as cache_dir:
+    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
+         patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock) as scrape:
+        scrape.return_value = ScrapeResult(
+            repos=repos, pages_scraped=1, max_pages=1000,
+            estimated_total_pages=30, estimated_total_dependents=900,
+        )
+        with aioresponses() as responses:
+            responses.post("https://api.github.com/graphql", payload=payload)
+            r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
+                                       "--token", "t", "--rows", "2"])
+        print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
+"""
+        result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).resolve().parents[2],
+        )
+        child = json.loads(result.stdout)
+        assert child["code"] == 0
+        assert child["stderr"].index("Scraped 1/") < child["stderr"].index("partial errors")
 
 
 class TestDepsCommand:
@@ -265,8 +308,8 @@ class TestSearchCommand:
 class TestDepsCommandFull:
     """Tests that exercise the full deps command body with mocked core functions."""
 
-    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_deps_with_descriptions(
         self,
         mock_scrape: AsyncMock,
@@ -303,8 +346,8 @@ class TestDepsCommandFull:
         assert mock_enrich.call_args.kwargs["include_description"] is True
         assert result.stdout.index('"toolkit"') < result.stdout.index('"framework"')
 
-    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_deps_descriptions_fetch_failure_falls_back(
         self,
         mock_scrape: AsyncMock,
@@ -323,8 +366,8 @@ class TestDepsCommandFull:
         assert result.stdout.index("alpha/framework") < result.stdout.index("beta/toolkit")
         assert "Trust metadata fetch failed" not in result.stderr
 
-    @patch("dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_deps_descriptions_rows_zero_skips_graphql(
         self,
         mock_scrape: AsyncMock,
@@ -395,7 +438,7 @@ class TestVersionOption:
 
 
 class TestDepsHardeningFlags:
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_flags_pass_through_and_counts_use_matched(
         self,
         mock_scrape: AsyncMock,
@@ -441,7 +484,7 @@ class TestDepsHardeningFlags:
         assert "Found" not in result.stdout
         assert "⚠" not in result.stdout
 
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_table_mode_shows_summary(
         self,
         mock_scrape: AsyncMock,
@@ -461,7 +504,7 @@ class TestDepsHardeningFlags:
         assert result.exit_code == 0
         assert "Found" in result.output  # summary shown in table mode
 
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_table_mode_prints_partial_warning(
         self,
         mock_scrape: AsyncMock,
@@ -489,7 +532,7 @@ class TestDepsHardeningFlags:
             pytest.param(["--format", "json"], True, id="json-stderr-only"),
         ],
     )
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_stale_cache_notice(
         self,
         mock_scrape: AsyncMock,
@@ -728,7 +771,7 @@ async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object)
 
 class TestOnPageCallbacks:
     @patch("rich.live.Live.update")
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_deps_on_page_updates_live(
         self,
         mock_scrape: AsyncMock,
@@ -774,7 +817,7 @@ class TestRankByTrust:
         ("rows", "expected_pool"),
         [(0, 0), (5, 50), (10, 100), (50, 100), (200, 200)],
     )
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_trust_pool_size_formula(
         self,
         mock_scrape: AsyncMock,
@@ -787,7 +830,7 @@ class TestRankByTrust:
         repos = [make_repo("a", "b", stars=10)]
         mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
         with patch(
-            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+            "dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
             mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=True)
             result = runner.invoke(
@@ -807,7 +850,7 @@ class TestRankByTrust:
         _, kwargs = mock_scrape.call_args
         assert kwargs["rows"] == expected_pool
 
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_trust_json_includes_metadata(
         self,
         mock_scrape: AsyncMock,
@@ -820,7 +863,7 @@ class TestRankByTrust:
         ]
         mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
         with patch(
-            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+            "dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
             mock_trust.return_value = TrustMetadataResult(repos=repos, failed=False, complete=True)
             result = runner.invoke(
@@ -867,7 +910,7 @@ class TestRankByTrust:
         [(True, False, "json"), (True, False, "table"), (False, False, "table")],
         ids=["failed-json", "failed-table", "partial-table"],
     )
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_trust_metadata_fallbacks(
         self,
         mock_scrape: AsyncMock,
@@ -889,7 +932,7 @@ class TestRankByTrust:
         if fmt == "json":
             args += ["--format", "json"]
         with patch(
-            "dep_rank.core.graphql.enrich_with_trust_metadata", new_callable=AsyncMock
+            "dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock
         ) as mock_trust:
             mock_trust.return_value = TrustMetadataResult(
                 repos=repos, failed=failed, complete=complete
@@ -918,7 +961,7 @@ class TestRankByTrust:
         assert "requires a GitHub token" in result.stderr
 
     @pytest.mark.parametrize("trust_check", [False, True])
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_trust_check_json_includes_only_requested_result(
         self,
         mock_scrape: AsyncMock,
@@ -947,11 +990,11 @@ class TestRankByTrust:
 
         with (
             patch(
-                "dep_rank.core.graphql.enrich_with_trust_metadata",
+                "dep_rank.core.dependents.enrich_with_trust_metadata",
                 new_callable=AsyncMock,
                 return_value=TrustMetadataResult(repos=repos, failed=False, complete=True),
             ),
-            patch("dep_rank.core.star_history.check_star_history", side_effect=check) as mock_check,
+            patch("dep_rank.core.dependents.check_star_history", side_effect=check) as mock_check,
         ):
             args = [
                 "deps",
@@ -987,7 +1030,7 @@ class TestRankByTrust:
 
     @pytest.mark.parametrize("output_format", ["table", "json"])
     @pytest.mark.parametrize("metadata_failed", [False, True])
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_trust_check_unavailable_status_and_warning(
         self,
         mock_scrape: AsyncMock,
@@ -1012,13 +1055,13 @@ class TestRankByTrust:
 
         with (
             patch(
-                "dep_rank.core.graphql.enrich_with_trust_metadata",
+                "dep_rank.core.dependents.enrich_with_trust_metadata",
                 new_callable=AsyncMock,
                 return_value=TrustMetadataResult(
                     repos=repos, failed=metadata_failed, complete=not metadata_failed
                 ),
             ),
-            patch("dep_rank.core.star_history.check_star_history", side_effect=check) as mock_check,
+            patch("dep_rank.core.dependents.check_star_history", side_effect=check) as mock_check,
         ):
             result = runner.invoke(
                 cli,
