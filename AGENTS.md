@@ -26,6 +26,7 @@ builds, and hatch-vcs for versions derived from Git tags.
 - `src/dep_rank/core/scraper.py` owns dependents-page parsing, pagination,
   streaming aggregation, adaptive stopping, partial-result state, and
   stale-while-revalidate coordination.
+- `src/dep_rank/core/dependents.py` owns the `deps` pipeline library entry point (`get_dependents`): scrape, metadata enrichment, trust ranking, and the optional star-history check.
 - `src/dep_rank/core/rate_limiter.py` owns token-bucket request budgets, 429
   backoff, and a post-429 background pause shared by foreground and background work.
 - `src/dep_rank/core/cache.py` owns SQLite persistence, expiry, ETags, and cache

@@ -30,6 +30,8 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one cla
 
 ### `tests/core/` — library logic
 
+- **`test_dependents.py`**: `get_dependents` input validation, the default
+  star-ranked call, and importing it loads no CLI dependencies.
 - **`test_validation.py`**: `validate_github_url` accepted forms and error messages.
 - **`test_models.py`**: model behavior the project defines — the
   `complete == (reason is None)` invariant, defaults, enum wire values, and JSON
