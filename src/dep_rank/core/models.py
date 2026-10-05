@@ -155,6 +155,10 @@ class DependentsResult(BaseModel):
     estimated_total_pages: int = 0
     ranked_by: Literal["stars", "trust"] = "stars"
     trust_check: TrustCheckResult | None = None
+    # pages served from expired cache entries; excluded from JSON
+    stale_pages: int = Field(default=0, exclude=True)
+    # False when trust scores used partial metadata; excluded from JSON
+    trust_metadata_complete: bool = Field(default=True, exclude=True)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

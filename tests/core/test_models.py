@@ -150,6 +150,15 @@ def test_ranked_by_rejects_invalid_value() -> None:
 
 
 class TestTrustModels:
+    def test_status_fields_excluded_from_serialization(self) -> None:
+        result = _build(DependentsResult, stale_pages=3, trust_metadata_complete=False)
+        assert isinstance(result, DependentsResult)  # _build returns a union; narrow for mypy
+        assert result.stale_pages == 3
+        assert result.trust_metadata_complete is False
+        for dumped in (result.model_dump_json(), str(result.model_dump())):
+            assert "stale_pages" not in dumped
+            assert "trust_metadata_complete" not in dumped
+
     def test_trust_signals_excluded_from_serialization(self) -> None:
         repo = Repository(
             owner="a",
