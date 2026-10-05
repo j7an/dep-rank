@@ -199,7 +199,9 @@ jobs:
           base-sha: ${{ github.event.pull_request.base.sha }}
           minimum: "80"
           source-paths: src/dep_rank/
-          exclude-paths: src/dep_rank/_version.py
+          exclude-paths: |
+            src/dep_rank/_version.py
+            src/dep_rank/py.typed
 
   dependency-review:
     runs-on: ubuntu-latest

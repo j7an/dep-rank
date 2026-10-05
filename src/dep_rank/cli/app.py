@@ -9,8 +9,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import click
 from rich.console import Console
@@ -117,9 +116,8 @@ async def run_deps(
     from rich.live import Live
 
     from dep_rank.cli.formatters import build_topk_table
-    from dep_rank.core.graphql import enrich_with_trust_metadata
-    from dep_rank.core.models import ScrapeSnapshot, TrustCheckResult
-    from dep_rank.core.scraper import scrape_dependents
+    from dep_rank.core.dependents import get_dependents
+    from dep_rank.core.models import ScrapeSnapshot
 
     console = _stderr_console
     async with _open_cache() as cache:
@@ -139,117 +137,68 @@ async def run_deps(
                 if live is not None:
                     live.update(build_topk_table(snapshot))
 
-            scrape_rows = rows
-            if rank_by == "trust":
-                scrape_rows = 0 if rows <= 0 else max(rows, min(100, rows * 10))
+            async def on_scraped(scrape_result: ScrapeResult) -> None:
+                nonlocal live
+                if live is not None:
+                    live.stop()
+                    live = None
+                if not quiet:
+                    _print_scrape_outcome(console, scrape_result, min_stars)
+                if scrape_result.stale_pages and not token:
+                    # Without a token nothing refreshes expired pages, so say so even in JSON
+                    # mode (stderr only; stdout stays parseable).
+                    from dep_rank.cli.formatters import stale_cache_notice
+
+                    console.print(
+                        stale_cache_notice(scrape_result.stale_pages, scrape_result.pages_scraped)
+                    )
 
             if live is not None:
                 live.start()
             try:
-                scrape_result = await scrape_dependents(
+                result = await get_dependents(
                     session,
                     url,
-                    dependent_type=dep_type,
+                    rows=rows,
                     min_stars=min_stars,
-                    cache=cache,
+                    dependent_type=dep_type,
                     token=token,
+                    descriptions=descriptions,
+                    rank_by=cast(Literal["stars", "trust"], rank_by),
+                    trust_check=trust_check,
                     max_pages=max_pages,
-                    rows=scrape_rows,
                     adaptive_stop=adaptive_stop,
+                    cache=cache,
                     on_page=on_page,
+                    on_scraped=on_scraped,
                 )
             finally:
                 if live is not None:
                     live.stop()
 
-            repos = scrape_result.repos
-            total_count = scrape_result.matched_count
-
-            if not quiet:
-                _print_scrape_outcome(console, scrape_result, min_stars)
-            if scrape_result.stale_pages and not token:
-                # Without a token nothing refreshes expired pages, so say so even in JSON
-                # mode (stderr only; stdout stays parseable).
-                from dep_rank.cli.formatters import stale_cache_notice
-
-                console.print(
-                    stale_cache_notice(scrape_result.stale_pages, scrape_result.pages_scraped)
-                )
-
-            ranked_by: Literal["stars", "trust"] = "stars"
-            trust_check_result: TrustCheckResult | None = None
-            # One clock read: the output's scraped_at is also the reference time for
-            # age-based caution signals.
-            now = datetime.now(tz=UTC)
-            # ``and token`` makes the token precondition explicit (the CLI preflight
-            # already enforces it) and narrows the type for the enrich call. A direct
-            # caller passing rank_by="trust" without a token degrades to star ranking.
-            if rank_by == "trust" and token:
-                from dep_rank.core.trust import compute_trust_scores
-
-                meta = await enrich_with_trust_metadata(
-                    session,
-                    repos,
-                    token,
-                    include_description=descriptions,
-                )
-                if meta.failed:
-                    if not quiet:
-                        console.print(
-                            "[yellow]⚠ Trust metadata fetch failed — "
-                            "falling back to star ranking.[/yellow]"
-                        )
-                    repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
-                    if trust_check:
-                        from dep_rank.core.star_history import skipped_trust_check
-
-                        trust_check_result = skipped_trust_check(repos)
-                        if not quiet:
-                            console.print(
-                                "[yellow]⚠ Trust check skipped — "
-                                "trust ranking unavailable.[/yellow]"
-                            )
-                else:
-                    if not meta.complete and not quiet:
-                        console.print(
-                            "[yellow]⚠ Some trust metadata was missing — "
-                            "scores use partial data.[/yellow]"
-                        )
-                    repos = compute_trust_scores(meta.repos, now=now)[:rows]
-                    ranked_by = "trust"
-                    if trust_check:
-                        from dep_rank.core.star_history import check_star_history
-
-                        repos, trust_check_result = await check_star_history(
-                            session, repos, token, now=now
-                        )
-                        if not trust_check_result.complete and not quiet:
-                            console.print(
-                                "[yellow]⚠ Trust check incomplete — star history unavailable for "
-                                f"{len(trust_check_result.unavailable)} repos.[/yellow]"
-                            )
-            else:
-                repos = repos[:rows]
-                if descriptions and token and repos:
-                    meta = await enrich_with_trust_metadata(
-                        session, repos, token, include_description=True
+            if rank_by == "trust" and result.ranked_by == "stars":
+                if not quiet:
+                    console.print(
+                        "[yellow]⚠ Trust metadata fetch failed — "
+                        "falling back to star ranking.[/yellow]"
                     )
-                    repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
+                    if trust_check:
+                        console.print(
+                            "[yellow]⚠ Trust check skipped — trust ranking unavailable.[/yellow]"
+                        )
+            elif result.ranked_by == "trust" and not quiet:
+                if not result.trust_metadata_complete:
+                    console.print(
+                        "[yellow]⚠ Some trust metadata was missing — "
+                        "scores use partial data.[/yellow]"
+                    )
+                if result.trust_check and not result.trust_check.complete:
+                    console.print(
+                        "[yellow]⚠ Trust check incomplete — star history unavailable for "
+                        f"{len(result.trust_check.unavailable)} repos.[/yellow]"
+                    )
 
-            return DependentsResult(
-                source=url,
-                total_count=total_count,
-                filtered_count=total_count,
-                repos=repos,
-                dependent_type=dep_type,
-                scraped_at=now,
-                complete=scrape_result.complete,
-                reason=scrape_result.reason,
-                pages_scraped=scrape_result.pages_scraped,
-                estimated_total_pages=scrape_result.estimated_total_pages,
-                ranked_by=ranked_by,
-                trust_check=trust_check_result,
-            )
+            return result
 
 
 @click.group()

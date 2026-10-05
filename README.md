@@ -66,6 +66,68 @@ dep-rank cache stats    # Show cache size
 dep-rank cache clear    # Clear all cached data
 ```
 
+## Python API (provisional)
+
+Use `dep_rank.core.dependents.get_dependents` for the `deps` pipeline in Python.
+It returns `dep_rank.core.models.DependentsResult`; select repository or package
+dependents with `dep_rank.core.models.DependentType`. The API may change during 0.x.
+
+```python
+import asyncio
+
+import aiohttp
+
+from dep_rank.core.cache import SqliteCache
+from dep_rank.core.dependents import get_dependents
+from dep_rank.core.models import DependentsResult, DependentType
+
+
+async def main(cache_dir: str | None = None) -> None:
+    cache = SqliteCache(cache_dir) if cache_dir is not None else None
+    try:
+        if cache is not None:
+            await cache.initialize()
+        async with aiohttp.ClientSession() as session:
+            result: DependentsResult = await get_dependents(
+                session,
+                "https://github.com/django/django",
+                dependent_type=DependentType.REPOSITORY,
+                cache=cache,
+            )
+            for repo in result.repos:
+                print(repo.url, repo.stars)
+            if not result.complete:
+                print("Partial results:", result.reason)
+    finally:
+        if cache is not None:
+            await cache.close()
+
+
+asyncio.run(main(cache_dir=".dep-rank-cache"))
+```
+
+`dep_rank.core.cache.SqliteCache(path)` takes a cache directory. Caching is
+optional: call `main()` in this example to omit it. The caller opens and closes
+the session and initializes and closes the cache; `get_dependents` closes neither.
+The defaults return up to 10 dependents with at least 5 stars, ranked by stars.
+Pass a GitHub token explicitly as `token=...` for descriptions or trust ranking;
+the library entry point does not read `DEP_RANK_TOKEN`.
+
+`get_dependents` raises `ValueError` for an invalid GitHub repository URL,
+`rank_by` other than `"stars"` or `"trust"`, `descriptions=True` without a token,
+`rank_by="trust"` without a token, or `trust_check=True` without
+`rank_by="trust"`. Trust scores are pool-relative heuristics, not quality or fraud
+verdicts.
+
+Check `result.complete` and `result.reason` for partial results; counts are lower
+bounds when incomplete. `result.stale_pages` counts pages served from expired
+cache entries, and `result.trust_metadata_complete` is false when trust scores
+used partial metadata. Both fields exist on the result but are excluded from
+`model_dump()` and JSON serialization (`model_dump_json()`).
+If trust metadata cannot be fetched, results fall back to stars; check
+`result.ranked_by == "trust"` to confirm trust ranking, since
+`trust_metadata_complete` describes only metadata used for successful trust ranking.
+
 ## Authentication
 
 Set the `DEP_RANK_TOKEN` environment variable with a GitHub personal access token:
