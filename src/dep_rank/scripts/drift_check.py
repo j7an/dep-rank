@@ -16,7 +16,7 @@ import asyncio
 import os
 import sys
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.models import ScrapeReason
 from dep_rank.core.scraper import scrape_dependents
@@ -63,7 +63,9 @@ async def _run() -> int:
             "authenticated token to run reliably; add the repo secret.\n"
         )
         return 2
-    async with aiohttp.ClientSession(headers={"User-Agent": "dep-rank-drift/1.0"}) as session:
+    async with httpx2.AsyncClient(
+        headers={"User-Agent": "dep-rank-drift/1.0"}, trust_env=False
+    ) as session:
         result = await scrape_dependents(
             session,
             CANARY_URL,

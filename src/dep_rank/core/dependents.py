@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Literal
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.graphql import enrich_with_trust_metadata
@@ -26,7 +26,7 @@ from dep_rank.core.trust import compute_trust_scores
 
 
 async def get_dependents(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     url: str,
     *,
     rows: int = 10,

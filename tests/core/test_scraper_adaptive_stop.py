@@ -5,8 +5,7 @@ from __future__ import annotations
 import heapq
 from collections import deque
 
-from aiohttp import ClientSession
-from aioresponses import aioresponses
+import httpx2
 
 from dep_rank.core.models import Repository, ScrapeReason
 from dep_rank.core.scraper import (
@@ -15,7 +14,7 @@ from dep_rank.core.scraper import (
     _should_stop,
     scrape_dependents,
 )
-from tests.conftest import dependents_page, fast_limiter
+from tests.conftest import FakeHTTP, dependents_page, fast_limiter
 
 
 def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:
@@ -76,7 +75,7 @@ def _decaying_page(page_num: int, total_pages: int) -> str:
 
 
 async def test_decaying_stream_stops_with_trend_converged(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
     mock_http.get(FIRST, body=_decaying_page(1, total))
@@ -100,7 +99,7 @@ async def test_decaying_stream_stops_with_trend_converged(
 
 
 async def test_no_adaptive_stop_runs_to_exhaustion(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5
     mock_http.get(FIRST, body=_decaying_page(1, total))

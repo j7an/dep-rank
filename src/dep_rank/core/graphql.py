@@ -6,9 +6,10 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.models import Repository, TrustMetadataResult, TrustSignals
+from dep_rank.core.scraper import REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ def _apply_trust_data(
 
 
 async def enrich_with_trust_metadata(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     repos: list[Repository],
     token: str,
     *,
@@ -116,20 +117,24 @@ async def enrich_with_trust_metadata(
         batch = repos[batch_start : batch_start + BATCH_SIZE]
         query = build_trust_query(batch, include_description=include_description)
 
-        async with session.post(
+        async with session.stream(
+            "POST",
             GRAPHQL_URL,
             json={"query": query},
             headers=headers,
+            follow_redirects=True,
+            timeout=REQUEST_TIMEOUT,
         ) as resp:
-            if resp.status == 401:
+            if resp.status_code == 401:
                 logger.warning("GitHub API authentication failed — token may be expired or invalid")
                 return TrustMetadataResult(repos=repos, failed=True, complete=False)
-            if resp.status != 200:
-                logger.warning("GitHub API returned HTTP %d", resp.status)
+            if resp.status_code != 200:
+                logger.warning("GitHub API returned HTTP %d", resp.status_code)
                 enriched.extend(batch)
                 complete = False
                 continue
-            data = await resp.json()
+            await resp.aread()
+            data = resp.json()
 
         if "data" not in data or data["data"] is None:
             message = data.get("message") or data.get("errors", "unknown error")

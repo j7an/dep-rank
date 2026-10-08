@@ -1,6 +1,6 @@
 """Tests for the drift-check evaluation logic and the _run guards (no network I/O).
 
-The _run tests monkeypatch ``scrape_dependents`` so a ``ClientSession`` is created but
+The _run tests monkeypatch ``scrape_dependents`` so a ``httpx2.AsyncClient`` is created but
 never issues a request — the token guard short-circuits before scraping, and the
 inconclusive case returns a stubbed result.
 """

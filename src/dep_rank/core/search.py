@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.models import CodeSearchHit, CodeSearchResult, Repository
 from dep_rank.core.rate_limiter import RateLimiter
+from dep_rank.core.scraper import REQUEST_TIMEOUT
 
 SEARCH_URL = "https://api.github.com/search/code"
 # GitHub code search: 10 requests/minute authenticated
@@ -15,7 +16,7 @@ SEARCH_RATE_LIMITER = RateLimiter(rate=10, period=60.0)
 
 
 async def search_code(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     repos: list[Repository],
     query: str,
     token: str,
@@ -24,7 +25,7 @@ async def search_code(
     """Search for code patterns across dependent repositories.
 
     Args:
-        session: aiohttp client session.
+        session: httpx2 client.
         repos: List of repositories to search (searched in order, up to max_repos).
         query: Code search query string.
         token: GitHub token (required for code search).
@@ -47,11 +48,13 @@ async def search_code(
         url = f"{SEARCH_URL}?q={quote(search_query, safe='')}"
 
         try:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status != 200:
-                    continue
-                data = await resp.json()
-        except (aiohttp.ClientError, TimeoutError):
+            resp = await session.get(
+                url, headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+        except (httpx2.RequestError, ValueError):
             continue
 
         for item in data.get("items", []):

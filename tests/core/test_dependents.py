@@ -6,13 +6,12 @@ import subprocess
 import sys
 from typing import Any
 
+import httpx2
 import pytest
-from aiohttp import ClientSession
-from aioresponses import aioresponses
 
 from dep_rank.core.dependents import get_dependents
 from dep_rank.core.models import ScrapeResult
-from tests.conftest import dependents_page
+from tests.conftest import FakeHTTP, dependents_page
 
 URL = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
@@ -30,7 +29,7 @@ FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSIT
     ],
 )
 async def test_invalid_input_raises_before_any_request(
-    session: ClientSession, mock_http: aioresponses, url: str, kwargs: dict[str, Any]
+    session: httpx2.AsyncClient, mock_http: FakeHTTP, url: str, kwargs: dict[str, Any]
 ) -> None:
     with pytest.raises(ValueError):
         await get_dependents(session, url, **kwargs)
@@ -38,7 +37,7 @@ async def test_invalid_input_raises_before_any_request(
 
 
 async def test_defaults_rank_by_stars_and_leave_session_open(
-    session: ClientSession, mock_http: aioresponses
+    session: httpx2.AsyncClient, mock_http: FakeHTTP
 ) -> None:
     mock_http.get(FIRST, body=dependents_page([("a", "one", 100), ("b", "two", 5000)]))
     scraped: list[ScrapeResult] = []
@@ -53,7 +52,7 @@ async def test_defaults_rank_by_stars_and_leave_session_open(
     assert result.complete is True
     assert result.stale_pages == 0
     assert result.trust_metadata_complete is True
-    assert session.closed is False
+    assert session.is_closed is False
 
 
 def test_import_loads_no_cli_dependencies() -> None:

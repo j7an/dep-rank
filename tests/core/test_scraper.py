@@ -5,10 +5,8 @@ from __future__ import annotations
 import tempfile
 from unittest.mock import AsyncMock
 
-import aiohttp
+import httpx2
 import pytest
-from aiohttp import ClientSession
-from aioresponses import aioresponses
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
@@ -39,6 +37,8 @@ from tests.conftest import (
     DEPENDENTS_HTML_PAGE_1,
     DEPENDENTS_HTML_WITH_COUNTS,
     DEPENDENTS_HTML_WITH_COUNTS_PAGE_1,
+    FakeHTTP,
+    StalledBody,
     dependents_page,
     fast_limiter,
 )
@@ -176,7 +176,7 @@ class TestParseDependentsPage:
 
 
 class TestScrapeDependents:
-    async def test_min_stars_filter(self, mock_http: aioresponses, session: ClientSession) -> None:
+    async def test_min_stars_filter(self, mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
             body=DEPENDENTS_HTML_PAGE_1,
@@ -194,7 +194,7 @@ class TestScrapeDependents:
         )
         assert all(r.stars >= 200 for r in result.repos)
 
-    async def test_package_type(self, mock_http: aioresponses, session: ClientSession) -> None:
+    async def test_package_type(self, mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=PACKAGE",
             body=DEPENDENTS_HTML_LAST_PAGE,
@@ -270,7 +270,7 @@ class TestScrapeDependentsEdgeCases:
         assert len(repos) == 0
 
     async def test_error_response_sets_network_failure(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A non-200/304/429 response terminates with reason=network_failure."""
 
@@ -285,7 +285,7 @@ class TestScrapeDependentsEdgeCases:
         assert result.pages_scraped == 0  # first-page failure consumed no pages
 
     async def test_429_exhaustion_sets_rate_limited(
-        self, monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+        self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A persistent 429 (past the retry budget) terminates with reason=rate_limited."""
 
@@ -306,7 +306,7 @@ class TestScrapeDependentsEdgeCases:
         assert result.pages_scraped == 0  # never got a parseable page
 
     async def test_cache_hit_skips_network(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """When cache has a valid (non-expired) entry, no network request is made."""
         await cache.put(
@@ -315,7 +315,7 @@ class TestScrapeDependentsEdgeCases:
             etag='"etag1"',
             ttl=3600,
         )
-        # Not a ClientError, so a regression fails at once instead of retrying with backoff.
+        # Not a RequestError, so a regression fails at once instead of retrying with backoff.
         mock_http.get(FIRST_URL, exception=AssertionError("unexpected fetch"))
         result = await scrape_dependents(
             session,
@@ -329,7 +329,7 @@ class TestScrapeDependentsEdgeCases:
         assert result.stale_pages == 0  # a fresh hit is not stale
 
     async def test_200_response_stores_in_cache(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """200 response with cache stores the body and etag."""
 
@@ -355,7 +355,7 @@ class TestScrapeDependentsEdgeCases:
 
 class TestScrapeResultReturn:
     async def test_returns_scrape_result(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
@@ -371,7 +371,7 @@ class TestScrapeResultReturn:
         assert result.repos[0].owner == "alpha"
 
     async def test_estimated_total_pages_with_max_pages(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
@@ -386,7 +386,7 @@ class TestScrapeResultReturn:
         assert result.max_pages == 5
 
     async def test_no_counts_in_html_defaults_to_zero(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """When the HTML has no parseable count header, estimated totals default to 0."""
         html_no_counts = """
@@ -412,7 +412,7 @@ class TestScrapeResultReturn:
         assert result.estimated_total_dependents == 0
 
     async def test_multi_page_with_estimated_total(
-        self, mock_http: aioresponses, session: ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """Multi-page scrape carries estimated_total_pages from page 1 through all callbacks."""
         seen: list[ScrapeSnapshot] = []
@@ -447,8 +447,8 @@ async def test_limiter_budget_follows_token(
     monkeypatch: pytest.MonkeyPatch,
     token: str | None,
     rate: int,
-    mock_http: aioresponses,
-    session: ClientSession,
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
 ) -> None:
     built: list[tuple[int, float]] = []
     real = RateLimiter
@@ -465,7 +465,7 @@ async def test_limiter_budget_follows_token(
 
 
 async def test_http_date_retry_after_falls_back_to_backoff(
-    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     sleep = AsyncMock()
     monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
@@ -486,7 +486,7 @@ async def test_http_date_retry_after_falls_back_to_backoff(
 
 
 async def test_backoff_resets_after_success(
-    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     sleep = AsyncMock()
     monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
@@ -506,7 +506,7 @@ async def test_backoff_resets_after_success(
 
 
 async def test_infinite_retry_after_falls_back_to_backoff(
-    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     sleep = AsyncMock()
     monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
@@ -522,11 +522,11 @@ async def test_infinite_retry_after_falls_back_to_backoff(
 
 
 async def test_transport_errors_exhaust_to_network_failure(
-    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
     for _ in range(MAX_RETRIES + 1):
-        mock_http.get(FIRST_URL, exception=aiohttp.ClientConnectionError())
+        mock_http.get(FIRST_URL, exception=httpx2.ConnectError("refused"))
     result = await scrape_dependents(
         session, "https://github.com/owner/repo", rows=100, token="ghp_x"
     )
@@ -536,13 +536,42 @@ async def test_transport_errors_exhaust_to_network_failure(
 
 
 async def test_transport_error_then_success_completes(
-    monkeypatch: pytest.MonkeyPatch, mock_http: aioresponses, session: ClientSession
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
-    mock_http.get(FIRST_URL, exception=aiohttp.ClientConnectionError())
+    mock_http.get(FIRST_URL, exception=httpx2.ConnectError("refused"))
     mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
     result = await scrape_dependents(
         session, "https://github.com/owner/repo", rows=100, token="ghp_x"
     )
     assert result.complete is True
     assert [r.owner for r in result.repos] == ["delta"]
+
+
+async def test_read_timeout_is_retried(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    mock_http.get(FIRST_URL, exception=httpx2.ReadTimeout("slow"))
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=100, token="ghp_x"
+    )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
+
+
+async def test_rate_limited_with_stalled_body_stays_rate_limited(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+
+    async def stalled_429(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": "1"}, stream=StalledBody())
+
+    for _ in range(MAX_RETRIES + 1):
+        mock_http.get(FIRST_URL, callback=stalled_429)
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=100, token="ghp_x"
+    )
+    assert result.reason == ScrapeReason.RATE_LIMITED
