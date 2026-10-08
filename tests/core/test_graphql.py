@@ -10,7 +10,12 @@ import pytest
 from aiohttp import ClientSession
 from aioresponses import aioresponses
 
-from dep_rank.core.graphql import GRAPHQL_URL, build_trust_query, enrich_with_trust_metadata
+from dep_rank.core.graphql import (
+    BATCH_SIZE,
+    GRAPHQL_URL,
+    build_trust_query,
+    enrich_with_trust_metadata,
+)
 from dep_rank.core.models import Repository, TrustMetadataResult
 from tests.conftest import make_repo
 
@@ -226,9 +231,15 @@ class TestEnrichWithTrustMetadata:
         assert result.repos[0].trust_signals is None
         assert result.repos == expected
 
+    def test_batch_size_stays_under_observed_resource_limit(self) -> None:
+        # Live probe: one 74-repo query hit RESOURCE_LIMITS_EXCEEDED from alias ~41 on;
+        # a batch above that loses trust signals for every repo past the cutoff.
+        assert BATCH_SIZE <= 40
+
     async def test_multi_batch_one_failed_is_partial(self, run_trust: RunTrust) -> None:
 
-        repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches (100 + 50)
+        total = BATCH_SIZE + BATCH_SIZE // 2  # 2 batches (full + half)
+        repos = [make_repo(f"o{i}", f"r{i}") for i in range(total)]
         good = {
             "data": {
                 f"repo_{i}": {
@@ -238,19 +249,20 @@ class TestEnrichWithTrustMetadata:
                     "pullRequests": {"totalCount": 0},
                     "pushedAt": None,
                 }
-                for i in range(100)
+                for i in range(BATCH_SIZE)
             }
         }
         result, _ = await run_trust(repos, good, 500)
         assert result.failed is False  # at least one batch succeeded
         assert result.complete is False  # the other batch failed
-        assert len(result.repos) == 150
+        assert len(result.repos) == total
         assert result.repos[0].trust_signals is not None
-        assert result.repos[100].trust_signals is None  # from the failed batch
+        assert result.repos[BATCH_SIZE].trust_signals is None  # from the failed batch
 
     async def test_multi_batch_all_failed_is_failed(self, run_trust: RunTrust) -> None:
 
-        repos = [make_repo(f"o{i}", f"r{i}") for i in range(150)]  # 2 batches
+        total = BATCH_SIZE + BATCH_SIZE // 2  # 2 batches
+        repos = [make_repo(f"o{i}", f"r{i}") for i in range(total)]
         result, _ = await run_trust(repos, 500, 500)
         assert result.failed is True  # no usable metadata at all
         assert result.complete is False
