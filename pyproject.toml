@@ -28,6 +28,7 @@ dependencies = [
     "pydantic>=2.0,<3",
     "click>=8.2,<9",
     "rich>=13.0,<15",
+    "httpx2>=2.13,<3",
 ]
 
 [project.scripts]
