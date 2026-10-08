@@ -31,6 +31,9 @@ def humanize(num: int) -> str:
 
 def print_dependents_table(result: DependentsResult) -> None:
     """Print a Rich table of dependents, dispatching on the ranking actually applied."""
+    if result._confirmed_zero_dependents:
+        console.print("No dependents found.")
+        return
     _print_dependents_table(result)
 
     if result.trust_check is not None:
@@ -191,10 +194,14 @@ def format_scrape_summary(
     estimated_total_pages: int,
     found_count: int,
     min_stars: int,
+    complete: bool = True,
 ) -> str:
     """Format the scraping completion summary line."""
-    pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
-    parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
+    max_text = f"{pages_scraped}/{max_pages} pages"
+    if not complete:
+        pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
+        max_text += f" ({pct_max:.1f}%)"
+    parts = [f"Scraped {max_text}"]
 
     if estimated_total_pages > 0:
         pct_est = pages_scraped / estimated_total_pages * 100

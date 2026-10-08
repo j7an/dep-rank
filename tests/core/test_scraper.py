@@ -80,6 +80,10 @@ class TestParseDependentCounts:
         counts = parse_dependent_counts(html)
         assert counts == {"REPOSITORY": 500}
 
+    def test_parse_explicit_zero_count(self) -> None:
+        html = '<div class="table-list-header-toggle"><a class="btn-link">0 Repositories</a></div>'
+        assert parse_dependent_counts(html) == {"REPOSITORY": 0}
+
     def test_parse_missing_structure(self) -> None:
         html = "<html><body><p>No dependents info</p></body></html>"
         counts = parse_dependent_counts(html)
@@ -410,6 +414,41 @@ class TestScrapeResultReturn:
         result = await scrape_dependents(session, "https://github.com/owner/repo", rows=100)
         assert result.estimated_total_pages == 0
         assert result.estimated_total_dependents == 0
+        assert result._confirmed_zero_dependents is False
+
+    async def test_unparseable_count_is_not_confirmed(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        html = (
+            '<div class="table-list-header-toggle"><a class="btn-link">NaN Repositories</a></div>'
+        )
+        mock_http.get(FIRST_URL, body=html)
+        result = await scrape_dependents(session, "https://github.com/owner/repo", rows=10)
+        assert result.estimated_total_dependents == 0
+        assert result._confirmed_zero_dependents is False
+
+    async def test_explicit_zero_count_is_confirmed(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(
+            FIRST_URL,
+            body=dependents_page([], next_page=2, repos=0),
+        )
+
+        snapshots: list[ScrapeSnapshot] = []
+
+        async def on_page(snapshot: ScrapeSnapshot) -> None:
+            snapshots.append(snapshot)
+
+        result = await scrape_dependents(
+            session, "https://github.com/owner/repo", rows=10, on_page=on_page
+        )
+        assert result.estimated_total_dependents == 0
+        assert result._confirmed_zero_dependents is True
+        assert result.complete is True
+        assert len(mock_http.requests) == 1
+        assert len(snapshots) == 1
+        assert snapshots[0].top_k == []
 
     async def test_multi_page_with_estimated_total(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient

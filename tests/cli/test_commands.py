@@ -32,7 +32,13 @@ from dep_rank.core.models import (
     TrustCheckResult,
     TrustMetadataResult,
 )
-from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, FakeHTTP, make_repo
+from tests.conftest import (
+    DEPENDENTS_HTML_LAST_PAGE,
+    DEPENDENTS_HTML_NO_RESULTS,
+    DEPENDENTS_HTML_PAGE_1,
+    FakeHTTP,
+    make_repo,
+)
 
 
 @pytest.fixture
@@ -286,6 +292,56 @@ with TemporaryDirectory() as cache_dir:
 
 
 class TestDepsCommand:
+    def test_confirmed_zero_suppresses_table_and_trust_check(
+        self,
+        runner: CliRunner,
+        mock_http: FakeHTTP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            body=DEPENDENTS_HTML_NO_RESULTS,
+        )
+        monkeypatch.setattr(cli_app, "_cache_dir", lambda: str(tmp_path))
+        result = runner.invoke(
+            cli,
+            [
+                "deps",
+                "https://github.com/owner/repo",
+                "--rank-by",
+                "trust",
+                "--trust-check",
+                "--token",
+                "ghp_x",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "No dependents found." in result.output
+        assert "Scraped" not in result.output
+        assert "Top dependents of" not in result.output
+        assert "Trust check (" not in result.output
+        assert ("POST", "https://api.github.com/graphql") not in mock_http.requests
+
+    def test_confirmed_zero_json_keeps_existing_schema(
+        self,
+        runner: CliRunner,
+        mock_http: FakeHTTP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            body=DEPENDENTS_HTML_NO_RESULTS,
+        )
+        monkeypatch.setattr(cli_app, "_cache_dir", lambda: str(tmp_path))
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--format", "json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["repos"] == []
+        assert "confirmed_zero_dependents" not in payload
+        assert "No dependents found." in result.stderr
+
     def test_missing_url(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps"])
         assert result.exit_code == 2
@@ -612,6 +668,29 @@ class TestDepsHardeningFlags:
 
 class TestSearchHardening:
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    def test_confirmed_zero_skips_search(
+        self,
+        mock_search: AsyncMock,
+        runner: CliRunner,
+        mock_http: FakeHTTP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            body=DEPENDENTS_HTML_NO_RESULTS,
+        )
+        monkeypatch.setattr(cli_app, "_cache_dir", lambda: str(tmp_path))
+        result = runner.invoke(
+            cli, ["search", "https://github.com/owner/repo", "needle", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "No dependents found." in result.output
+        assert "No results found" not in result.output
+        assert "Scraped" not in result.output
+        mock_search.assert_not_awaited()
+
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
     def test_search_uses_bounded_non_adaptive_topk(
         self,
@@ -811,9 +890,10 @@ class TestOnPageCallbacks:
         )
         result = runner.invoke(cli, ["search", "https://github.com/o/r", "q", "--token", "t"])
         assert result.exit_code == 0, result.output
-        mock_progress_update.assert_called_once_with(
+        mock_progress_update.assert_any_call(
             ANY, completed=1, est_text="1/~30 estimated pages (3.33%)"
         )
+        mock_progress_update.assert_any_call(ANY, total=1, completed=1)
 
 
 class TestRankByTrust:

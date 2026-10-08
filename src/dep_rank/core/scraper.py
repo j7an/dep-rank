@@ -450,6 +450,7 @@ async def scrape_dependents(
     page = 0
     stale_pages = 0
     reason: ScrapeReason | None = None
+    confirmed_zero_dependents = False
 
     try:
         while current_url and page < max_pages:
@@ -468,7 +469,9 @@ async def scrape_dependents(
 
             if page == 1:
                 counts = parse_dependent_counts(html)
-                est_deps = counts.get(dependent_type.value, 0)
+                if dependent_type.value in counts:
+                    est_deps = counts[dependent_type.value]
+                    confirmed_zero_dependents = est_deps == 0
                 est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps > 0 else 0
 
             repos, next_url = parse_dependents_page(html)
@@ -494,6 +497,8 @@ async def scrape_dependents(
                     )
                 )
 
+            if confirmed_zero_dependents:
+                break
             if adaptive_stop and _should_stop(heap, rows, recent_max, page):
                 reason = ScrapeReason.TREND_CONVERGED
                 break
@@ -507,7 +512,7 @@ async def scrape_dependents(
 
     # `estimated_total_pages` is always the header-derived estimate, never the walked count
     # (which lives in `pages_scraped`).
-    return ScrapeResult(
+    result = ScrapeResult(
         repos=_top_k(heap),
         pages_scraped=page,
         max_pages=max_pages,
@@ -518,3 +523,5 @@ async def scrape_dependents(
         matched_count=matched,
         stale_pages=stale_pages,
     )
+    result._confirmed_zero_dependents = confirmed_zero_dependents
+    return result

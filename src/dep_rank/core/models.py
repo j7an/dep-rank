@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class DependentType(StrEnum):
@@ -113,6 +113,7 @@ class ScrapeResult(BaseModel):
     reason: ScrapeReason | None = None
     matched_count: int = 0
     stale_pages: int = 0  # pages served from expired cache entries during this scrape
+    _confirmed_zero_dependents: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> ScrapeResult:
@@ -159,6 +160,7 @@ class DependentsResult(BaseModel):
     stale_pages: int = Field(default=0, exclude=True)
     # False when trust scores used partial metadata; excluded from JSON
     trust_metadata_complete: bool = Field(default=True, exclude=True)
+    _confirmed_zero_dependents: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

@@ -91,6 +91,7 @@ def _print_scrape_outcome(console: Console, scrape_result: ScrapeResult, min_sta
         estimated_total_pages=scrape_result.estimated_total_pages,
         found_count=scrape_result.matched_count,
         min_stars=min_stars,
+        complete=scrape_result.complete,
     )
     console.print(f"[green]{summary}")
     if not scrape_result.complete:
@@ -143,7 +144,10 @@ async def run_deps(
                 if live is not None:
                     live.stop()
                     live = None
-                if not quiet:
+                if scrape_result._confirmed_zero_dependents:
+                    if quiet:
+                        console.print("No dependents found.")
+                elif not quiet:
                     _print_scrape_outcome(console, scrape_result, min_stars)
                 if scrape_result.stale_pages and not token:
                     # Without a token nothing refreshes expired pages, so say so even in JSON
@@ -426,11 +430,20 @@ def search(
                         rows=max_repos,
                         adaptive_stop=False,
                     )
+                    if progress_ctx is not None and task_id is not None and scrape_result.complete:
+                        progress_ctx.update(
+                            task_id,
+                            total=max(scrape_result.pages_scraped, 1),
+                            completed=scrape_result.pages_scraped,
+                        )
                 finally:
                     if progress_ctx is not None:
                         progress_ctx.stop()
 
                 repos = scrape_result.repos
+                if scrape_result._confirmed_zero_dependents:
+                    console.print("No dependents found.")
+                    return
                 _print_scrape_outcome(console, scrape_result, min_stars)
 
                 result = await search_code(

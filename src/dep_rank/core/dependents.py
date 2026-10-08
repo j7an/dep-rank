@@ -91,7 +91,9 @@ async def get_dependents(
     now = datetime.now(tz=UTC)
     # Token is guaranteed by the precondition check; ``and token`` only narrows
     # the type for mypy.
-    if rank_by == "trust" and token:
+    if rank_by == "trust" and token and scrape_result._confirmed_zero_dependents:
+        ranked_by = "trust"
+    elif rank_by == "trust" and token:
         meta = await enrich_with_trust_metadata(
             session,
             repos,
@@ -114,7 +116,7 @@ async def get_dependents(
             meta = await enrich_with_trust_metadata(session, repos, token, include_description=True)
             repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
 
-    return DependentsResult(
+    result = DependentsResult(
         source=url,
         total_count=total_count,
         filtered_count=total_count,
@@ -130,3 +132,5 @@ async def get_dependents(
         stale_pages=scrape_result.stale_pages,
         trust_metadata_complete=trust_metadata_complete,
     )
+    result._confirmed_zero_dependents = scrape_result._confirmed_zero_dependents
+    return result

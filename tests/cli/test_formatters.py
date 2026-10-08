@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal, cast
 
 import pytest
 from rich.console import Console
@@ -128,6 +128,7 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 76515,
                 "found_count": 387,
                 "min_stars": 5,
+                "complete": False,
             },
             [
                 "42/1000 pages (4.2%)",
@@ -143,6 +144,7 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 0,
                 "found_count": 387,
                 "min_stars": 5,
+                "complete": False,
             },
             ["42/1000 pages (4.2%)", "Found 387 dependents with ≥5 stars"],
             ["estimated"],
@@ -155,8 +157,8 @@ class TestPrintSearchResults:
                 "found_count": 5000,
                 "min_stars": 10,
             },
-            ["1000/1000 pages (100.0%)", "1000/~76,515 estimated pages (1.31%)"],
-            [],
+            ["1000/1000 pages", "1000/~76,515 estimated pages (1.31%)"],
+            ["1000/1000 pages (100.0%)"],
         ),
         (
             {
@@ -166,16 +168,16 @@ class TestPrintSearchResults:
                 "found_count": 0,
                 "min_stars": 5,
             },
-            ["0/1000 pages (0.0%)", "Found 0 dependents"],
-            [],
+            ["0/1000 pages", "Found 0 dependents"],
+            ["0/1000 pages (0.0%)"],
         ),
     ],
     ids=["with-estimate", "without-estimate", "full-scrape", "zero-pages"],
 )
 def test_format_scrape_summary(
-    kwargs: dict[str, int], must_contain: list[str], must_not_contain: list[str]
+    kwargs: dict[str, int | bool], must_contain: list[str], must_not_contain: list[str]
 ) -> None:
-    summary = format_scrape_summary(**kwargs)
+    summary = format_scrape_summary(**cast(dict[str, Any], kwargs))
     for text in must_contain:
         assert text in summary
     for text in must_not_contain:
@@ -298,10 +300,12 @@ class TestTrustTableAndJson:
 
     def test_json_star_mode_excludes_trust_and_ranked_by(self) -> None:
         result = self._result(ranked_by="stars", repos=[self._trust_repo()])
+        result._confirmed_zero_dependents = True
         out = _render(print_dependents_json, result, include_rank_metadata=False)
         assert "ranked_by" not in out
         assert "trust" not in out
         assert "trust_signals" not in out
+        assert "confirmed_zero_dependents" not in out
 
     def test_json_star_mode_preserves_existing_fields_exactly(self) -> None:
         # The printer — not raw model serialization — is the back-compat boundary.
