@@ -2,10 +2,40 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx2
+import pytest
 
 from dep_rank.core.search import search_code
 from tests.conftest import FakeHTTP, make_repo
+
+
+@pytest.mark.parametrize(
+    "bad_response",
+    [{"body": b"<html>not json"}, {"exception": httpx2.ReadTimeout("slow")}],
+    ids=["bad-json", "read-timeout"],
+)
+async def test_search_skips_repo_on_bad_response(
+    bad_response: dict[str, Any], mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    repos = [make_repo("alpha", "framework"), make_repo("beta", "toolkit")]
+    mock_http.get(
+        "https://api.github.com/search/code?q=test%20repo%3Aalpha%2Fframework", **bad_response
+    )
+    mock_http.get(
+        "https://api.github.com/search/code?q=test%20repo%3Abeta%2Ftoolkit",
+        payload={
+            "total_count": 1,
+            "items": [
+                {"html_url": "https://github.com/beta/toolkit/blob/main/app.py", "path": "app.py"}
+            ],
+        },
+    )
+
+    result = await search_code(session, repos, "test", token="fake")
+
+    assert [(hit.repo, hit.file_path) for hit in result.hits] == [(repos[1], "app.py")]
 
 
 class TestSearchCode:
