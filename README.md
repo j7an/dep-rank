@@ -165,7 +165,7 @@ Responses are cached in a local SQLite database (`~/Library/Caches/dep-rank` on 
 score instead of raw stars. Stars are useful but [gameable][starscout]; trust
 ranking blends stars with non-star signals — forks, total issues and pull
 requests, and recency of activity — fetched via low-cost GitHub GraphQL queries
-(batched at 100 repositories per request, so a larger pool issues more than one).
+(batched at 25 repositories per request, so a larger pool issues more than one).
 
 ```bash
 dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...

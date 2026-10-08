@@ -13,7 +13,12 @@ from dep_rank.core.models import Repository, TrustMetadataResult, TrustSignals
 logger = logging.getLogger(__name__)
 
 GRAPHQL_URL = "https://api.github.com/graphql"
-BATCH_SIZE = 100
+# GitHub ends an over-budget query with RESOURCE_LIMITS_EXCEEDED and returns null for every
+# alias past the cutoff; one 74-repo query was cut off at alias ~41, driven by the issue/PR
+# totalCount fields. Smaller batches cost no extra wall time (server work scales per repo).
+# ponytail: a fixed batch size is enough; re-query null aliases in smaller batches if
+# RESOURCE_LIMITS_EXCEEDED is ever observed at this size.
+BATCH_SIZE = 25
 
 
 def build_trust_query(repos: list[Repository], *, include_description: bool) -> str:
@@ -89,7 +94,7 @@ async def enrich_with_trust_metadata(
     *,
     include_description: bool = False,
 ) -> TrustMetadataResult:
-    """Fetch trust metadata for repos via GraphQL (batches of 100).
+    """Fetch trust metadata for repos via GraphQL (batches of ``BATCH_SIZE``).
 
     Status semantics: a 401 short-circuits to ``failed=True`` (token invalid). Ordinary
     batch errors (non-200 / GraphQL error) make those repos pass through with
