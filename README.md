@@ -75,7 +75,7 @@ dependents with `dep_rank.core.models.DependentType`. The API may change during 
 ```python
 import asyncio
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.dependents import get_dependents
@@ -87,7 +87,7 @@ async def main(cache_dir: str | None = None) -> None:
     try:
         if cache is not None:
             await cache.initialize()
-        async with aiohttp.ClientSession() as session:
+        async with httpx2.AsyncClient() as session:
             result: DependentsResult = await get_dependents(
                 session,
                 "https://github.com/django/django",

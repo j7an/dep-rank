@@ -101,8 +101,8 @@ request, run the checks that cover every changed area and then the full suite.
 - Tests mirror the source layout under `tests/cli/` and `tests/core/`.
 - `asyncio_mode = auto` is configured; async tests do not need explicit asyncio
   markers.
-- Unit and CLI tests must not depend on live GitHub state. Use `aioresponses`,
-  fixtures, or mocks at HTTP/process boundaries.
+- Unit and CLI tests must not depend on live GitHub state. Use the `mock_http`
+  fixture, fixtures, or mocks at HTTP/process boundaries.
 - The autouse `clean_env` fixture removes `DEP_RANK_TOKEN` for every test. Do not
   bypass it or allow credentials from a developer shell to affect results.
 - Reuse fixtures from `tests/conftest.py` for dependents-page HTML and common
@@ -141,7 +141,7 @@ request, run the checks that cover every changed area and then the full suite.
   content.
 - Ask before adding a new runtime or development dependency.
 - The global `tool.uv.exclude-newer` cooldown is one week. Temporary
-  `exclude-newer-package` entries exist to allow security-fixed releases through
+  `exclude-newer-package` entries may exist to allow security-fixed releases through
   the cooldown; remove an override only after its advisory fix is older than the
   global window.
 - Dependabot groups Python and GitHub Actions updates. Its CI repair job may
