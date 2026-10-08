@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-import aiohttp
+import httpx2
 import pytest
-from aioresponses import aioresponses
 from click.testing import CliRunner
 
 from dep_rank import __version__
@@ -33,7 +32,7 @@ from dep_rank.core.models import (
     TrustCheckResult,
     TrustMetadataResult,
 )
-from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, make_repo
+from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, FakeHTTP, make_repo
 
 
 @pytest.fixture
@@ -135,7 +134,7 @@ class TestImportCost:
     def test_cli_import_does_not_load_network_stack(self) -> None:
         code = (
             "import sys, dep_rank.cli.app; "
-            "print(sorted(m for m in ('aiohttp', 'aiosqlite', 'selectolax') if m in sys.modules))"
+            "print(sorted(m for m in ('httpx2', 'aiosqlite', 'selectolax') if m in sys.modules))"
         )
         out = subprocess.run(  # noqa: S603 - fixed test code in the current Python interpreter
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
@@ -193,7 +192,9 @@ class TestJsonStdout:
 import json
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
-from aioresponses import aioresponses
+from tests.conftest import FakeHTTP
+import functools
+import httpx2
 from click.testing import CliRunner
 from dep_rank.cli.app import cli
 from dep_rank.core.models import Repository, ScrapeResult
@@ -214,8 +215,11 @@ with TemporaryDirectory() as cache_dir:
             repos=repos, pages_scraped=1, max_pages=1000,
             estimated_total_pages=30, estimated_total_dependents=900,
         )
-        with aioresponses() as responses:
-            responses.post("https://api.github.com/graphql", payload=payload)
+        fake = FakeHTTP()
+        fake.post("https://api.github.com/graphql", payload=payload)
+        with patch("httpx2.AsyncClient", functools.partial(
+            httpx2.AsyncClient, transport=httpx2.MockTransport(fake)
+        )):
             r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
                                        "--token", "t", "--format", "json", "--rows", "2"])
         print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
@@ -237,7 +241,9 @@ with TemporaryDirectory() as cache_dir:
 import json
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
-from aioresponses import aioresponses
+from tests.conftest import FakeHTTP
+import functools
+import httpx2
 from click.testing import CliRunner
 from dep_rank.cli.app import cli
 from dep_rank.core.models import Repository, ScrapeResult
@@ -258,8 +264,11 @@ with TemporaryDirectory() as cache_dir:
             repos=repos, pages_scraped=1, max_pages=1000,
             estimated_total_pages=30, estimated_total_dependents=900,
         )
-        with aioresponses() as responses:
-            responses.post("https://api.github.com/graphql", payload=payload)
+        fake = FakeHTTP()
+        fake.post("https://api.github.com/graphql", payload=payload)
+        with patch("httpx2.AsyncClient", functools.partial(
+            httpx2.AsyncClient, transport=httpx2.MockTransport(fake)
+        )):
             r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
                                        "--token", "t", "--rows", "2"])
         print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
@@ -316,7 +325,7 @@ class TestDepsCommandFull:
         mock_enrich: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
-        mock_http: aioresponses,
+        mock_http: FakeHTTP,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = _scrape_result(repos)
@@ -354,7 +363,7 @@ class TestDepsCommandFull:
         mock_enrich: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
-        mock_http: aioresponses,
+        mock_http: FakeHTTP,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = _scrape_result(repos)
@@ -374,7 +383,7 @@ class TestDepsCommandFull:
         mock_enrich: AsyncMock,
         runner: CliRunner,
         mock_result: DependentsResult,
-        mock_http: aioresponses,
+        mock_http: FakeHTTP,
     ) -> None:
         repos = mock_result.repos
         mock_scrape.return_value = _scrape_result(repos)
@@ -734,7 +743,7 @@ class TestDepsLiveTopK:
         self,
         mock_live_update: MagicMock,
         runner: CliRunner,
-        mock_http: aioresponses,
+        mock_http: FakeHTTP,
     ) -> None:
 
         first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
@@ -743,10 +752,12 @@ class TestDepsLiveTopK:
         # alpha/beta/gamma and a Next link; page 2 adds delta/app and ends the walk.
         mock_http.get(first, body=DEPENDENTS_HTML_PAGE_1)
         mock_http.get(page2, body=DEPENDENTS_HTML_LAST_PAGE)
-        result = runner.invoke(
-            cli,
-            ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
-        )
+        with patch("httpx2.AsyncClient", side_effect=httpx2.AsyncClient) as ctor:
+            result = runner.invoke(
+                cli,
+                ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--min-stars", "5"],
+            )
+        assert ctor.call_args.kwargs["trust_env"] is False
         assert result.exit_code == 0
         # Repos from BOTH pages appear in the final (post-Live) summary table -> the walk
         # consumed both pages.
@@ -977,7 +988,7 @@ class TestRankByTrust:
         mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
 
         async def check(
-            session: aiohttp.ClientSession,
+            session: httpx2.AsyncClient,
             selected: list[Repository],
             token: str,
             *,
@@ -1043,7 +1054,7 @@ class TestRankByTrust:
         mock_scrape.return_value = _scrape_result(repos, matched_count=len(repos))
 
         async def check(
-            session: aiohttp.ClientSession,
+            session: httpx2.AsyncClient,
             selected: list[Repository],
             token: str,
             *,

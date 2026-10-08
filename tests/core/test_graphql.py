@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx2
 import pytest
-from aiohttp import ClientSession
-from aioresponses import aioresponses
 
 from dep_rank.core.graphql import (
     BATCH_SIZE,
@@ -17,13 +17,13 @@ from dep_rank.core.graphql import (
     enrich_with_trust_metadata,
 )
 from dep_rank.core.models import Repository, TrustMetadataResult
-from tests.conftest import make_repo
+from tests.conftest import FakeHTTP, StalledBody, make_repo
 
 RunTrust = Callable[..., Awaitable[tuple[TrustMetadataResult, dict[Any, list[Any]]]]]
 
 
 @pytest.fixture
-def run_trust(mock_http: aioresponses, session: ClientSession) -> RunTrust:
+def run_trust(mock_http: FakeHTTP, session: httpx2.AsyncClient) -> RunTrust:
     """Queue GraphQL responses (dict = JSON payload, int = HTTP status) and run enrichment."""
 
     async def _run_trust(
@@ -83,7 +83,7 @@ class TestEnrichWithTrustMetadata:
         payload = {"data": {"repo_0": {"stargazerCount": 456, "description": description}}}
         result, requests = await run_trust(repos, payload, include_description=True)
         request = next(iter(requests.values()))[0]
-        assert "description" in request.kwargs["json"]["query"]
+        assert "description" in json.loads(request.content)["query"]
         assert result.repos[0].description == description
         assert result.repos[0].stars == 456
 
@@ -267,7 +267,7 @@ class TestEnrichWithTrustMetadata:
         assert result.failed is True  # no usable metadata at all
         assert result.complete is False
 
-    async def test_empty_repos_is_clean(self, session: ClientSession) -> None:
+    async def test_empty_repos_is_clean(self, session: httpx2.AsyncClient) -> None:
 
         result = await enrich_with_trust_metadata(
             session, [], token="fake", include_description=False
@@ -275,3 +275,18 @@ class TestEnrichWithTrustMetadata:
         assert result.repos == []
         assert result.failed is False
         assert result.complete is True
+
+
+async def test_error_status_with_stalled_body_is_handled(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    async def stalled_502(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(502, stream=StalledBody())
+
+    repos = [make_repo("a", "b")]
+    mock_http.post(GRAPHQL_URL, callback=stalled_502)
+    result = await enrich_with_trust_metadata(session, repos, token="fake")
+    assert result.failed is True
+    assert result.complete is False
+    assert result.repos == repos
+    assert result.repos[0].trust_signals is None

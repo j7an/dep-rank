@@ -10,9 +10,10 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import NamedTuple
 
-import aiohttp
+import httpx2
 
 from dep_rank.core.models import CautionCode, CautionSignal, Repository, TrustCheckResult
+from dep_rank.core.scraper import REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def evaluate_star_history(daily: list[tuple[date, int]], *, now: datetime) -> St
 
 
 async def check_star_history(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     repos: list[Repository],
     token: str,
     *,
@@ -100,17 +101,21 @@ async def check_star_history(
         full_name = f"{repo.owner}/{repo.name}"
         url = STAR_HISTORY_URL.format(owner=repo.owner, name=repo.name)
         try:
-            async with session.get(
-                url, params={"per_page": WINDOW_WEEKS}, headers=headers
-            ) as response:
-                if response.status != 200:
-                    unavailable.append(full_name)
-                    logger.debug(
-                        "Star history unavailable for %s: HTTP %s", full_name, response.status
-                    )
-                    continue
-                daily = parse_star_history(await response.json())
-        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+            response = await session.get(
+                url,
+                params={"per_page": WINDOW_WEEKS},
+                headers=headers,
+                follow_redirects=True,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code != 200:
+                unavailable.append(full_name)
+                logger.debug(
+                    "Star history unavailable for %s: HTTP %s", full_name, response.status_code
+                )
+                continue
+            daily = parse_star_history(response.json())
+        except (httpx2.RequestError, ValueError) as exc:
             unavailable.append(full_name)
             logger.debug("Star history unavailable for %s: %s", full_name, exc)
             continue

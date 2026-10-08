@@ -2,9 +2,8 @@
 
 from datetime import UTC, date, datetime, timedelta, timezone
 
-import aiohttp
+import httpx2
 import pytest
-from aioresponses import aioresponses
 
 from dep_rank.core.models import (
     CautionCode,
@@ -20,6 +19,7 @@ from dep_rank.core.star_history import (
     parse_star_history,
     skipped_trust_check,
 )
+from tests.conftest import FakeHTTP
 
 NOW = datetime(2026, 9, 20, 12, tzinfo=UTC)
 
@@ -157,7 +157,7 @@ def concentrated_payload() -> list[dict[str, object]]:
 
 class TestCheckStarHistory:
     async def test_concentrated_caution_merged_into_trust(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         repo = history_repo("a")
         mock_http.get(history_url("a"), payload=concentrated_payload())
@@ -175,19 +175,17 @@ class TestCheckStarHistory:
         assert result.repos_checked == 1
 
     async def test_request_carries_api_version_and_bearer(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         mock_http.get(history_url("a"), payload=[])
         await check_star_history(session, [history_repo("a")], "tok", now=NOW)
-        headers = next(iter(mock_http.requests.values()))[0].kwargs["headers"]
+        headers = next(iter(mock_http.requests.values()))[0].headers
         # contract literal: documented API version for this endpoint
         assert headers["X-GitHub-Api-Version"] == "2026-03-10"
         assert headers["Authorization"] == "Bearer tok"
         assert headers["Accept"] == "application/vnd.github+json"
 
-    async def test_caps_at_25_repos(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
-    ) -> None:
+    async def test_caps_at_25_repos(self, mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
         repos = [history_repo(str(i)) for i in range(40)]
         for i in range(25):
             mock_http.get(history_url(str(i)), payload=[])
@@ -199,12 +197,12 @@ class TestCheckStarHistory:
         assert [repo.name for repo in returned] == [str(i) for i in range(40)]
 
     async def test_mixed_failures_are_unavailable(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         repos = [history_repo(name) for name in "abcde"]
         mock_http.get(history_url("a"), payload=concentrated_payload())
         mock_http.get(history_url("b"), status=404)
-        mock_http.get(history_url("c"), exception=aiohttp.ClientError("network failure"))
+        mock_http.get(history_url("c"), exception=httpx2.ConnectError("network failure"))
         mock_http.get(history_url("d"), payload={"message": "x"})
         mock_http.get(history_url("e"), payload=[])
         returned, result = await check_star_history(session, repos, "tok", now=NOW)
@@ -216,7 +214,7 @@ class TestCheckStarHistory:
 
     @pytest.mark.parametrize("status", [401, 403, 429])
     async def test_error_status_does_not_stop_later_checks(
-        self, status: int, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, status: int, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         mock_http.get(history_url("a"), status=status)
         mock_http.get(history_url("b"), payload=[])
@@ -228,9 +226,9 @@ class TestCheckStarHistory:
         assert result.repos_checked == 2
 
     async def test_timeout_and_bad_json_are_unavailable(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        mock_http.get(history_url("a"), exception=TimeoutError())
+        mock_http.get(history_url("a"), exception=httpx2.ReadTimeout("slow"))
         mock_http.get(history_url("b"), body="{", content_type="application/json")
         _, result = await check_star_history(
             session, [history_repo("a"), history_repo("b")], "tok", now=NOW
@@ -239,7 +237,7 @@ class TestCheckStarHistory:
         assert result.complete is False
 
     async def test_concentrated_repo_without_trust_is_preserved(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         repo = history_repo("a").model_copy(update={"trust": None})
         mock_http.get(history_url("a"), payload=concentrated_payload())
@@ -250,7 +248,7 @@ class TestCheckStarHistory:
         assert result.insufficient_history == []
 
     async def test_sufficient_spread_history_preserves_existing_cautions(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         repos = [history_repo("a")]
         payload = [
@@ -263,9 +261,7 @@ class TestCheckStarHistory:
         assert result.complete is True
         assert result.insufficient_history == []
 
-    async def test_empty_repos(
-        self, mock_http: aioresponses, session: aiohttp.ClientSession
-    ) -> None:
+    async def test_empty_repos(self, mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
         returned = await check_star_history(session, [], "tok", now=NOW)
         assert mock_http.requests == {}
         assert returned == ([], TrustCheckResult(complete=True, window_weeks=30, repos_checked=0))

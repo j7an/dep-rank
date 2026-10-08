@@ -11,19 +11,20 @@ need a token, but passing one is harmless.
 
 from __future__ import annotations
 
+import httpx2
 import pytest
-from aiohttp import ClientSession
-from aioresponses import aioresponses
 
 from dep_rank.core.models import Repository, ScrapeReason, ScrapeSnapshot
 from dep_rank.core.scraper import scrape_dependents
-from tests.conftest import dependents_page
+from tests.conftest import FakeHTTP, dependents_page
 
 BASE = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-async def test_top_k_ordering_across_pages(mock_http: aioresponses, session: ClientSession) -> None:
+async def test_top_k_ordering_across_pages(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
     """rows=2 keeps the two highest-star repos regardless of which page they were on."""
     p1 = dependents_page([("a", "one", 100), ("b", "two", 5000)], next_page=2, repos=300)
     p2 = dependents_page([("c", "three", 9000), ("d", "four", 200)], next_page=None, repos=300)
@@ -37,7 +38,7 @@ async def test_top_k_ordering_across_pages(mock_http: aioresponses, session: Cli
 
 
 async def test_rows_zero_keeps_no_repos_but_counts(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
     mock_http.get(FIRST, body=p1)
@@ -47,7 +48,7 @@ async def test_rows_zero_keeps_no_repos_but_counts(
 
 
 async def test_rows_greater_than_total_returns_all(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
     mock_http.get(FIRST, body=p1)
@@ -55,7 +56,7 @@ async def test_rows_greater_than_total_returns_all(
     assert [r.name for r in result.repos] == ["one", "two"]
 
 
-async def test_ties_keep_earlier_seen(mock_http: aioresponses, session: ClientSession) -> None:
+async def test_ties_keep_earlier_seen(mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
     """Equal stars: the repo seen first is retained when the heap is full."""
     p1 = dependents_page([("a", "first", 500), ("b", "second", 500)], next_page=None, repos=300)
     mock_http.get(FIRST, body=p1)
@@ -64,7 +65,7 @@ async def test_ties_keep_earlier_seen(mock_http: aioresponses, session: ClientSe
 
 
 async def test_ties_evict_later_seen_when_displaced(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     """Regression for the eviction tiebreak (not just admission): when a
     higher-star repo displaces one of two equal-star repos in a full heap, the
@@ -82,7 +83,7 @@ async def test_ties_evict_later_seen_when_displaced(
 
 
 async def test_duplicate_repos_counted_once(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     p1 = dependents_page([("a", "dup", 100)], next_page=2, repos=300)
     p2 = dependents_page([("a", "dup", 100), ("c", "new", 80)], next_page=None, repos=300)
@@ -94,7 +95,7 @@ async def test_duplicate_repos_counted_once(
 
 
 async def test_max_pages_reached_sets_reason(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     """Hitting the page cap with more pages available -> complete=False, max_pages_reached."""
 
@@ -113,7 +114,7 @@ async def test_max_pages_reached_sets_reason(
 
 
 async def test_on_page_fires_per_page_and_result_carries_outcome(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     seen: list[int] = []
 
@@ -132,7 +133,7 @@ async def test_on_page_fires_per_page_and_result_carries_outcome(
 
 
 async def test_rows_zero_walks_pages_and_reports_matches(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     tops: list[list[Repository]] = []
 
@@ -148,7 +149,7 @@ async def test_rows_zero_walks_pages_and_reports_matches(
 
 
 async def test_on_page_exception_propagates(
-    mock_http: aioresponses, session: ClientSession
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     async def on_page(snap: ScrapeSnapshot) -> None:
         raise RuntimeError("render failed")

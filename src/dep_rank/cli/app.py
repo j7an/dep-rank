@@ -112,7 +112,7 @@ async def run_deps(
     trust_check: bool = False,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
-    import aiohttp
+    import httpx2
     from rich.live import Live
 
     from dep_rank.cli.formatters import build_topk_table
@@ -122,8 +122,9 @@ async def run_deps(
     console = _stderr_console
     async with _open_cache() as cache:
         dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
-        async with aiohttp.ClientSession(
+        async with httpx2.AsyncClient(
             headers={"User-Agent": "dep-rank/0.1"},
+            trust_env=False,
         ) as session:
             show_live = not verbose and not quiet
             live = (
@@ -367,7 +368,7 @@ def search(
     verbose = ctx.obj.get("verbose", False)
 
     async def _run() -> None:
-        import aiohttp
+        import httpx2
 
         from dep_rank.cli.formatters import print_search_results
         from dep_rank.core.models import ScrapeSnapshot
@@ -376,8 +377,9 @@ def search(
 
         console = _stderr_console
         async with _open_cache() as cache:
-            async with aiohttp.ClientSession(
+            async with httpx2.AsyncClient(
                 headers={"User-Agent": "dep-rank/0.1"},
+                trust_env=False,
             ) as session:
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 

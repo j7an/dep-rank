@@ -61,8 +61,8 @@ shape and uniformity, and the release policy invariants from `AGENTS.md`.
 
 Request these by name as test parameters:
 
-- **`mock_http`** yields an active `aioresponses` mock; **`session`** yields a
-  real `aiohttp.ClientSession`.
+- **`mock_http`** yields a `FakeHTTP` response queue wired through
+  `httpx2.MockTransport`; **`session`** yields an `httpx2.AsyncClient` using it.
 - **`cache`** initializes a temporary `SqliteCache` and closes it after the test.
 - **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
 
@@ -78,9 +78,9 @@ Import these with `from tests.conftest import ...`:
 
 ## Writing tests
 
-- Mock HTTP with `aioresponses` (the `mock_http` fixture), never live GitHub.
+- Mock HTTP with `FakeHTTP` (the `mock_http` fixture), never live GitHub.
 - When asserting that **no** request was made, count `mock_http.requests`. An
-  unregistered URL raises `aiohttp.ClientConnectionError`, which the scraper
+  unregistered URL raises `httpx2.ConnectError`, which the scraper
   retries with backoff and the background refresher swallows, so an assertion
   that relies on that error passes for the wrong reason or fails slowly. To make
   an unexpected request fail at once, register it with

@@ -14,7 +14,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
 from urllib.parse import urljoin, urlsplit
 
-import aiohttp
+import httpx2
 from selectolax.parser import HTMLParser
 
 from dep_rank.core.cache import SqliteCache
@@ -42,6 +42,7 @@ STARS_SELECTOR = "div > div > span"
 NEXT_BUTTON_SELECTOR = "#dependents > div.paginate-container > div > a"
 GITHUB_URL = "https://github.com"
 MAX_RETRIES = 5
+# ponytail: per-phase inactivity timeout; add asyncio.timeout if a request is observed exceeding REQUEST_TIMEOUT overall.  # noqa: E501
 REQUEST_TIMEOUT = 30
 CACHE_TTL = 86400  # 24 hours
 DEPENDENTS_PER_PAGE = 30  # Approximate dependents shown per GitHub page
@@ -153,7 +154,7 @@ class _Attempt(NamedTuple):
 
 
 async def _get_once(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     url: str,
     limiter: RateLimiter,
     auth_headers: dict[str, str],
@@ -163,20 +164,21 @@ async def _get_once(
     """Make one GET, feed the outcome to the limiter, and store a usable body in the cache.
 
     Shared by the foreground walk and SWR refreshes, so it must not await anything before
-    ``session.get`` (callers' pause checks rely on that).
+    ``session.stream`` (callers' pause checks rely on that).
     """
     headers = dict(auth_headers)
     if cached and cached["etag"]:
         headers["If-None-Match"] = cached["etag"]
-    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-    async with session.get(url, timeout=timeout, headers=headers) as resp:
-        if resp.status == 200:
-            body: bytes = await resp.read()
+    async with session.stream(
+        "GET", url, headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT
+    ) as resp:
+        if resp.status_code == 200:
+            body: bytes = await resp.aread()
             etag = resp.headers.get("ETag")
-        elif resp.status == 304 and cached and cached["body"] is not None:
+        elif resp.status_code == 304 and cached and cached["body"] is not None:
             body = cached["body"]
             etag = cached["etag"]
-        elif resp.status == 429:
+        elif resp.status_code == 429:
             try:
                 retry_after: float | None = float(resp.headers.get("Retry-After", ""))
             except ValueError:  # absent, or the HTTP-date form
@@ -185,15 +187,15 @@ async def _get_once(
                 retry_after = None  # "inf" would sleep forever
             return _Attempt(429, None, limiter.note_429(retry_after))
         else:
-            return _Attempt(resp.status, None)
+            return _Attempt(resp.status_code, None)
     limiter.note_success()
     if cache:
         await cache.put(url, body, etag=etag, ttl=CACHE_TTL)
-    return _Attempt(resp.status, body)
+    return _Attempt(resp.status_code, body)
 
 
 async def _fetch_page(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     url: str,
     limiter: RateLimiter,
     auth_headers: dict[str, str],
@@ -209,7 +211,7 @@ async def _fetch_page(
         await limiter.acquire()
         try:
             result = await _get_once(session, url, limiter, auth_headers, cache, cached=None)
-        except (TimeoutError, aiohttp.ClientError):
+        except httpx2.RequestError:
             delay = backoff_delay(attempt)
             logger.warning(
                 "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
@@ -237,7 +239,7 @@ async def _fetch_page(
 
 
 async def _read_page(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     url: str,
     limiter: RateLimiter,
     auth_headers: dict[str, str],
@@ -276,7 +278,7 @@ class SWRManager:
 
     def __init__(
         self,
-        session: aiohttp.ClientSession,
+        session: httpx2.AsyncClient,
         limiter: RateLimiter,
         auth_headers: dict[str, str],
         cache: SqliteCache | None,
@@ -337,7 +339,7 @@ class SWRManager:
                 )
                 if result.body is None:
                     self._cool_down(url, f"HTTP {result.status}")
-        except (TimeoutError, aiohttp.ClientError) as exc:
+        except httpx2.RequestError as exc:
             self._cool_down(url, exc.__class__.__name__)
         finally:
             self._inflight.discard(url)
@@ -408,7 +410,7 @@ def _should_stop(
 
 
 async def scrape_dependents(
-    session: aiohttp.ClientSession,
+    session: httpx2.AsyncClient,
     url: str,
     *,
     rows: int,

@@ -6,17 +6,14 @@ import asyncio
 import logging
 from typing import Any
 
-import aiohttp
+import httpx2
 import pytest
-import yarl
-from aiohttp import ClientSession
-from aioresponses import CallbackResult, aioresponses
 
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import ScrapeSnapshot
 from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import SWRManager, _read_page, scrape_dependents
-from tests.conftest import dependents_page
+from tests.conftest import FakeHTTP, dependents_page
 
 
 def _auth_limiter() -> RateLimiter:
@@ -34,7 +31,7 @@ STALE_PAGE = dependents_page([("a", "one", 100)], repos=30)
 
 class TestSWRManager:
     async def test_disabled_when_unauthenticated(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=False)
         swr.schedule(URL)
@@ -42,7 +39,7 @@ class TestSWRManager:
         assert sum(len(v) for v in mock_http.requests.values()) == 0  # no refresh ever scheduled
 
     async def test_refresh_updates_cache_on_200(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
         mock_http.get(URL, status=200, body=b"fresh", headers={"ETag": '"new"'})
@@ -55,7 +52,7 @@ class TestSWRManager:
         assert entry["expired"] is False
 
     async def test_refresh_bumps_ttl_on_304(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A 304 revalidation keeps the stale body but refreshes its TTL (no longer expired)."""
         await _seed_expired(cache, URL, b"stale", '"old"')
@@ -65,14 +62,14 @@ class TestSWRManager:
         await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
         request = next(iter(mock_http.requests.values()))[0]
-        assert request.kwargs["headers"]["If-None-Match"] == '"old"'  # conditional revalidation
+        assert request.headers["If-None-Match"] == '"old"'  # conditional revalidation
         entry = await cache.get(URL)
         assert entry is not None
         assert entry["body"] == b"stale"  # body unchanged on 304
         assert entry["expired"] is False  # TTL bumped
 
     async def test_429_pauses_background_refresh(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A background 429 pauses further refreshes and preserves the stale body."""
         await _seed_expired(cache, URL, b"stale", '"old"')
@@ -96,15 +93,15 @@ class TestSWRManager:
         assert sum(len(v) for v in mock_http.requests.values()) == 1  # no new request fired
 
     async def test_queued_refresh_skips_after_429(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         other = URL + "&x=2"
         await _seed_expired(cache, URL, b"stale", '"old"')
         await _seed_expired(cache, other, b"stale", '"old2"')
 
-        async def delayed_429(url: yarl.URL, **kwargs: Any) -> CallbackResult:
+        async def delayed_429(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(0.01)
-            return CallbackResult(status=429)
+            return httpx2.Response(429)
 
         mock_http.get(URL, callback=delayed_429)
         mock_http.get(other, status=200, body=b"fresh")
@@ -122,8 +119,8 @@ class TestSWRManager:
     async def test_foreground_429_during_cache_lookup_blocks_refresh(
         self,
         cache: SqliteCache,
-        mock_http: aioresponses,
-        session: ClientSession,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
@@ -143,13 +140,13 @@ class TestSWRManager:
         assert sum(len(v) for v in mock_http.requests.values()) == 0
 
     async def test_dedup_one_refresh_per_url(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
 
-        async def delayed_200(url: yarl.URL, **kwargs: Any) -> CallbackResult:
+        async def delayed_200(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(0.02)
-            return CallbackResult(status=200, body=b"fresh", headers={"ETag": '"new"'})
+            return httpx2.Response(200, content=b"fresh", headers={"ETag": '"new"'})
 
         mock_http.get(URL, callback=delayed_200)
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
@@ -161,8 +158,8 @@ class TestSWRManager:
     async def test_failed_refresh_enters_cooldown(
         self,
         cache: SqliteCache,
-        mock_http: aioresponses,
-        session: ClientSession,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         clock = {"t": 0.0}
@@ -190,24 +187,24 @@ class TestSWRManager:
     async def test_transport_error_enters_cooldown(
         self,
         cache: SqliteCache,
-        mock_http: aioresponses,
-        session: ClientSession,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
-        mock_http.get(URL, exception=aiohttp.ClientConnectionError())
+        mock_http.get(URL, exception=httpx2.ConnectError("refused"))
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
             swr.schedule(URL)
             await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
-        assert any("ClientConnectionError" in r.getMessage() for r in caplog.records)
+        assert any("ConnectError" in r.getMessage() for r in caplog.records)
         swr.schedule(URL)  # within cooldown: no second request
         await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
 
     async def test_no_refresh_without_foreground_headroom(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """Spec §3 foreground-priority: at low headroom the refresh makes no request AND
         a concurrent foreground ``acquire()`` is not delayed by the refresh path."""
@@ -234,13 +231,13 @@ class TestSWRManager:
         assert foreground.done()  # foreground acquired immediately, never queued behind SWR
 
     async def test_drain_cancels_stragglers_past_timeout(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
 
-        async def delayed_200(url: yarl.URL, **kwargs: Any) -> CallbackResult:
+        async def delayed_200(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(5.0)
-            return CallbackResult(status=200, body=b"fresh", headers={"ETag": '"new"'})
+            return httpx2.Response(200, content=b"fresh", headers={"ETag": '"new"'})
 
         mock_http.get(URL, callback=delayed_200)
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
@@ -255,7 +252,7 @@ class TestSWRManager:
 
 class TestSWRIntegration:
     async def test_read_page_serves_stale_and_schedules_refresh(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         await _seed_expired(cache, URL, b"<html>stale</html>", '"old"')
         mock_http.get(URL, status=200, body=b"<html>fresh</html>", headers={"ETag": '"new"'})
@@ -270,7 +267,7 @@ class TestSWRIntegration:
         assert entry["body"] == b"<html>fresh</html>"  # refreshed in background
 
     async def test_stream_blocks_on_drain_before_returning(
-        self, cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+        self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """`scrape_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
         not leave the refresh as a fire-and-forget task that merely happens to finish in
@@ -296,9 +293,9 @@ class TestSWRIntegration:
         # timeout, so it is not cancelled) is what makes "completed by return" equivalent
         # to "return was blocked on drain": on a single event loop the fast foreground walk
         # cannot outrun a still-sleeping refresh task.
-        async def delayed_304(url: yarl.URL, **kwargs: Any) -> CallbackResult:
+        async def delayed_304(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(0.3)
-            return CallbackResult(status=304)
+            return httpx2.Response(304)
 
         mock_http.get(FIRST, callback=delayed_304)
         result = await scrape_dependents(
@@ -321,7 +318,7 @@ class TestSWRIntegration:
 
 
 async def test_unauthenticated_expired_hit_serves_stale_without_request(
-    cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+    cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)
     mock_http.get(FIRST, exception=AssertionError("unexpected foreground fetch"))
@@ -332,13 +329,13 @@ async def test_unauthenticated_expired_hit_serves_stale_without_request(
 
 
 async def test_on_page_exception_still_drains_refresh(
-    cache: SqliteCache, mock_http: aioresponses, session: ClientSession
+    cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)
 
-    async def delayed_304(url: yarl.URL, **kwargs: Any) -> CallbackResult:
+    async def delayed_304(request: httpx2.Request) -> httpx2.Response:
         await asyncio.sleep(0.3)
-        return CallbackResult(status=304)
+        return httpx2.Response(304)
 
     mock_http.get(FIRST, callback=delayed_304)
 
