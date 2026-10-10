@@ -103,9 +103,17 @@ def _print_dependents_table(result: DependentsResult) -> None:
     console.print(table)
     console.print(f"\n[dim]{result.total_count:,} dependents at or above the star threshold[/dim]")
     if is_trust:
+        # Rows are themselves dependents, so state that they are a subset of the scored set.
+        shown = len(result.repos)
+        scope = (
+            f"the {result.trust_pool_size:,} most-starred dependents against each other; "
+            f"the {shown:,} rows above are the top of that ranking."
+            if result.trust_pool_size > shown
+            else f"these {shown:,} rows against each other."
+        )
         console.print(
-            f"[dim]Trust: 0-100 relative to the {result.trust_pool_size:,} candidates scored "
-            "(100 = strongest on every signal); not comparable across runs.[/dim]"
+            f"[dim]Trust scores rank {scope} "
+            "100 = strongest on every signal; not comparable across runs.[/dim]"
         )
     if has_cautions:
         present = {c.code for r in result.repos if r.trust for c in r.trust.cautions}

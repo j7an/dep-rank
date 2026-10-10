@@ -838,16 +838,26 @@ class TestDepsLiveFrames:
         assert all(_frame_height(frame) <= 1 for frame in stops)
 
     @pytest.mark.parametrize(
-        ("rank_by", "trust_check", "descriptions", "expected"),
+        ("rank_by", "trust_check", "descriptions", "rows", "expected"),
         [
-            ("trust", False, False, "Scoring 50 candidates by trust for the top 5…"),
+            (
+                "trust",
+                False,
+                False,
+                5,
+                "Trust-scoring the 50 most-starred dependents to show the top 5…",
+            ),
             (
                 "trust",
                 True,
                 False,
-                "Scoring 50 candidates by trust for the top 5 and checking star history…",
+                5,
+                "Trust-scoring the 50 most-starred dependents to show the top 5"
+                " and checking star history…",
             ),
-            ("stars", False, True, "Fetching descriptions…"),
+            # Fewer scraped than --rows: every scored repo is shown, so no "top N" promise.
+            ("trust", False, False, 100, "Trust-scoring 50 dependents…"),
+            ("stars", False, True, 5, "Fetching descriptions…"),
         ],
     )
     @patch("dep_rank.core.dependents.check_star_history", new_callable=AsyncMock)
@@ -862,6 +872,7 @@ class TestDepsLiveFrames:
         rank_by: str,
         trust_check: bool,
         descriptions: bool,
+        rows: int,
         expected: str,
     ) -> None:
         mock_scrape.side_effect = _scrape_tall_table
@@ -878,7 +889,7 @@ class TestDepsLiveFrames:
         asyncio.run(
             cli_app.run_deps(
                 "https://github.com/o/r",
-                5,
+                rows,
                 0,
                 descriptions,
                 False,

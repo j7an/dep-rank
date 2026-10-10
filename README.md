@@ -122,10 +122,10 @@ verdicts.
 Check `result.complete` and `result.reason` for partial results; counts are lower
 bounds when incomplete. `result.stale_pages` counts pages served from expired
 cache entries, and `result.trust_metadata_complete` is false when trust scores
-used partial metadata. `result.trust_pool_size` is the number of candidates trust
-scores are relative to (0 when not trust-ranked). These fields exist on the result
-but are excluded from
-`model_dump()` and JSON serialization (`model_dump_json()`).
+used partial metadata. `result.trust_pool_size` is the number of dependents scored
+together, which trust scores are relative to (0 when not trust-ranked). These fields
+exist on the result but are excluded from `model_dump()` and JSON serialization
+(`model_dump_json()`).
 If trust metadata cannot be fetched, results fall back to stars; check
 `result.ranked_by == "trust"` to confirm trust ranking, since
 `trust_metadata_complete` describes only metadata used for successful trust ranking.
@@ -189,11 +189,11 @@ dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...
 
 ### How the score is computed
 
-Trust mode scores a candidate pool of `min(100, rows × 10)` dependents (never fewer
-than `--rows`, fewer if fewer dependents match), taken from the top by stars, then
-shows the top `--rows` of them.
-The default `--rows 10` scores 100 candidates and shows 10; `--rows 50` scores 100
-and shows 50.
+Trust mode scores the most-starred dependents together, then shows the top `--rows`
+of that ranking. The number scored (the pool) is `min(100, rows × 10)`, never fewer
+than `--rows`, and fewer if fewer dependents match. The default `--rows 10` scores
+100 and shows 10; `--rows 50` scores 100 and shows 50. With `--rows` ≥ 100, or when
+fewer dependents match, every scored dependent is shown.
 
 Each of the four signals is log-scaled (except recency) and min-max normalized
 across the pool, so the pool's weakest repo gets 0 and its strongest gets 1. The
@@ -212,7 +212,8 @@ score is the weighted sum × 100:
   `--min-stars` changes the pool and therefore every score.
 - Because the table shows the top of the pool, scores usually cluster high: the
   defaults show only the top tenth. `--rows 100` shows the full range.
-- The table footer states the pool size. JSON includes the per-signal 0–1 values
+- The table footer states how many dependents were scored and how many rows are
+  shown. JSON includes the per-signal 0–1 values
   under `trust.components`.
 
 ### Star-history check
