@@ -372,6 +372,34 @@ class TestDepsCommand:
             assert "Downloads" in result.stdout
             assert result.stdout.count("unavailable") == 2
 
+    @pytest.mark.parametrize("output_format", ["table", "json"])
+    @patch("dep_rank.core.dependents.fetch_downloads", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_complete_downloads_does_not_warn(
+        self,
+        mock_scrape: AsyncMock,
+        mock_downloads: AsyncMock,
+        runner: CliRunner,
+        mock_result: DependentsResult,
+        mock_http: FakeHTTP,
+        output_format: str,
+    ) -> None:
+        mock_scrape.return_value = _scrape_result(mock_result.repos)
+        mock_downloads.return_value = (mock_result.repos, DownloadsCheckResult(complete=True))
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--downloads", "--format", output_format]
+        )
+        assert result.exit_code == 0
+        assert "Download lookup incomplete" not in result.stderr
+        assert "Download lookup incomplete" not in result.stdout
+        if output_format == "json":
+            assert json.loads(result.stdout)["downloads_check"] == {
+                "complete": True,
+                "unavailable": [],
+            }
+        else:
+            assert "Downloads" in result.stdout
+
     def test_invalid_url(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps", "https://gitlab.com/foo/bar"])
         assert result.exit_code == 1

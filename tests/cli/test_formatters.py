@@ -555,17 +555,23 @@ class TestTrustTableAndJson:
         }  # exact field set — no trust/trust_signals leakage, nothing dropped
         assert "ranked_by" not in payload
 
-    @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
+    @pytest.mark.parametrize(
+        ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
+    )
     def test_json_without_downloads_check_has_no_downloads_keys(
-        self, ranked_by: Literal["stars", "trust"]
+        self, ranked_by: Literal["stars", "trust"], trust_check: bool
     ) -> None:
         result = self._result(ranked_by=ranked_by, repos=[self._trust_repo()])
+        if trust_check:
+            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
         out = _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")
         assert "downloads" not in out
 
-    @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
+    @pytest.mark.parametrize(
+        ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
+    )
     def test_json_with_downloads_check_includes_rows_and_check(
-        self, ranked_by: Literal["stars", "trust"]
+        self, ranked_by: Literal["stars", "trust"], trust_check: bool
     ) -> None:
         found = make_repo(
             "alpha",
@@ -579,6 +585,8 @@ class TestTrustTableAndJson:
             ),
         )
         result = self._result(ranked_by=ranked_by, repos=[found, make_repo("beta", "toolkit")])
+        if trust_check:
+            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=2)
         result.downloads_check = DownloadsCheckResult(complete=False, unavailable=["beta/toolkit"])
         payload = json.loads(
             _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")

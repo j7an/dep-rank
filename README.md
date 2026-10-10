@@ -210,7 +210,8 @@ JSON mode.
 ecosyste.ms and deps.dev. Lookup requests omit caller credentials.
 
 JSON adds a per-repository `downloads` object (or `null`) and a top-level
-`downloads_check`; without the flag these fields are omitted. For example (excerpt):
+`downloads_check`; without the flag these fields are omitted. This example is
+illustrative: selected packages and counts can change.
 
 ```json
 {
@@ -219,8 +220,8 @@ JSON adds a per-repository `downloads` object (or `null`) and a top-level
     "name": "react",
     "downloads": {
       "ecosystem": "npm",
-      "name": "react",
-      "downloads": 636000000,
+      "name": "react-is",
+      "downloads": 1524448794,
       "period": "last-month",
       "verified": true
     }
