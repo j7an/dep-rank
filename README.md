@@ -38,7 +38,7 @@ dep-rank deps https://github.com/django/django --packages
 | `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
 | `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
 | `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
-| `--downloads` | off | Show each dependent's most-downloaded registry package (ecosyste.ms / deps.dev; display only) |
+| `--downloads` | off | Show each dependent's most-downloaded registry package (ecosyste.ms / deps.dev / npm; display only) |
 
 ### `dep-rank search` — Search code in dependents
 
@@ -177,9 +177,11 @@ dep-rank deps https://github.com/django/django --downloads
 
 `--downloads` works with both `--repositories` and `--packages`, with no token
 requirement. For each displayed dependent, [ecosyste.ms](https://packages.ecosyste.ms/)
-provides package candidates and counts, and [deps.dev](https://deps.dev/) provides
-attestation evidence. The package with the highest download count among accepted
-candidates is shown; counts never affect star or trust ranking.
+provides package candidates and non-npm counts, and [deps.dev](https://deps.dev/)
+provides attestation evidence. npm counts come from npm's download API
+(`api.npmjs.org`, last 30 days); non-npm counts are ecosyste.ms snapshots that can lag.
+The package with the highest download count among accepted candidates is shown;
+counts never affect star or trust ranking.
 
 A package is accepted when any of these rules holds:
 
@@ -208,7 +210,8 @@ failures leave the deps run usable and print a warning to stderr, including in
 JSON mode.
 
 **Third-party egress:** opting in sends the repository URLs of displayed rows to
-ecosyste.ms and deps.dev. Lookup requests omit caller credentials.
+ecosyste.ms and deps.dev. Displayed npm package names are also sent to
+`api.npmjs.org`. Lookup requests omit caller credentials.
 
 JSON adds a per-repository `downloads` object (or `null`) and a top-level
 `downloads_check`; without the flag these fields are omitted. This example is

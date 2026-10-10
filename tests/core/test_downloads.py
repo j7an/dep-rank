@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx2
 import pytest
 
@@ -281,6 +283,10 @@ def name_url(ecosystem: str, name: str) -> str:
     return str(httpx2.URL(LOOKUP, params={"ecosystem": ecosystem, "name": name}))
 
 
+def npm_url(name: str) -> str:
+    return "https://api.npmjs.org/downloads/point/last-month/" + quote(name, safe="@")
+
+
 def dd_url(owner: str, name: str) -> str:
     return f"https://api.deps.dev/v3/projects/github.com%2F{owner}%2F{name}:packageversions"
 
@@ -300,6 +306,7 @@ def total_requests(mock_http: FakeHTTP) -> int:
 def matched_row(mock_http: FakeHTTP, name: str) -> None:
     mock_http.get(eco_url("o", name), payload=[pkg(name, 10)])
     mock_http.get(dd_url("o", name), payload={"versions": []})
+    mock_http.get(npm_url(name), payload={"downloads": 10, "package": name})
 
 
 class TestFetchDownloads:
@@ -311,6 +318,7 @@ class TestFetchDownloads:
             payload=[pkg("express", 636140021), pkg("alemmi", 31001)],
         )
         mock_http.get(dd_url("expressjs", "express"), payload={"versions": []})
+        mock_http.get(npm_url("express"), payload={"downloads": 636140021, "package": "express"})
         original = make_repo("expressjs", "express")
         rows, result = await downloads_module.fetch_downloads(session, [original])
         assert rows[0].downloads == PackageDownloads(
@@ -323,7 +331,7 @@ class TestFetchDownloads:
         assert rows[0] is not original
         assert original.downloads is None
         assert result.complete is True
-        assert total_requests(mock_http) == 2
+        assert total_requests(mock_http) == 3
 
     async def test_attested_missing_candidate_is_fetched_by_name(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
@@ -334,10 +342,12 @@ class TestFetchDownloads:
         )
         mock_http.get(dd_url("facebook", "react"), payload={"versions": [attest("NPM", "react")]})
         mock_http.get(name_url("npm", "react"), payload=[pkg("react", 636140021)])
+        mock_http.get(npm_url("react"), payload={"downloads": 828607491, "package": "react"})
         rows, result = await downloads_module.fetch_downloads(
             session, [make_repo("facebook", "react")]
         )
         assert rows[0].downloads is not None
+        assert rows[0].downloads.downloads == 828607491
         assert rows[0].downloads.name == "react"
         assert rows[0].downloads.verified is True
         assert result.complete is True
@@ -373,6 +383,7 @@ class TestFetchDownloads:
         mock_http.get(eco_url("o", "r"), payload=[])
         mock_http.get(dd_url("o", "r"), payload={"versions": [attest("NPM", "JSONStream")]})
         mock_http.get(name_url("npm", "JSONStream"), payload=[pkg("JSONStream", 5)])
+        mock_http.get(npm_url("JSONStream"), payload={"downloads": 5, "package": "JSONStream"})
         rows, _ = await downloads_module.fetch_downloads(session, [make_repo("o", "r")])
         assert rows[0].downloads is not None
         assert rows[0].downloads.name == "JSONStream"
@@ -396,6 +407,7 @@ class TestFetchDownloads:
     ) -> None:
         mock_http.get(eco_url("o", "a"), payload=[pkg("a", 10)])
         mock_http.get(dd_url("o", "a"), status=404)
+        mock_http.get(npm_url("a"), payload={"downloads": 10, "package": "a"})
         rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
         assert rows[0].downloads is not None
         assert rows[0].downloads.verified is False
@@ -487,7 +499,7 @@ class TestFetchDownloads:
         assert all(row.downloads is None for row in rows[1:])
         assert ("GET", eco_url("o", "c")) not in mock_http.requests
         assert ("GET", eco_url("o", "d")) not in mock_http.requests
-        assert total_requests(mock_http) == (4 if service == "dd" else 3)
+        assert total_requests(mock_http) == (5 if service == "dd" else 4)
 
     async def test_requests_carry_user_agent(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
@@ -505,6 +517,7 @@ class TestFetchDownloads:
 
     async def test_caller_credentials_are_not_sent(self, mock_http: FakeHTTP) -> None:
         mock_http.get(eco_url("expressjs", "express"), payload=[pkg("express", 5)])
+        mock_http.get(npm_url("express"), payload={"downloads": 5, "package": "express"})
         mock_http.get(dd_url("expressjs", "express"), payload={"versions": [attest("NPM", "x")]})
         mock_http.get(name_url("npm", "x"), payload=[])
         async with httpx2.AsyncClient(
@@ -522,7 +535,12 @@ class TestFetchDownloads:
             _, result = await downloads_module.fetch_downloads(authed, [make_repo("o", "a")])
         assert result.unavailable == ["o/a"]
         assert ("GET", location) not in mock_http.requests
-        assert total_requests(mock_http) == 4
+        assert total_requests(mock_http) == 5
+        assert any(
+            request.url.host == "api.npmjs.org"
+            for calls in mock_http.requests.values()
+            for request in calls
+        )
         assert all(
             "Authorization" not in request.headers and "Cookie" not in request.headers
             for calls in mock_http.requests.values()
@@ -566,7 +584,7 @@ class TestFetchDownloads:
         stops = isinstance(failure, httpx2.RequestError) or failure in (429, 503)
         assert result.unavailable == (["o/a", "o/b"] if stops else ["o/a"])
         assert (rows[1].downloads is None) is stops
-        assert total_requests(mock_http) == (3 if stops else 5)
+        assert total_requests(mock_http) == (3 if stops else 6)
 
     async def test_gap_fill_skips_unsupported_and_orders_missing_keys(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
@@ -592,12 +610,13 @@ class TestFetchDownloads:
         )
         for name in ("a", "z"):
             mock_http.get(name_url("npm", name), callback=response)
+        mock_http.get(npm_url("a"), payload={"downloads": 5, "package": "a"})
         rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "r")])
         assert seen == [name_url("npm", "a"), name_url("npm", "z")]
         assert result.complete is True
         assert rows[0].downloads is not None
         assert rows[0].downloads.name == "a"
-        assert total_requests(mock_http) == 4
+        assert total_requests(mock_http) == 5
 
     async def test_go_attestation_gap_fill_preserves_package_name(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
@@ -619,3 +638,117 @@ class TestFetchDownloads:
             verified=True,
         )
         assert len(mock_http.requests[("GET", name_url("go", "example.com/Owner/Lib"))]) == 1
+
+    async def test_npm_winner_count_comes_from_npm(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("elizaOS", "eliza"), payload=[pkg("@elizaos/core", 197042)])
+        mock_http.get(dd_url("elizaOS", "eliza"), payload={"versions": []})
+        mock_http.get(
+            npm_url("@elizaos/core"), payload={"downloads": 42274, "package": "@elizaos/core"}
+        )
+        repos, check = await downloads_module.fetch_downloads(
+            session, [make_repo("elizaOS", "eliza")]
+        )
+        assert repos[0].downloads == PackageDownloads(
+            ecosystem="npm",
+            name="@elizaos/core",
+            downloads=42274,
+            period="last-month",
+            verified=False,
+        )
+        assert check.complete is True
+        # FakeHTTP keys on the exact URL, proving the @elizaos%2Fcore encoding.
+        assert len(mock_http.requests[("GET", npm_url("@elizaos/core"))]) == 1
+
+    async def test_non_npm_winner_skips_npm(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(
+            eco_url("mongodb", "mongo-python-driver"), payload=[pkg("pymongo", 64665876, "pypi")]
+        )
+        mock_http.get(
+            dd_url("mongodb", "mongo-python-driver"),
+            payload={"versions": [attest("PYPI", "pymongo")]},
+        )
+        rows, _ = await downloads_module.fetch_downloads(
+            session, [make_repo("mongodb", "mongo-python-driver")]
+        )
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.downloads == 64665876
+        assert not any(url.startswith("https://api.npmjs.org/") for _, url in mock_http.requests)
+
+    async def test_npm_404_means_no_package(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 100), pkg("@o/b", 50)])
+        mock_http.get(dd_url("o", "a"), payload={"versions": []})
+        mock_http.get(npm_url("a"), status=404, payload={"error": "package a not found"})
+        rows, check = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert rows[0].downloads is None
+        assert check.unavailable == []
+        assert ("GET", npm_url("@o/b")) not in mock_http.requests
+
+    @pytest.mark.parametrize(
+        "payload", [{"downloads": "x"}, {"downloads": True}, {"downloads": 1.0}, {}, []]
+    )
+    async def test_npm_malformed_body_marks_row(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient, payload: object
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 100)])
+        mock_http.get(dd_url("o", "a"), payload={"versions": []})
+        mock_http.get(npm_url("a"), payload=payload)
+        matched_row(mock_http, "b")
+        rows, check = await downloads_module.fetch_downloads(
+            session, [make_repo("o", "a"), make_repo("o", "b")]
+        )
+        assert check.unavailable == ["o/a"]
+        assert rows[0].downloads is None
+        assert rows[1].downloads is not None
+
+    @pytest.mark.parametrize("failure", [429, 503, httpx2.ReadTimeout("slow")])
+    async def test_npm_failure_stops_pass(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient, failure: int | httpx2.RequestError
+    ) -> None:
+        matched_row(mock_http, "a")
+        mock_http.get(eco_url("o", "b"), payload=[pkg("b", 10)])
+        mock_http.get(dd_url("o", "b"), payload={"versions": []})
+        if isinstance(failure, int):
+            mock_http.get(npm_url("b"), status=failure)
+        else:
+            mock_http.get(npm_url("b"), exception=failure)
+        rows, check = await downloads_module.fetch_downloads(
+            session, [make_repo("o", name) for name in "abc"]
+        )
+        assert check.unavailable == ["o/b", "o/c"]
+        assert rows[0].downloads is not None
+        assert all(row.downloads is None for row in rows[1:])
+        assert ("GET", eco_url("o", "c")) not in mock_http.requests
+
+    async def test_npm_zero_downloads_is_a_count(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 100)])
+        mock_http.get(dd_url("o", "a"), payload={"versions": []})
+        mock_http.get(npm_url("a"), payload={"downloads": 0})
+        rows, check = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.downloads == 0
+        assert check.unavailable == []
+
+    async def test_only_winner_requests_npm(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 100), pkg("@o/b", 50)])
+        mock_http.get(dd_url("o", "a"), payload={"versions": []})
+        mock_http.get(npm_url("a"), payload={"downloads": 10, "package": "a"})
+        rows, _ = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.name == "a"
+        npm_requests = [
+            str(request.url)
+            for calls in mock_http.requests.values()
+            for request in calls
+            if request.url.host == "api.npmjs.org"
+        ]
+        assert npm_requests == [npm_url("a")]
