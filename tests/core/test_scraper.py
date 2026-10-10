@@ -33,7 +33,9 @@ from dep_rank.core.scraper import (
     scrape_dependents,
 )
 from tests.conftest import (
+    DEPENDENTS_HTML_EMPTY,
     DEPENDENTS_HTML_LAST_PAGE,
+    DEPENDENTS_HTML_NO_HEADER,
     DEPENDENTS_HTML_NO_RESULTS,
     DEPENDENTS_HTML_PAGE_1,
     DEPENDENTS_HTML_WITH_COUNTS,
@@ -386,31 +388,31 @@ class TestScrapeResultReturn:
         )
         assert result.max_pages == 5
 
-    async def test_no_counts_in_html_defaults_to_zero(
+    async def test_no_counts_in_html_leaves_total_unknown(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        """When the HTML has no parseable count header, estimated totals default to 0."""
-        html_no_counts = """
-        <html><body>
-        <div id="dependents"><div class="Box">
-            <div class="flex-items-center">
-                <span><a class="text-bold" href="/delta/app">delta/app</a></span>
-                <div><div><span>80</span></div></div>
-            </div>
-        </div>
-        <div class="paginate-container"><div>
-            <a href="/owner/repo/network/dependents?page=1">Previous</a>
-        </div></div>
-        </div>
-        </body></html>
-        """
+        """An unparseable count header is unknown (None), never a reported 0."""
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            body=html_no_counts,
+            body=DEPENDENTS_HTML_NO_HEADER,
         )
         result = await scrape_dependents(session, "https://github.com/owner/repo", rows=100)
         assert result.estimated_total_pages == 0
+        assert result.estimated_total_dependents is None
+        assert len(result.repos) == 1
+
+    async def test_empty_state_reports_zero(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        """GitHub's 0/0 empty state is a complete scrape with a parsed total of 0."""
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            body=DEPENDENTS_HTML_EMPTY,
+        )
+        result = await scrape_dependents(session, "https://github.com/owner/repo", rows=100)
         assert result.estimated_total_dependents == 0
+        assert result.complete is True
+        assert result.repos == []
 
     async def test_multi_page_with_estimated_total(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient

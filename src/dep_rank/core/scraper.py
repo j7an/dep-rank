@@ -450,7 +450,7 @@ async def scrape_dependents(
     seen: set[str] = set()
     matched = 0
     est_pages = 0
-    est_deps = 0
+    est_deps: int | None = None  # None: page 1's count header was missing or unparseable
     recent_max: deque[int] = deque(maxlen=ADAPTIVE_WINDOW)
     page = 0
     stale_pages = 0
@@ -492,8 +492,8 @@ async def scrape_dependents(
 
             if page == 1:
                 counts = parse_dependent_counts(html)
-                est_deps = counts.get(dependent_type.value, 0)
-                est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps > 0 else 0
+                est_deps = counts.get(dependent_type.value)
+                est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps else 0
 
             repos, next_url = parse_dependents_page(html)
             page_max = 0

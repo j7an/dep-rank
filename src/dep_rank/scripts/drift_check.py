@@ -35,7 +35,7 @@ CANARY_MIN_STARS = 0
 CANARY_MAX_PAGES = 2
 
 
-def evaluate_drift(repos_count: int, total_dependents: int) -> list[str]:
+def evaluate_drift(repos_count: int, total_dependents: int | None) -> list[str]:
     """Return a list of human-readable drift problems (empty == healthy).
 
     Callers must screen out ``_INCONCLUSIVE_REASONS`` first; ``MAX_PAGES_REACHED`` and
@@ -45,7 +45,9 @@ def evaluate_drift(repos_count: int, total_dependents: int) -> list[str]:
     problems: list[str] = []
     if repos_count <= 0:
         problems.append("item selectors returned zero repositories")
-    if total_dependents <= 0:
+    if total_dependents is None:
+        problems.append("dependents-count header not parsed")
+    elif total_dependents <= 0:
         problems.append("dependents-count header parsed to zero")
     return problems
 

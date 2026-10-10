@@ -37,7 +37,14 @@ from dep_rank.core.models import (
     TrustCheckResult,
     TrustMetadataResult,
 )
-from tests.conftest import DEPENDENTS_HTML_LAST_PAGE, DEPENDENTS_HTML_PAGE_1, FakeHTTP, make_repo
+from tests.conftest import (
+    DEPENDENTS_HTML_EMPTY,
+    DEPENDENTS_HTML_LAST_PAGE,
+    DEPENDENTS_HTML_NO_HEADER,
+    DEPENDENTS_HTML_PAGE_1,
+    FakeHTTP,
+    make_repo,
+)
 
 
 @pytest.fixture
@@ -287,7 +294,7 @@ with TemporaryDirectory() as cache_dir:
         )
         child = json.loads(result.stdout)
         assert child["code"] == 0
-        assert child["stderr"].index("Scraped 1/") < child["stderr"].index("partial errors")
+        assert child["stderr"].index("Scraped 1 page") < child["stderr"].index("partial errors")
 
 
 class TestDepsCommand:
@@ -1353,3 +1360,62 @@ class TestRankByTrust:
         else:
             assert "Trust check incomplete" in result.stderr
             assert "1 repos" in result.stderr
+
+
+class TestEmptyDependents:
+    """GitHub's parsed 0 header gets one message; an unparseable header changes nothing."""
+
+    BASE = "https://github.com/owner/repo/network/dependents?dependent_type="
+
+    @pytest.mark.parametrize(
+        ("extra_args", "dep_type", "noun"),
+        [
+            pytest.param([], "REPOSITORY", "repositories", id="repositories"),
+            pytest.param(["--packages"], "PACKAGE", "packages", id="packages"),
+            pytest.param(
+                ["--rank-by", "trust", "--trust-check"],
+                "REPOSITORY",
+                "repositories",
+                id="trust-check",
+            ),
+        ],
+    )
+    def test_deps_reports_zero_instead_of_empty_table(
+        self,
+        runner: CliRunner,
+        mock_http: FakeHTTP,
+        extra_args: list[str],
+        dep_type: str,
+        noun: str,
+    ) -> None:
+        mock_http.get(self.BASE + dep_type, body=DEPENDENTS_HTML_EMPTY)
+        result = runner.invoke(
+            cli,
+            ["deps", "https://github.com/owner/repo/", "--token", "ghp_x", *extra_args],
+        )
+        assert result.exit_code == 0
+        assert f"GitHub reports 0 dependent {noun} for owner/repo." in result.stderr
+        assert "https://github.com/owner/repo/network/dependents" in result.stderr
+        assert "Scraped" not in result.output
+        assert "star threshold" not in result.output
+        assert "Trust check" not in result.output
+        assert "Top dependents" not in result.output
+
+    def test_deps_unparsed_header_keeps_summary(
+        self, runner: CliRunner, mock_http: FakeHTTP
+    ) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=DEPENDENTS_HTML_NO_HEADER)
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "ghp_x"])
+        assert result.exit_code == 0
+        assert "GitHub reports 0" not in result.output
+        assert "Scraped 1 page" in result.stderr
+        assert "delta/app" in result.stdout
+
+    def test_search_reports_zero(self, runner: CliRunner, mock_http: FakeHTTP) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=DEPENDENTS_HTML_EMPTY)
+        result = runner.invoke(
+            cli, ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0
+        assert "GitHub reports 0 dependent repositories for owner/repo." in result.stderr
+        assert "Scraped" not in result.output

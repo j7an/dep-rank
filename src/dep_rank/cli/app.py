@@ -89,16 +89,31 @@ def _cap_max_pages(max_pages: int) -> int:
     return max_pages
 
 
-def _print_scrape_outcome(console: Console, scrape_result: ScrapeResult, min_stars: int) -> None:
+def _print_scrape_outcome(
+    console: Console,
+    scrape_result: ScrapeResult,
+    min_stars: int,
+    url: str,
+    dependent_type: DependentType,
+) -> None:
     """Print the scrape summary and any partial-result warning."""
-    from dep_rank.cli.formatters import format_scrape_summary, partial_warning
+    from dep_rank.cli.formatters import (
+        format_scrape_summary,
+        no_dependents_message,
+        partial_warning,
+    )
 
+    # Only a parsed 0 qualifies: an unparseable header (None) may be scraper drift.
+    if scrape_result.estimated_total_dependents == 0:
+        console.print(no_dependents_message(url, dependent_type), highlight=False)
+        return
     summary = format_scrape_summary(
         pages_scraped=scrape_result.pages_scraped,
         max_pages=scrape_result.max_pages,
         estimated_total_pages=scrape_result.estimated_total_pages,
         found_count=scrape_result.matched_count,
         min_stars=min_stars,
+        complete=scrape_result.complete,
     )
     console.print(f"[green]{summary}")
     if not scrape_result.complete:
@@ -188,7 +203,7 @@ async def run_deps(
                 else:
                     stop_live()
                 if not quiet:
-                    _print_scrape_outcome(console, scrape_result, min_stars)
+                    _print_scrape_outcome(console, scrape_result, min_stars, url, dep_type)
                 if scrape_result.stale_pages and not token:
                     # Without a token nothing refreshes expired pages, so say so even in JSON
                     # mode (stderr only; stdout stays parseable).
@@ -486,7 +501,9 @@ def search(
                         progress_ctx.stop()
 
                 repos = scrape_result.repos
-                _print_scrape_outcome(console, scrape_result, min_stars)
+                _print_scrape_outcome(
+                    console, scrape_result, min_stars, url, DependentType.REPOSITORY
+                )
 
                 result = await search_code(
                     session,

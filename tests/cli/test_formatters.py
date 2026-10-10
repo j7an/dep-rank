@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from rich.console import Console
@@ -131,6 +131,7 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 76515,
                 "found_count": 387,
                 "min_stars": 5,
+                "complete": False,
             },
             [
                 "42/1000 pages (4.2%)",
@@ -146,6 +147,7 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 0,
                 "found_count": 387,
                 "min_stars": 5,
+                "complete": False,
             },
             ["42/1000 pages (4.2%)", "Found 387 dependents with ≥5 stars"],
             ["estimated"],
@@ -157,6 +159,7 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 76515,
                 "found_count": 5000,
                 "min_stars": 10,
+                "complete": False,
             },
             ["1000/1000 pages (100.0%)", "1000/~76,515 estimated pages (1.31%)"],
             [],
@@ -168,15 +171,47 @@ class TestPrintSearchResults:
                 "estimated_total_pages": 0,
                 "found_count": 0,
                 "min_stars": 5,
+                "complete": False,
             },
             ["0/1000 pages (0.0%)", "Found 0 dependents"],
             [],
         ),
+        (
+            {
+                "pages_scraped": 3,
+                "max_pages": 200,
+                "estimated_total_pages": 3,
+                "found_count": 42,
+                "min_stars": 5,
+                "complete": True,
+            },
+            ["Scraped all 3 pages", "Found 42 dependents with ≥5 stars"],
+            ["%", "/200", "estimated"],
+        ),
+        (
+            {
+                "pages_scraped": 1,
+                "max_pages": 20,
+                "estimated_total_pages": 0,
+                "found_count": 2,
+                "min_stars": 5,
+                "complete": True,
+            },
+            ["Scraped 1 page ·"],
+            ["%", "all"],
+        ),
     ],
-    ids=["with-estimate", "without-estimate", "full-scrape", "zero-pages"],
+    ids=[
+        "with-estimate",
+        "without-estimate",
+        "full-scrape",
+        "zero-pages",
+        "complete-multi-page",
+        "complete-single-page",
+    ],
 )
 def test_format_scrape_summary(
-    kwargs: dict[str, int], must_contain: list[str], must_not_contain: list[str]
+    kwargs: dict[str, Any], must_contain: list[str], must_not_contain: list[str]
 ) -> None:
     summary = format_scrape_summary(**kwargs)
     for text in must_contain:

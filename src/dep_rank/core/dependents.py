@@ -136,4 +136,5 @@ async def get_dependents(
         stale_pages=scrape_result.stale_pages,
         trust_metadata_complete=trust_metadata_complete,
         trust_pool_size=trust_pool_size,
+        estimated_total_dependents=scrape_result.estimated_total_dependents,
     )

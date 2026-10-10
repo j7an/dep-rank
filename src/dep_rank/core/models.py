@@ -108,7 +108,7 @@ class ScrapeResult(BaseModel):
     pages_scraped: int
     max_pages: int
     estimated_total_pages: int
-    estimated_total_dependents: int
+    estimated_total_dependents: int | None  # None: count header not parsed
     complete: bool = True
     reason: ScrapeReason | None = None
     matched_count: int = 0
@@ -126,7 +126,7 @@ class ScrapeSnapshot(BaseModel):
     top_k: list[Repository]
     pages_scraped: int
     estimated_total_pages: int
-    estimated_total_dependents: int
+    estimated_total_dependents: int | None  # None: count header not parsed
     matched_count: int
 
 
@@ -173,6 +173,8 @@ class DependentsResult(BaseModel):
     trust_metadata_complete: bool = Field(default=True, exclude=True)
     # Candidates scored together (trust scores are relative to these); excluded from JSON
     trust_pool_size: int = Field(default=0, exclude=True)
+    # GitHub's header count (None when not parsed); excluded from JSON
+    estimated_total_dependents: int | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

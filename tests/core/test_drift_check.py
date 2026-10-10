@@ -30,6 +30,11 @@ def test_zero_total_flags_header() -> None:
     assert any("header" in p.lower() or "count" in p.lower() for p in problems)
 
 
+def test_unparsed_total_flags_header_not_parsed() -> None:
+    problems = drift_check.evaluate_drift(repos_count=5, total_dependents=None)
+    assert any("not parsed" in p for p in problems)
+
+
 def test_both_broken_flags_both() -> None:
     assert len(drift_check.evaluate_drift(repos_count=0, total_dependents=0)) == 2
 
