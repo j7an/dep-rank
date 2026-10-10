@@ -14,10 +14,12 @@ from dep_rank.core.models import (
     CautionCode,
     CodeSearchResult,
     DependentsResult,
+    DependentType,
     RetryStatus,
     ScrapeReason,
     ScrapeSnapshot,
 )
+from dep_rank.core.validation import validate_github_url
 
 console = Console()
 
@@ -50,6 +52,8 @@ def humanize(num: int) -> str:
 
 def print_dependents_table(result: DependentsResult) -> None:
     """Print a Rich table of dependents, dispatching on the ranking actually applied."""
+    if result.estimated_total_dependents == 0:
+        return  # the scrape outcome already said GitHub reports none; skip the empty table
     _print_dependents_table(result)
 
     if result.trust_check is not None:
@@ -192,6 +196,17 @@ def partial_warning(reason: ScrapeReason | None) -> str:
     return f"[yellow]⚠ {text}[/yellow]"
 
 
+def no_dependents_message(url: str, dependent_type: DependentType) -> str:
+    """Render the outcome when GitHub's dependents header reports 0 for the requested type."""
+    owner, repo = validate_github_url(url)
+    noun = "packages" if dependent_type == DependentType.PACKAGE else "repositories"
+    return (
+        f"GitHub reports 0 dependent {noun} for {owner}/{repo}.\n"
+        "GitHub's dependency graph may not have linked a published package to this repo; "
+        f"see https://github.com/{owner}/{repo}/network/dependents."
+    )
+
+
 def stale_cache_notice(stale_pages: int, pages_scraped: int) -> str:
     """Render the caveat for an unauthenticated run that served expired cache pages."""
     return (
@@ -256,14 +271,21 @@ def format_scrape_summary(
     estimated_total_pages: int,
     found_count: int,
     min_stars: int,
+    complete: bool,
 ) -> str:
     """Format the scraping completion summary line."""
-    pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
-    parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
-
-    if estimated_total_pages > 0:
-        pct_est = pages_scraped / estimated_total_pages * 100
-        parts.append(f"{pages_scraped}/~{estimated_total_pages:,} estimated pages ({pct_est:.2f}%)")
+    if complete:
+        # Progress against --max-pages or the header estimate means nothing once exhausted.
+        pages = "1 page" if pages_scraped == 1 else f"all {pages_scraped:,} pages"
+        parts = [f"Scraped {pages}"]
+    else:
+        pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
+        parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
+        if estimated_total_pages > 0:
+            pct_est = pages_scraped / estimated_total_pages * 100
+            parts.append(
+                f"{pages_scraped}/~{estimated_total_pages:,} estimated pages ({pct_est:.2f}%)"
+            )
 
     parts.append(f"Found {found_count:,} dependents with ≥{min_stars} stars")
     return " · ".join(parts)

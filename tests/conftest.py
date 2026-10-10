@@ -145,6 +145,34 @@ DEPENDENTS_HTML_WITH_COUNTS_PAGE_1 = dependents_page(
 DEPENDENTS_HTML_WITH_COUNTS = dependents_page(
     [("alpha", "framework", 12500)], repos=900, packages=150
 )
+# GitHub's empty state: a parsed 0/0 header, a blankslate, no rows, no pagination.
+DEPENDENTS_HTML_EMPTY = """
+<html><body>
+<div class="table-list-header-toggle states flex-auto pl-0">
+    <a class="btn-link selected"
+       href="/owner/repo/network/dependents?dependent_type=REPOSITORY">0 Repositories</a>
+    <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">0 Packages</a>
+</div>
+<div class="blankslate-container"><div class="blankslate blankslate-spacious">
+    <h2 class="blankslate-heading">We haven’t found any dependents for this repository yet.</h2>
+</div></div>
+</body></html>
+"""
+# Rows with no count header: the header layout changed (drift), so the total is unknown.
+DEPENDENTS_HTML_NO_HEADER = """
+<html><body>
+<div id="dependents"><div class="Box">
+    <div class="flex-items-center">
+        <span><a class="text-bold" href="/delta/app">delta/app</a></span>
+        <div><div><span>80</span></div></div>
+    </div>
+</div>
+<div class="paginate-container"><div>
+    <a href="/owner/repo/network/dependents?page=1">Previous</a>
+</div></div>
+</div>
+</body></html>
+"""
 
 
 @pytest.fixture(autouse=True)
