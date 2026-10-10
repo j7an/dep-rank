@@ -29,6 +29,7 @@ from dep_rank.core.models import (
     CodeSearchResult,
     DependentsResult,
     DependentType,
+    DownloadsCheckResult,
     Repository,
     RetryStatus,
     ScrapeReason,
@@ -313,6 +314,63 @@ class TestDepsCommand:
         )
         assert result.exit_code == 0
         assert "alpha" in result.output
+
+    @pytest.mark.parametrize("downloads", [False, True])
+    @patch("dep_rank.cli.app.run_deps", new_callable=AsyncMock)
+    def test_downloads_flag_reaches_run_deps(
+        self,
+        mock_run: AsyncMock,
+        runner: CliRunner,
+        mock_result: DependentsResult,
+        downloads: bool,
+    ) -> None:
+        mock_run.return_value = mock_result
+        args = ["deps", mock_result.source]
+        if downloads:
+            args.append("--downloads")
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0
+        assert mock_run.call_args.kwargs["downloads"] is downloads
+
+    @pytest.mark.parametrize("mode", ["--packages", "--repositories"])
+    @pytest.mark.parametrize("output_format", ["table", "json"])
+    @patch("dep_rank.core.dependents.fetch_downloads", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_incomplete_downloads_warns_on_stderr_and_json_stays_parseable(
+        self,
+        mock_scrape: AsyncMock,
+        mock_downloads: AsyncMock,
+        runner: CliRunner,
+        mock_result: DependentsResult,
+        mock_http: FakeHTTP,
+        mode: str,
+        output_format: str,
+    ) -> None:
+        mock_scrape.return_value = _scrape_result(mock_result.repos)
+        mock_downloads.return_value = (
+            mock_result.repos,
+            DownloadsCheckResult(complete=False, unavailable=["alpha/framework", "beta/toolkit"]),
+        )
+        result = runner.invoke(
+            cli, ["deps", mock_result.source, "--downloads", mode, "--format", output_format]
+        )
+        assert result.exit_code == 0
+        assert result.stderr.count("Download lookup incomplete — unavailable for 2 repos.") == 1
+        assert "Download lookup incomplete" not in result.stdout
+        assert mock_scrape.call_args.kwargs["token"] is None
+        assert mock_scrape.call_args.kwargs["dependent_type"] == (
+            DependentType.PACKAGE if mode == "--packages" else DependentType.REPOSITORY
+        )
+        if output_format == "json":
+            payload = json.loads(result.stdout)
+            assert payload["downloads_check"] == {
+                "complete": False,
+                "unavailable": ["alpha/framework", "beta/toolkit"],
+            }
+            assert all(repo["downloads"] is None for repo in payload["repos"])
+        else:
+            assert "Downloads" in result.stdout
+            assert result.stdout.count("unavailable") == 2
 
     def test_invalid_url(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["deps", "https://gitlab.com/foo/bar"])
@@ -845,10 +903,11 @@ class TestDepsLiveFrames:
         assert all(_frame_height(frame) <= 1 for frame in stops)
 
     @pytest.mark.parametrize(
-        ("rank_by", "trust_check", "descriptions", "rows", "expected"),
+        ("rank_by", "trust_check", "descriptions", "downloads", "rows", "expected"),
         [
             (
                 "trust",
+                False,
                 False,
                 False,
                 5,
@@ -858,15 +917,44 @@ class TestDepsLiveFrames:
                 "trust",
                 True,
                 False,
+                False,
                 5,
                 "Trust-scoring the 50 most-starred dependents to show the top 5"
                 " and checking star history…",
             ),
             # Fewer scraped than --rows: every scored repo is shown, so no "top N" promise.
-            ("trust", False, False, 100, "Trust-scoring 50 dependents…"),
-            ("stars", False, True, 5, "Fetching descriptions…"),
+            ("trust", False, False, False, 100, "Trust-scoring 50 dependents…"),
+            ("stars", False, True, False, 5, "Fetching descriptions…"),
+            (
+                "trust",
+                False,
+                False,
+                True,
+                5,
+                "Trust-scoring the 50 most-starred dependents to show the top 5"
+                " and looking up downloads…",
+            ),
+            (
+                "trust",
+                True,
+                False,
+                True,
+                5,
+                "Trust-scoring the 50 most-starred dependents to show the top 5"
+                " and checking star history and looking up downloads…",
+            ),
+            ("stars", False, False, True, 5, "Looking up package downloads…"),
+            (
+                "stars",
+                False,
+                True,
+                True,
+                5,
+                "Fetching descriptions and looking up package downloads…",
+            ),
         ],
     )
+    @patch("dep_rank.core.dependents.fetch_downloads", new_callable=AsyncMock)
     @patch("dep_rank.core.dependents.check_star_history", new_callable=AsyncMock)
     @patch("dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock)
     @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
@@ -875,10 +963,12 @@ class TestDepsLiveFrames:
         mock_scrape: AsyncMock,
         mock_enrich: AsyncMock,
         mock_check: AsyncMock,
+        mock_downloads: AsyncMock,
         events: list[tuple[str, Any]],
         rank_by: str,
         trust_check: bool,
         descriptions: bool,
+        downloads: bool,
         rows: int,
         expected: str,
     ) -> None:
@@ -888,6 +978,11 @@ class TestDepsLiveFrames:
             events.append(("enrich", None))
             return TrustMetadataResult(repos=repos, failed=False, complete=True)
 
+        async def lookup(session: object, repos: list[Repository]) -> Any:
+            events.append(("enrich", None))
+            return repos, DownloadsCheckResult(complete=True)
+
+        mock_downloads.side_effect = lookup
         mock_enrich.side_effect = enrich
         mock_check.side_effect = lambda session, repos, *a, **k: (
             repos,
@@ -903,6 +998,7 @@ class TestDepsLiveFrames:
                 "t",
                 rank_by=rank_by,
                 trust_check=trust_check,
+                downloads=downloads,
             )
         )
         kinds = [kind for kind, _ in events]

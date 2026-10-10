@@ -133,6 +133,8 @@ async def run_deps(
     quiet: bool = False,
     rank_by: str = "stars",
     trust_check: bool = False,
+    *,
+    downloads: bool = False,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import httpx2
@@ -190,6 +192,8 @@ async def run_deps(
                 # up with a spinner until get_dependents returns.
                 if live is not None and rank_by == "trust":
                     extra = " and checking star history" if trust_check else ""
+                    if downloads:
+                        extra += " and looking up downloads"
                     count = len(scrape_result.repos)
                     # Only promise a "top N" when the table will hold fewer than were scraped.
                     scope = (
@@ -198,8 +202,14 @@ async def run_deps(
                         else f"{count:,} dependents"
                     )
                     live.update(Spinner("dots", f"Trust-scoring {scope}{extra}…"))
-                elif live is not None and descriptions:
-                    live.update(Spinner("dots", "Fetching descriptions…"))
+                elif live is not None and (descriptions or downloads):
+                    if descriptions and downloads:
+                        text = "Fetching descriptions and looking up package downloads…"
+                    elif downloads:
+                        text = "Looking up package downloads…"
+                    else:
+                        text = "Fetching descriptions…"
+                    live.update(Spinner("dots", text))
                 else:
                     stop_live()
                 if not quiet:
@@ -226,6 +236,7 @@ async def run_deps(
                     descriptions=descriptions,
                     rank_by=cast(Literal["stars", "trust"], rank_by),
                     trust_check=trust_check,
+                    downloads=downloads,
                     max_pages=max_pages,
                     adaptive_stop=adaptive_stop,
                     cache=cache,
@@ -258,6 +269,12 @@ async def run_deps(
                         "[yellow]⚠ Trust check incomplete — star history unavailable for "
                         f"{len(result.trust_check.unavailable)} repos.[/yellow]"
                     )
+
+            if result.downloads_check is not None and not result.downloads_check.complete:
+                console.print(
+                    "[yellow]⚠ Download lookup incomplete — unavailable for "
+                    f"{len(result.downloads_check.unavailable)} repos.[/yellow]"
+                )
 
             return result
 
@@ -320,6 +337,13 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     help="Sample recent star history of the top trust-ranked results for concentrated starring "
     "(heuristic; requires --rank-by trust).",
 )
+@click.option(
+    "--downloads",
+    is_flag=True,
+    default=False,
+    help="Show each dependent's most-downloaded registry package (third-party lookup "
+    "via ecosyste.ms and deps.dev; display only, not used for ranking).",
+)
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -334,6 +358,7 @@ def deps(
     adaptive_stop: bool,
     rank_by: str,
     trust_check: bool,
+    downloads: bool,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
     _validate_url_or_exit(url)
@@ -381,6 +406,7 @@ def deps(
             quiet=(output_format == "json"),
             rank_by=rank_by,
             trust_check=trust_check,
+            downloads=downloads,
         )
     )
 
