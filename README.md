@@ -193,11 +193,13 @@ Trust mode scores the most-starred dependents together, then shows the top `--ro
 of that ranking. The number scored (the pool) is `min(100, rows × 10)`, never fewer
 than `--rows`, and fewer if fewer dependents match. The default `--rows 10` scores
 100 and shows 10; `--rows 50` scores 100 and shows 50. With `--rows` ≥ 100, or when
-fewer dependents match, every scored dependent is shown.
+at most `--rows` dependents match, every scored dependent is shown.
 
 Each of the four signals is log-scaled (except recency) and min-max normalized
-across the pool, so the pool's weakest repo gets 0 and its strongest gets 1. The
-score is the weighted sum × 100:
+across the pool: the pool's lowest value maps to 0, its highest to 1, and values in
+between proportionally. When every repo in the pool has the same value for a signal
+(including a pool of one), that signal is 0.5 for all of them. The score is the
+weighted sum × 100:
 
 | Signal | Weight |
 |---|---|
@@ -206,8 +208,10 @@ score is the weighted sum × 100:
 | Issues + pull requests (all-time) | 20% |
 | Recency of last push | 20% |
 
-- **100** means strongest in the pool on every signal. **50** means roughly mid-pool.
-  A score of 50 is not "half as trustworthy" as 100.
+- **100** means highest in the pool on every signal. **50** means the weighted
+  normalized signals average 0.5. It is not a median rank: normalization is linear
+  between the pool's extremes, so one outlier can leave most of the pool far below
+  50. A score of 50 is not "half as trustworthy" as 100.
 - Scores are only comparable within one run. A different target, `--rows`, or
   `--min-stars` changes the pool and therefore every score.
 - Because the table shows the top of the pool, scores usually cluster high: the
