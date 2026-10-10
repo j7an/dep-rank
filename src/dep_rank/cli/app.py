@@ -457,6 +457,9 @@ def search(
                         TimeElapsedColumn(),
                         TextColumn("{task.fields[retry]}", style="yellow"),
                         console=console,
+                        # The scrape outcome replaces the bar; a leftover bar would show a
+                        # misleading share of --max-pages for a complete scrape.
+                        transient=True,
                     )
                     task_id = progress_ctx.add_task(
                         "scraping", total=max_pages, est_text="estimating...", retry=""
@@ -504,6 +507,8 @@ def search(
                 _print_scrape_outcome(
                     console, scrape_result, min_stars, url, DependentType.REPOSITORY
                 )
+                if scrape_result.estimated_total_dependents == 0:
+                    return  # the outcome message is the whole answer; nothing to search
 
                 result = await search_code(
                     session,

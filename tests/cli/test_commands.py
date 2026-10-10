@@ -1414,8 +1414,37 @@ class TestEmptyDependents:
     def test_search_reports_zero(self, runner: CliRunner, mock_http: FakeHTTP) -> None:
         mock_http.get(self.BASE + "REPOSITORY", body=DEPENDENTS_HTML_EMPTY)
         result = runner.invoke(
-            cli, ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
+            cli,
+            ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
+            + ["--max-pages", "20"],
         )
         assert result.exit_code == 0
         assert "GitHub reports 0 dependent repositories for owner/repo." in result.stderr
         assert "Scraped" not in result.output
+        assert "pages (" not in result.output  # no leftover progress bar
+        assert "No results found" not in result.output
+        assert result.stdout == ""
+
+    def test_search_complete_scrape_has_no_max_pages_percentage(
+        self, runner: CliRunner, mock_http: FakeHTTP
+    ) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=DEPENDENTS_HTML_PAGE_1)
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?page=2",
+            body=DEPENDENTS_HTML_LAST_PAGE,
+        )
+        with patch(
+            "dep_rank.core.search.search_code",
+            new_callable=AsyncMock,
+            return_value=CodeSearchResult(
+                source="https://github.com/owner/repo", query="q", hits=[], searched_repos=3
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["search", "https://github.com/owner/repo", "q", "--token", "ghp_x"]
+                + ["--max-pages", "20"],
+            )
+        assert result.exit_code == 0
+        assert "Scraped all 2 pages" in result.stderr
+        assert "%" not in result.stderr  # the progress bar's /--max-pages share is gone
