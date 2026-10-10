@@ -11,6 +11,7 @@ import pytest
 from rich.console import Console
 
 from dep_rank.cli.formatters import (
+    RetryCountdown,
     build_topk_table,
     console,
     format_scrape_summary,
@@ -28,6 +29,7 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    RetryStatus,
     ScrapeReason,
     ScrapeSnapshot,
     TrustCheckResult,
@@ -427,3 +429,21 @@ class TestTrustTableAndJson:
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         out = _render(print_dependents_table, result)
         assert "Trust check" not in out
+
+
+class TestRetryCountdown:
+    def test_counts_down_on_each_render(self) -> None:
+        clock = [100.0]
+        status = RetryStatus(page=8, attempt=1, max_retries=5, delay=120)
+        countdown = RetryCountdown(status, now=lambda: clock[0])
+        assert str(countdown) == "⏳ GitHub rate limit — resuming in 2:00 (page 8, retry 1/5)"
+        clock[0] = 113.2
+        assert "resuming in 1:47 " in str(countdown)  # rounds up: never shows 0:00 early
+        clock[0] = 500.0
+        assert "resuming in 0:00 " in str(countdown)
+
+    def test_is_rich_renderable(self) -> None:
+        status = RetryStatus(page=2, attempt=3, max_retries=5, delay=5)
+        test_console = Console(width=120, record=True)
+        test_console.print(RetryCountdown(status))
+        assert "(page 2, retry 3/5)" in test_console.export_text()

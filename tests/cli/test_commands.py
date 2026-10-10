@@ -19,6 +19,7 @@ from click.testing import CliRunner
 from dep_rank import __version__
 from dep_rank.cli import app as cli_app
 from dep_rank.cli.app import _cache_dir, _open_cache, cli
+from dep_rank.cli.formatters import RetryCountdown
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     CodeSearchHit,
@@ -26,6 +27,7 @@ from dep_rank.core.models import (
     DependentsResult,
     DependentType,
     Repository,
+    RetryStatus,
     ScrapeReason,
     ScrapeResult,
     ScrapeSnapshot,
@@ -780,6 +782,110 @@ async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object)
     return _scrape_result([], max_pages=200)
 
 
+RETRY = RetryStatus(page=1, attempt=1, max_retries=5, delay=120)
+
+
+async def _scrape_retrying_then_page(
+    *args: object, on_retry: Any, on_page: Any, **kwargs: object
+) -> ScrapeResult:
+    await on_retry(RETRY)
+    return await _scrape_calling_on_page(on_page=on_page)
+
+
+class TestRetryStatus:
+    @pytest.fixture(autouse=True)
+    def _terminal_stderr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The countdown is only wired up when stderr can render live updates.
+        monkeypatch.setattr(cli_app._stderr_console, "_force_terminal", True)
+        monkeypatch.delenv("TERM", raising=False)  # "dumb" would disable live rendering
+
+    @patch("rich.live.Live.update")
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_shows_countdown_in_live_then_clears(
+        self, mock_scrape: AsyncMock, mock_live_update: MagicMock, runner: CliRunner
+    ) -> None:
+        mock_scrape.side_effect = _scrape_retrying_then_page
+        result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
+        assert result.exit_code == 0, result.output
+        shown = [c.args[0] for c in mock_live_update.call_args_list]
+        assert isinstance(shown[0], RetryCountdown)  # before page 1: countdown alone
+        assert not isinstance(shown[1], RetryCountdown)  # the next page clears it
+
+    @patch("rich.live.Live.update")
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_countdown_sits_under_existing_table(
+        self, mock_scrape: AsyncMock, mock_live_update: MagicMock, runner: CliRunner
+    ) -> None:
+        async def page_then_retry(*args: object, on_retry: Any, on_page: Any, **_: object) -> Any:
+            result = await _scrape_calling_on_page(on_page=on_page)
+            await on_retry(RETRY)
+            return result
+
+        mock_scrape.side_effect = page_then_retry
+        result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
+        assert result.exit_code == 0, result.output
+        group = mock_live_update.call_args_list[-1].args[0]
+        table, countdown = group.renderables
+        assert table is mock_live_update.call_args_list[0].args[0]
+        assert isinstance(countdown, RetryCountdown)
+
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_deps_verbose_keeps_log_line(self, mock_scrape: AsyncMock) -> None:
+        mock_scrape.return_value = _scrape_result([])
+        asyncio.run(
+            cli_app.run_deps("https://github.com/o/r", 2, 0, False, False, "t", verbose=True)
+        )
+        assert mock_scrape.call_args.kwargs["on_retry"] is None  # scraper logs instead
+
+    @patch("rich.progress.Progress.update")
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    def test_search_shows_countdown_in_progress_then_clears(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_progress_update: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_scrape.side_effect = _scrape_retrying_then_page
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/o/r", query="q", hits=[], searched_repos=0
+        )
+        result = runner.invoke(cli, ["search", "https://github.com/o/r", "q", "--token", "t"])
+        assert result.exit_code == 0, result.output
+        first, second = mock_progress_update.call_args_list
+        assert isinstance(first.kwargs["retry"], RetryCountdown)
+        assert second.kwargs["retry"] == ""
+
+
+class TestRetryLogWithoutLiveTerminal:
+    """Redirected stderr renders no live view, so each retry must still be logged."""
+
+    @pytest.fixture(autouse=True)
+    def _one_429(self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP) -> None:
+        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+        first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+        mock_http.get(first, status=429, headers={"Retry-After": "0"})
+        mock_http.get(first, body=DEPENDENTS_HTML_LAST_PAGE)
+
+    def test_deps(self, runner: CliRunner, caplog: pytest.LogCaptureFixture) -> None:
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "t"])
+        assert result.exit_code == 0, result.output
+        assert "Rate limited on page 1" in caplog.text
+
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    def test_search(
+        self, mock_search: AsyncMock, runner: CliRunner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/owner/repo", query="q", hits=[], searched_repos=0
+        )
+        args = ["search", "https://github.com/owner/repo", "q", "--token", "t"]
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert "Rate limited on page 1" in caplog.text
+
+
 class TestOnPageCallbacks:
     @patch("rich.live.Live.update")
     @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
@@ -812,7 +918,7 @@ class TestOnPageCallbacks:
         result = runner.invoke(cli, ["search", "https://github.com/o/r", "q", "--token", "t"])
         assert result.exit_code == 0, result.output
         mock_progress_update.assert_called_once_with(
-            ANY, completed=1, est_text="1/~30 estimated pages (3.33%)"
+            ANY, completed=1, est_text="1/~30 estimated pages (3.33%)", retry=""
         )
 
 

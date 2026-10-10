@@ -21,6 +21,7 @@ from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     DependentType,
     Repository,
+    RetryStatus,
     ScrapeReason,
     ScrapeResult,
     ScrapeSnapshot,
@@ -200,11 +201,13 @@ async def _fetch_page(
     limiter: RateLimiter,
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
+    on_retry: Callable[[int, float], Awaitable[None]],
 ) -> str:
     """Fetch one page with rate limiting, retries, and caching.
 
     Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
-    retry budget is exhausted or an unexpected status is returned.
+    retry budget is exhausted or an unexpected status is returned. Each 429 retry is
+    reported to ``on_retry(attempt, delay)`` before its wait.
     """
     rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
@@ -212,6 +215,8 @@ async def _fetch_page(
         try:
             result = await _get_once(session, url, limiter, auth_headers, cache, cached=None)
         except httpx2.RequestError:
+            if attempt == MAX_RETRIES:
+                break
             delay = backoff_delay(attempt)
             logger.warning(
                 "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
@@ -222,12 +227,9 @@ async def _fetch_page(
             return result.body.decode("utf-8")
         if result.status == 429:
             rate_limited = True
-            logger.warning(
-                "Rate limited — retrying in %.1fs (%d/%d)",
-                result.retry_delay,
-                attempt + 1,
-                MAX_RETRIES,
-            )
+            if attempt == MAX_RETRIES:
+                break
+            await on_retry(attempt + 1, result.retry_delay)
             await asyncio.sleep(result.retry_delay)
             continue
         logger.warning("Unexpected HTTP %d — stopping", result.status)
@@ -245,6 +247,7 @@ async def _read_page(
     auth_headers: dict[str, str],
     cache: SqliteCache | None,
     swr: SWRManager,
+    on_retry: Callable[[int, float], Awaitable[None]],
 ) -> tuple[str, bool]:
     """Return ``(html, stale)``; fresh-hit skips network, stale-hit serves stale + refreshes.
 
@@ -260,7 +263,7 @@ async def _read_page(
             if stale:
                 swr.schedule(url)
             return body.decode("utf-8"), stale
-    return await _fetch_page(session, url, limiter, auth_headers, cache), False
+    return await _fetch_page(session, url, limiter, auth_headers, cache, on_retry), False
 
 
 class SWRManager:
@@ -422,11 +425,13 @@ async def scrape_dependents(
     adaptive_stop: bool = True,
     rate_limiter: RateLimiter | None = None,
     on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
+    on_retry: Callable[[RetryStatus], Awaitable[None]] | None = None,
 ) -> ScrapeResult:
     """Walk the dependents pages, keeping the top-``rows`` repos by stars.
 
-    ``on_page`` is awaited after each consumed page with the running top-K. Exceptions it
-    raises propagate. Outstanding background SWR refreshes are drained before returning
+    ``on_page`` is awaited after each consumed page with the running top-K. ``on_retry``
+    is awaited before each rate-limit wait, replacing the warning log line. Exceptions
+    they raise propagate. Outstanding background SWR refreshes are drained before returning
     (or raising), while the caller's session is still open.
     """
     owner, repo = validate_github_url(url)
@@ -451,11 +456,30 @@ async def scrape_dependents(
     stale_pages = 0
     reason: ScrapeReason | None = None
 
+    async def report_retry(attempt: int, delay: float) -> None:
+        status = RetryStatus(page=page + 1, attempt=attempt, max_retries=MAX_RETRIES, delay=delay)
+        if on_retry:
+            await on_retry(status)
+        else:
+            logger.warning(
+                "Rate limited on page %d — retrying in %.1fs (%d/%d)",
+                status.page,
+                delay,
+                attempt,
+                MAX_RETRIES,
+            )
+
     try:
         while current_url and page < max_pages:
             try:
                 html, stale = await _read_page(
-                    session, current_url, limiter, auth_headers, cache, swr
+                    session,
+                    current_url,
+                    limiter,
+                    auth_headers,
+                    cache,
+                    swr,
+                    report_retry,
                 )
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
