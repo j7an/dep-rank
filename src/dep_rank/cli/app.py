@@ -113,11 +113,13 @@ async def run_deps(
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import httpx2
+    from rich.console import Group
     from rich.live import Live
+    from rich.table import Table
 
-    from dep_rank.cli.formatters import build_topk_table
+    from dep_rank.cli.formatters import RetryCountdown, build_topk_table
     from dep_rank.core.dependents import get_dependents
-    from dep_rank.core.models import ScrapeSnapshot
+    from dep_rank.core.models import RetryStatus, ScrapeSnapshot
 
     console = _stderr_console
     async with _open_cache() as cache:
@@ -130,13 +132,22 @@ async def run_deps(
             live = (
                 Live(console=console, refresh_per_second=4, transient=True) if show_live else None
             )
+            topk_table: Table | None = None
 
             async def on_page(snapshot: ScrapeSnapshot) -> None:
                 # Update on EVERY snapshot, even when top_k is empty: high --min-stars,
                 # rows=0, or a no-match scrape must still show live progress.
                 # build_topk_table renders page/matched/empty-state for the empty case.
+                # A fresh table also clears any rate-limit countdown.
+                nonlocal topk_table
                 if live is not None:
-                    live.update(build_topk_table(snapshot))
+                    topk_table = build_topk_table(snapshot)
+                    live.update(topk_table)
+
+            async def on_retry(status: RetryStatus) -> None:
+                if live is not None:
+                    countdown = RetryCountdown(status)
+                    live.update(countdown if topk_table is None else Group(topk_table, countdown))
 
             async def on_scraped(scrape_result: ScrapeResult) -> None:
                 nonlocal live
@@ -172,6 +183,8 @@ async def run_deps(
                     cache=cache,
                     on_page=on_page,
                     on_scraped=on_scraped,
+                    # Without a live view the scraper logs each retry instead.
+                    on_retry=on_retry if show_live else None,
                 )
             finally:
                 if live is not None:
@@ -370,8 +383,8 @@ def search(
     async def _run() -> None:
         import httpx2
 
-        from dep_rank.cli.formatters import print_search_results
-        from dep_rank.core.models import ScrapeSnapshot
+        from dep_rank.cli.formatters import RetryCountdown, print_search_results
+        from dep_rank.core.models import RetryStatus, ScrapeSnapshot
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
@@ -395,10 +408,11 @@ def search(
                         TextColumn("·"),
                         TextColumn("{task.fields[est_text]}"),
                         TimeElapsedColumn(),
+                        TextColumn("{task.fields[retry]}", style="yellow"),
                         console=console,
                     )
                     task_id = progress_ctx.add_task(
-                        "scraping", total=max_pages, est_text="estimating..."
+                        "scraping", total=max_pages, est_text="estimating...", retry=""
                     )
 
                 async def on_page(snapshot: ScrapeSnapshot) -> None:
@@ -410,7 +424,11 @@ def search(
                             if est_total > 0
                             else "estimating..."
                         )
-                        progress_ctx.update(task_id, completed=page, est_text=est_text)
+                        progress_ctx.update(task_id, completed=page, est_text=est_text, retry="")
+
+                async def on_retry(status: RetryStatus) -> None:
+                    if progress_ctx is not None and task_id is not None:
+                        progress_ctx.update(task_id, retry=RetryCountdown(status))
 
                 if progress_ctx is not None:
                     progress_ctx.start()
@@ -425,6 +443,7 @@ def search(
                         max_pages=max_pages,
                         rows=max_repos,
                         adaptive_stop=False,
+                        on_retry=on_retry if progress_ctx is not None else None,
                     )
                 finally:
                     if progress_ctx is not None:

@@ -16,6 +16,7 @@ from dep_rank.core.graphql import enrich_with_trust_metadata
 from dep_rank.core.models import (
     DependentsResult,
     DependentType,
+    RetryStatus,
     ScrapeResult,
     ScrapeSnapshot,
     TrustCheckResult,
@@ -41,6 +42,7 @@ async def get_dependents(
     cache: SqliteCache | None = None,
     on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
     on_scraped: Callable[[ScrapeResult], Awaitable[None]] | None = None,
+    on_retry: Callable[[RetryStatus], Awaitable[None]] | None = None,
 ) -> DependentsResult:
     """Scrape and optionally enrich dependents using caller-owned session and cache.
 
@@ -48,6 +50,7 @@ async def get_dependents(
     Raises ValueError for invalid option combinations or URL. The caller owns
     ``session`` and ``cache``; neither is closed here. ``on_scraped`` is awaited
     once immediately after scraping, before enrichment; its exceptions propagate.
+    ``on_retry`` is passed to ``scrape_dependents``.
     """
     if rank_by not in ("stars", "trust"):
         msg = f"rank_by must be 'stars' or 'trust', got {rank_by!r}"
@@ -77,6 +80,7 @@ async def get_dependents(
         rows=scrape_rows,
         adaptive_stop=adaptive_stop,
         on_page=on_page,
+        on_retry=on_retry,
     )
     if on_scraped is not None:
         await on_scraped(scrape_result)

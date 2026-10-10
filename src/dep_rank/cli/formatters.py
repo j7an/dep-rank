@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import math
+import time
+from collections.abc import Callable
+
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from dep_rank.core.models import (
     CautionCode,
     CodeSearchResult,
     DependentsResult,
+    RetryStatus,
     ScrapeReason,
     ScrapeSnapshot,
 )
@@ -183,6 +189,31 @@ def build_topk_table(snapshot: ScrapeSnapshot) -> Table:
     else:
         table.add_row("(no matching repositories yet)", "—")
     return table
+
+
+class RetryCountdown:
+    """Rate-limit status line whose remaining wait is recomputed on every render.
+
+    Live and Progress re-render several times a second, so the countdown ticks without
+    further updates. ``str()`` feeds Progress text columns; ``__rich__`` feeds Live.
+    """
+
+    def __init__(self, status: RetryStatus, *, now: Callable[[], float] = time.monotonic):
+        self._status = status
+        self._now = now
+        self._resume_at = now() + status.delay
+
+    def __str__(self) -> str:
+        remaining = max(0, math.ceil(self._resume_at - self._now()))
+        minutes, seconds = divmod(remaining, 60)
+        s = self._status
+        return (
+            f"⏳ GitHub rate limit — resuming in {minutes}:{seconds:02d} "
+            f"(page {s.page}, retry {s.attempt}/{s.max_retries})"
+        )
+
+    def __rich__(self) -> Text:
+        return Text(str(self), style="yellow")
 
 
 def format_scrape_summary(
