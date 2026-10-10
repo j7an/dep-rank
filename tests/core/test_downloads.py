@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import httpx2
 import pytest
 
+from dep_rank.core import downloads as downloads_module
 from dep_rank.core.downloads import derived, norm, package_key, parse_attested, pick_package
+from dep_rank.core.models import DownloadsCheckResult, PackageDownloads
+from tests.conftest import FakeHTTP, make_repo
 
 
 def pkg(
@@ -243,3 +247,364 @@ def test_parse_attested_rejects_malformed(payload: object) -> None:
 
 def test_parse_attested_missing_versions_is_empty() -> None:
     assert parse_attested({}) == set()
+
+
+LOOKUP = "https://packages.ecosyste.ms/api/v1/packages/lookup"
+
+
+def eco_url(owner: str, name: str) -> str:
+    return str(
+        httpx2.URL(
+            LOOKUP,
+            params={
+                "repository_url": f"https://github.com/{owner}/{name}",
+                "sort": "downloads",
+                "order": "desc",
+                "per_page": 50,
+            },
+        )
+    )
+
+
+def name_url(ecosystem: str, name: str) -> str:
+    return str(httpx2.URL(LOOKUP, params={"ecosystem": ecosystem, "name": name}))
+
+
+def dd_url(owner: str, name: str) -> str:
+    return f"https://api.deps.dev/v3/projects/github.com%2F{owner}%2F{name}:packageversions"
+
+
+def attest(system: str, name: str, kind: str = "SLSA_ATTESTATION") -> dict[str, object]:
+    return {
+        "versionKey": {"system": system, "name": name, "version": "1"},
+        "relationProvenance": kind,
+        "attestations": [{"verified": True}],
+    }
+
+
+def total_requests(mock_http: FakeHTTP) -> int:
+    return sum(len(calls) for calls in mock_http.requests.values())
+
+
+def matched_row(mock_http: FakeHTTP, name: str) -> None:
+    mock_http.get(eco_url("o", name), payload=[pkg(name, 10)])
+    mock_http.get(dd_url("o", name), payload={"versions": []})
+
+
+class TestFetchDownloads:
+    async def test_name_match_found_unverified(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(
+            eco_url("expressjs", "express"),
+            payload=[pkg("express", 636140021), pkg("alemmi", 31001)],
+        )
+        mock_http.get(dd_url("expressjs", "express"), payload={"versions": []})
+        original = make_repo("expressjs", "express")
+        rows, result = await downloads_module.fetch_downloads(session, [original])
+        assert rows[0].downloads == PackageDownloads(
+            ecosystem="npm",
+            name="express",
+            downloads=636140021,
+            period="last-month",
+            verified=False,
+        )
+        assert rows[0] is not original
+        assert original.downloads is None
+        assert result.complete is True
+        assert total_requests(mock_http) == 2
+
+    async def test_attested_missing_candidate_is_fetched_by_name(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(
+            eco_url("facebook", "react"),
+            payload=[pkg("babel-plugin-react-compiler", 56625705), pkg("@pika/react", 4035)],
+        )
+        mock_http.get(dd_url("facebook", "react"), payload={"versions": [attest("NPM", "react")]})
+        mock_http.get(name_url("npm", "react"), payload=[pkg("react", 636140021)])
+        rows, result = await downloads_module.fetch_downloads(
+            session, [make_repo("facebook", "react")]
+        )
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.name == "react"
+        assert rows[0].downloads.verified is True
+        assert result.complete is True
+        assert len(mock_http.requests[("GET", name_url("npm", "react"))]) == 1
+
+    @pytest.mark.parametrize(
+        ("owner", "repo", "name", "proof"),
+        [
+            ("mongodb", "mongo-python-driver", "pymongo", "pymongo"),
+            ("zopefoundation", "zope.interface", "zope.interface", "zope-interface"),
+        ],
+    )
+    async def test_attested_present_candidate_skips_gap_fill(
+        self,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
+        owner: str,
+        repo: str,
+        name: str,
+        proof: str,
+    ) -> None:
+        mock_http.get(eco_url(owner, repo), payload=[pkg(name, 5, "pypi")])
+        mock_http.get(dd_url(owner, repo), payload={"versions": [attest("PYPI", proof)]})
+        rows, _ = await downloads_module.fetch_downloads(session, [make_repo(owner, repo)])
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.name == name
+        assert rows[0].downloads.verified is True
+        assert total_requests(mock_http) == 2
+
+    async def test_gap_fill_uses_exact_case(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "r"), payload=[])
+        mock_http.get(dd_url("o", "r"), payload={"versions": [attest("NPM", "JSONStream")]})
+        mock_http.get(name_url("npm", "JSONStream"), payload=[pkg("JSONStream", 5)])
+        rows, _ = await downloads_module.fetch_downloads(session, [make_repo("o", "r")])
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.name == "JSONStream"
+        assert rows[0].downloads.verified is True
+        assert len(mock_http.requests[("GET", name_url("npm", "JSONStream"))]) == 1
+
+    async def test_gap_fill_empty_is_none_not_unavailable(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("facebook", "react"), payload=[])
+        mock_http.get(dd_url("facebook", "react"), payload={"versions": [attest("NPM", "react")]})
+        mock_http.get(name_url("npm", "react"), payload=[])
+        rows, result = await downloads_module.fetch_downloads(
+            session, [make_repo("facebook", "react")]
+        )
+        assert rows[0].downloads is None
+        assert result == DownloadsCheckResult(complete=True, unavailable=[])
+
+    async def test_deps_dev_404_means_no_attestations(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 10)])
+        mock_http.get(dd_url("o", "a"), status=404)
+        rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.verified is False
+        assert result.complete is True
+
+    async def test_empty_candidates_is_none(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[])
+        mock_http.get(dd_url("o", "a"), payload={"versions": []})
+        rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert rows[0].downloads is None
+        assert result.complete is True
+
+    @pytest.mark.parametrize(
+        "failure", ["eco-object", "dd-list", "eco-json", "dd-versions", "dd-json"]
+    )
+    async def test_malformed_body_marks_only_that_row(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient, failure: str
+    ) -> None:
+        if failure.startswith("eco"):
+            if failure == "eco-object":
+                mock_http.get(eco_url("o", "a"), payload={"error": "x"})
+            else:
+                mock_http.get(eco_url("o", "a"), body="{", content_type="application/json")
+        else:
+            mock_http.get(eco_url("o", "a"), payload=[pkg("a", 10)])
+            if failure == "dd-json":
+                mock_http.get(dd_url("o", "a"), body="{", content_type="application/json")
+            else:
+                mock_http.get(
+                    dd_url("o", "a"), payload=[] if failure == "dd-list" else {"versions": {}}
+                )
+        matched_row(mock_http, "b")
+        rows, result = await downloads_module.fetch_downloads(
+            session, [make_repo("o", "a"), make_repo("o", "b")]
+        )
+        assert result.unavailable == ["o/a"]
+        assert result.complete is False
+        assert rows[0].downloads is None
+        assert rows[1].downloads is not None
+
+    @pytest.mark.parametrize(("service", "status"), [("eco", 400), ("eco", 404), ("dd", 403)])
+    async def test_other_4xx_marks_row_and_continues(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient, service: str, status: int
+    ) -> None:
+        if service == "dd":
+            mock_http.get(eco_url("o", "a"), payload=[pkg("a", 10)])
+        mock_http.get(eco_url("o", "a") if service == "eco" else dd_url("o", "a"), status=status)
+        matched_row(mock_http, "b")
+        rows, result = await downloads_module.fetch_downloads(
+            session, [make_repo("o", "a"), make_repo("o", "b")]
+        )
+        assert result.unavailable == ["o/a"]
+        assert rows[0].downloads is None
+        assert rows[1].downloads is not None
+
+    @pytest.mark.parametrize(
+        ("service", "failure"),
+        [
+            ("eco", httpx2.ReadTimeout("slow")),
+            ("eco", httpx2.ConnectError("down")),
+            ("eco", 429),
+            ("eco", 503),
+            ("dd", 503),
+        ],
+    )
+    async def test_service_failure_stops_pass(
+        self,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
+        service: str,
+        failure: int | httpx2.RequestError,
+    ) -> None:
+        matched_row(mock_http, "a")
+        if service == "dd":
+            mock_http.get(eco_url("o", "b"), payload=[pkg("b", 10)])
+        url = eco_url("o", "b") if service == "eco" else dd_url("o", "b")
+        if isinstance(failure, int):
+            mock_http.get(url, status=failure)
+        else:
+            mock_http.get(url, exception=failure)
+        originals = [make_repo("o", name) for name in "abcd"]
+        rows, result = await downloads_module.fetch_downloads(session, originals)
+        assert result == DownloadsCheckResult(complete=False, unavailable=["o/b", "o/c", "o/d"])
+        assert rows[0].downloads is not None
+        assert [r.name for r in rows] == list("abcd")
+        assert all(row is not original for row, original in zip(rows, originals, strict=True))
+        assert all(row.downloads is None for row in rows[1:])
+        assert ("GET", eco_url("o", "c")) not in mock_http.requests
+        assert ("GET", eco_url("o", "d")) not in mock_http.requests
+        assert total_requests(mock_http) == (4 if service == "dd" else 3)
+
+    async def test_requests_carry_user_agent(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[])
+        mock_http.get(dd_url("o", "a"), payload={"versions": [attest("NPM", "x")]})
+        mock_http.get(name_url("npm", "x"), payload=[])
+        await downloads_module.fetch_downloads(session, [make_repo("o", "a")])
+        assert total_requests(mock_http) == 3
+        assert all(
+            request.headers["User-Agent"].startswith("dep-rank/")
+            for calls in mock_http.requests.values()
+            for request in calls
+        )
+
+    async def test_caller_credentials_are_not_sent(self, mock_http: FakeHTTP) -> None:
+        mock_http.get(eco_url("expressjs", "express"), payload=[pkg("express", 5)])
+        mock_http.get(dd_url("expressjs", "express"), payload={"versions": [attest("NPM", "x")]})
+        mock_http.get(name_url("npm", "x"), payload=[])
+        async with httpx2.AsyncClient(
+            headers={"Authorization": "Bearer ghp_x"},
+            auth=("u", "p"),
+            cookies={"user_session": "x"},
+            follow_redirects=True,
+        ) as authed:
+            rows, _ = await downloads_module.fetch_downloads(
+                authed, [make_repo("expressjs", "express")]
+            )
+            assert rows[0].downloads is not None
+            location = "https://packages.ecosyste.ms/elsewhere"
+            mock_http.get(eco_url("o", "a"), status=302, headers={"Location": location})
+            _, result = await downloads_module.fetch_downloads(authed, [make_repo("o", "a")])
+        assert result.unavailable == ["o/a"]
+        assert ("GET", location) not in mock_http.requests
+        assert total_requests(mock_http) == 4
+        assert all(
+            "Authorization" not in request.headers and "Cookie" not in request.headers
+            for calls in mock_http.requests.values()
+            for request in calls
+        )
+
+    async def test_empty_repos_make_no_requests(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        assert await downloads_module.fetch_downloads(session, []) == (
+            [],
+            DownloadsCheckResult(complete=True, unavailable=[]),
+        )
+        assert total_requests(mock_http) == 0
+
+    @pytest.mark.parametrize(
+        "failure", [400, 429, 503, "json", "object", httpx2.ReadTimeout("slow")]
+    )
+    async def test_gap_fill_failure_discards_partial_row(
+        self,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
+        failure: int | str | httpx2.RequestError,
+    ) -> None:
+        mock_http.get(eco_url("o", "a"), payload=[pkg("a", 100)])
+        mock_http.get(dd_url("o", "a"), payload={"versions": [attest("NPM", "x")]})
+        url = name_url("npm", "x")
+        if isinstance(failure, int):
+            mock_http.get(url, status=failure)
+        elif isinstance(failure, httpx2.RequestError):
+            mock_http.get(url, exception=failure)
+        elif failure == "json":
+            mock_http.get(url, body="{", content_type="application/json")
+        else:
+            mock_http.get(url, payload={})
+        matched_row(mock_http, "b")
+        rows, result = await downloads_module.fetch_downloads(
+            session, [make_repo("o", "a"), make_repo("o", "b")]
+        )
+        assert rows[0].downloads is None
+        stops = isinstance(failure, httpx2.RequestError) or failure in (429, 503)
+        assert result.unavailable == (["o/a", "o/b"] if stops else ["o/a"])
+        assert (rows[1].downloads is None) is stops
+        assert total_requests(mock_http) == (3 if stops else 5)
+
+    async def test_gap_fill_skips_unsupported_and_orders_missing_keys(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        seen: list[str] = []
+
+        async def response(request: httpx2.Request) -> httpx2.Response:
+            seen.append(str(request.url))
+            return httpx2.Response(200, json=[pkg(request.url.params["name"], 5)])
+
+        mock_http.get(eco_url("o", "r"), payload=[None, pkg(None, 1)])
+        mock_http.get(
+            dd_url("o", "r"),
+            payload={
+                "versions": [
+                    attest("UNSUPPORTED", "x"),
+                    attest("UNKNOWN", "x"),
+                    attest("NPM", "z"),
+                    attest("NPM", "a"),
+                    attest("NPM", "a"),
+                ]
+            },
+        )
+        for name in ("a", "z"):
+            mock_http.get(name_url("npm", name), callback=response)
+        rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "r")])
+        assert seen == [name_url("npm", "a"), name_url("npm", "z")]
+        assert result.complete is True
+        assert rows[0].downloads is not None
+        assert rows[0].downloads.name == "a"
+        assert total_requests(mock_http) == 4
+
+    async def test_go_attestation_gap_fill_preserves_package_name(
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        mock_http.get(eco_url("o", "r"), payload=[])
+        mock_http.get(
+            dd_url("o", "r"), payload={"versions": [attest("GO", "example.com/Owner/Lib")]}
+        )
+        mock_http.get(
+            name_url("go", "example.com/Owner/Lib"), payload=[pkg("example.com/Owner/Lib", 7, "go")]
+        )
+        rows, result = await downloads_module.fetch_downloads(session, [make_repo("o", "r")])
+        assert result.complete is True
+        assert rows[0].downloads == PackageDownloads(
+            ecosystem="go",
+            name="example.com/Owner/Lib",
+            downloads=7,
+            period="last-month",
+            verified=True,
+        )
+        assert len(mock_http.requests[("GET", name_url("go", "example.com/Owner/Lib"))]) == 1
