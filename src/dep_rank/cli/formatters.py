@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -76,7 +77,7 @@ def print_dependents_table(result: DependentsResult) -> None:
 
 def _print_dependents_table(result: DependentsResult) -> None:
     is_trust = result.ranked_by == "trust"
-    title = f"Top dependents of {result.source}" + (" (by trust)" if is_trust else "")
+    title = f"Top dependents of {escape(result.source)}" + (" (by trust)" if is_trust else "")
     table = Table(title=title)
     table.add_column("Repository", style="cyan", no_wrap=True)
     if is_trust:
@@ -101,7 +102,7 @@ def _print_dependents_table(result: DependentsResult) -> None:
             codes = [c.code for c in repo.trust.cautions] if repo.trust else []
             row.append("\n".join(_CAUTION_TAGS[code][0] for code in codes))
         if has_descriptions:
-            row.append(repo.description or "")
+            row.append(escape(repo.description or ""))
         table.add_row(*row)
 
     console.print(table)
@@ -140,7 +141,8 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
     Star mode (``include_rank_metadata=False``) excludes ``ranked_by``, ``trust_check``,
     and per-repo ``trust`` so CLI output stays byte-identical to pre-trust-ranking
     releases. Trust mode includes ``trust_check`` only when a check was run.
-    ``trust_signals`` is excluded structurally by the model field.
+    ``trust_signals`` is excluded structurally by the model field. ``console.out`` writes
+    the payload verbatim: no markup, emoji, or wrapping, any of which corrupts JSON values.
     """
     if include_rank_metadata:
         payload = result.model_dump_json(
@@ -151,16 +153,16 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
             indent=2,
             exclude={"ranked_by": True, "trust_check": True, "repos": {"__all__": {"trust"}}},
         )
-    console.print(payload, highlight=False)
+    console.out(payload, highlight=False)
 
 
 def print_search_results(result: CodeSearchResult) -> None:
     """Print code search results."""
     if not result.hits:
-        console.print(f"[dim]No results found for '{result.query}'[/dim]")
+        console.print(f"[dim]No results found for '{escape(result.query)}'[/dim]")
         return
 
-    table = Table(title=f"Code search: '{result.query}'")
+    table = Table(title=f"Code search: '{escape(result.query)}'")
     table.add_column("Repository", style="cyan", no_wrap=True)
     table.add_column("File", style="green")
     table.add_column("Matches", justify="right", style="yellow")
@@ -168,7 +170,7 @@ def print_search_results(result: CodeSearchResult) -> None:
     for hit in result.hits:
         table.add_row(
             f"{hit.repo.owner}/{hit.repo.name}",
-            hit.file_path,
+            escape(hit.file_path),
             str(hit.matches),
         )
 
