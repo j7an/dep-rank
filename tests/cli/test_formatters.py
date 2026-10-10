@@ -15,6 +15,7 @@ from dep_rank.cli.formatters import (
     RetryCountdown,
     build_topk_table,
     console,
+    downloads_cell,
     format_scrape_summary,
     humanize,
     partial_warning,
@@ -29,6 +30,8 @@ from dep_rank.core.models import (
     CodeSearchResult,
     DependentsResult,
     DependentType,
+    DownloadsCheckResult,
+    PackageDownloads,
     Repository,
     RetryStatus,
     ScrapeReason,
@@ -68,6 +71,119 @@ def _flat(text: str) -> str:
 )
 def test_humanize(num: int, expected: str) -> None:
     assert humanize(num) == expected
+
+
+def dl(
+    name: str,
+    n: int,
+    period: str = "last-month",
+    verified: bool = False,
+    ecosystem: str = "npm",
+) -> PackageDownloads:
+    return PackageDownloads(
+        ecosystem=ecosystem, name=name, downloads=n, period=period, verified=verified
+    )
+
+
+class TestDownloadsColumn:
+    @pytest.mark.parametrize(
+        ("downloads", "unavailable", "expected"),
+        [
+            (dl("react", 636140021, verified=True), set(), "636M/mo  npm:react ✓"),
+            (dl("next", 280433182), set(), "280M/mo  npm:next"),
+            (
+                dl("serde", 1505489004, "total", ecosystem="cargo"),
+                set(),
+                "1505M total  cargo:serde",
+            ),
+            (dl("x", 1500, "last-week", ecosystem="pypi"), set(), "1.5K (last-week)  pypi:x"),
+            (dl("zero", 0), set(), "0/mo  npm:zero"),
+            (None, set(), "—"),
+            (None, {"o/r"}, "[dim]unavailable[/dim]"),
+            (None, {"other/r"}, "—"),
+        ],
+    )
+    def test_downloads_cell(
+        self, downloads: PackageDownloads | None, unavailable: set[str], expected: str
+    ) -> None:
+        assert downloads_cell(make_repo("o", "r", downloads=downloads), unavailable) == expected
+
+    @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
+    def test_column_and_legend_only_with_check(
+        self, ranked_by: Literal["stars", "trust"], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(console, "width", 200)
+        result = DependentsResult(
+            source="https://github.com/o/source",
+            total_count=3,
+            filtered_count=3,
+            repos=[
+                make_repo("o", "found", downloads=dl("react", 636140021, verified=True)),
+                make_repo("o", "none"),
+                make_repo("o", "failed"),
+            ],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+            ranked_by=ranked_by,
+        )
+        out = _render(print_dependents_table, result)
+        assert "Downloads" not in out
+        assert "verified attestation" not in out
+        assert "npm:react" not in out
+        result.downloads_check = DownloadsCheckResult(complete=False, unavailable=["o/failed"])
+        out = _render(print_dependents_table, result)
+        header = next(line for line in out.splitlines() if "Stars" in line)
+        assert header.index("Stars") < header.index("Downloads")
+        assert "636M/mo  npm:react ✓" in out
+        assert "—" in next(line for line in out.splitlines() if "o/none" in line)
+        assert "unavailable" in next(line for line in out.splitlines() if "o/failed" in line)
+        legend = (
+            "Downloads: most-downloaded registry package that claims each repo (ecosyste.ms).\n"
+            "  ✓  verified attestation links this package to this repo (deps.dev)\n"
+            "     unmarked = matched by name only, not verified — check before installing\n"
+            "  /mo = last month; total = all time. Not used for ranking."
+        )
+        assert out.count(legend) == 1
+        assert out.index("dependents at or above") < out.index("Downloads:")
+
+    def test_legend_follows_existing_trust_footers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(console, "width", 200)
+        fixture = TestTrustTableAndJson()
+        repo = fixture._trust_repo(
+            [CautionSignal(code=CautionCode.STALE_ACTIVITY, description="x")]
+        )
+        result = fixture._result(ranked_by="trust", repos=[repo])
+        result.downloads_check = DownloadsCheckResult(complete=True)
+        result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
+        out = _render(print_dependents_table, result)
+        header = next(line for line in out.splitlines() if "Stars" in line)
+        assert header.index("Stars") < header.index("Downloads") < header.index("Cautions")
+        assert out.index("Trust scores rank") < out.index("Cautions (informational")
+        assert out.index("Cautions (informational") < out.index("Trust check (last")
+        assert out.index("Trust check (last") < out.index("Downloads:")
+
+    @pytest.mark.parametrize("field", ["name", "ecosystem", "period"])
+    def test_third_party_markup_renders_literally_without_links(
+        self, field: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injection = "[link=https://evil.example]x[/link]"
+        package = dl("react", 1500).model_copy(update={field: injection})
+        terminal = Console(width=400, force_terminal=True, color_system="truecolor")
+        monkeypatch.setattr("dep_rank.cli.formatters.console", terminal)
+        result = DependentsResult(
+            source="https://github.com/o/source",
+            total_count=1,
+            filtered_count=1,
+            repos=[make_repo("o", "r", downloads=package)],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+            downloads_check=DownloadsCheckResult(complete=True),
+        )
+        with terminal.capture() as cap:
+            print_dependents_table(result)
+        out = cap.get()
+        assert injection in _flat(out)
+        assert "\x1b]8;" not in out
 
 
 class TestPrintDependentsTable:
@@ -438,6 +554,52 @@ class TestTrustTableAndJson:
             "description": None,
         }  # exact field set — no trust/trust_signals leakage, nothing dropped
         assert "ranked_by" not in payload
+
+    @pytest.mark.parametrize(
+        ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
+    )
+    def test_json_without_downloads_check_has_no_downloads_keys(
+        self, ranked_by: Literal["stars", "trust"], trust_check: bool
+    ) -> None:
+        result = self._result(ranked_by=ranked_by, repos=[self._trust_repo()])
+        if trust_check:
+            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
+        out = _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")
+        assert "downloads" not in out
+
+    @pytest.mark.parametrize(
+        ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
+    )
+    def test_json_with_downloads_check_includes_rows_and_check(
+        self, ranked_by: Literal["stars", "trust"], trust_check: bool
+    ) -> None:
+        found = make_repo(
+            "alpha",
+            "framework",
+            downloads=PackageDownloads(
+                ecosystem="npm",
+                name="react",
+                downloads=636140021,
+                period="last-month",
+                verified=True,
+            ),
+        )
+        result = self._result(ranked_by=ranked_by, repos=[found, make_repo("beta", "toolkit")])
+        if trust_check:
+            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=2)
+        result.downloads_check = DownloadsCheckResult(complete=False, unavailable=["beta/toolkit"])
+        payload = json.loads(
+            _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")
+        )
+        assert payload["repos"][0]["downloads"] == {
+            "ecosystem": "npm",
+            "name": "react",
+            "downloads": 636140021,
+            "period": "last-month",
+            "verified": True,
+        }
+        assert payload["repos"][1]["downloads"] is None
+        assert payload["downloads_check"] == {"complete": False, "unavailable": ["beta/toolkit"]}
 
     def test_json_trust_mode_includes_metadata(self) -> None:
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])

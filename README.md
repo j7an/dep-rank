@@ -38,6 +38,7 @@ dep-rank deps https://github.com/django/django --packages
 | `--no-adaptive-stop` | off | Disable adaptive early-stop; scrape continues until exhaustion or `--max-pages` |
 | `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
 | `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
+| `--downloads` | off | Show each dependent's most-downloaded registry package (ecosyste.ms / deps.dev; display only) |
 
 ### `dep-rank search` — Search code in dependents
 
@@ -111,7 +112,10 @@ optional: call `main()` in this example to omit it. The caller opens and closes
 the session and initializes and closes the cache; `get_dependents` closes neither.
 The defaults return up to 10 dependents with at least 5 stars, ranked by stars.
 Pass a GitHub token explicitly as `token=...` for descriptions or trust ranking;
-the library entry point does not read `DEP_RANK_TOKEN`.
+the library entry point does not read `DEP_RANK_TOKEN`. Pass `downloads=True`
+for optional package download statistics; no token is required for this lookup.
+Check `result.downloads_check.complete` and `.unavailable` to distinguish lookup
+failures from repositories with no matching package.
 
 `get_dependents` raises `ValueError` for an invalid GitHub repository URL,
 `rank_by` other than `"stars"` or `"trust"`, `descriptions=True` without a token,
@@ -159,9 +163,79 @@ dep-rank uses a three-stage pipeline:
 2. **Enrich** (optional) — one GraphQL batch query fetches accurate star counts and descriptions for the top N results (replaces 100 individual REST API calls)
 3. **Present** — returns structured results as a Rich table
 
+With `--downloads`, the displayed rows receive optional package download statistics after ranking.
+
 GitHub only lists repositories whose dependency graph is enabled. Since June 2025 the graph defaults to off for new public repositories and is disabled on long-inactive ones, so counts can miss real dependents.
 
 Responses are cached in a local SQLite database (`~/Library/Caches/dep-rank` on macOS, `$XDG_CACHE_HOME/dep-rank` or `~/.cache/dep-rank` on Linux, and `%LOCALAPPDATA%\dep-rank\dep-rank\Cache` on Windows) with ETag support for conditional requests. Expired pages are served immediately and refreshed in the background (stale-while-revalidate) on authenticated runs. Unauthenticated runs serve expired pages as-is and never refresh them; `deps` prints a notice on stderr when that happens. Set a token or run `dep-rank cache clear` for current results.
+
+## Package downloads
+
+```bash
+dep-rank deps https://github.com/django/django --downloads
+```
+
+`--downloads` works with both `--repositories` and `--packages`, with no token
+requirement. For each displayed dependent, [ecosyste.ms](https://packages.ecosyste.ms/)
+provides package candidates and counts, and [deps.dev](https://deps.dev/) provides
+attestation evidence. The package with the highest download count among accepted
+candidates is shown; counts never affect star or trust ranking.
+
+A package is accepted when any of these rules holds:
+
+- deps.dev links the package to the repository through a publish or SLSA
+  attestation with at least one attestation marked `verified: true`.
+- An unscoped package name matches the repository name after lowercasing,
+  removing `-`, `_`, and `.`, and optionally stripping one recognized language affix.
+- A scoped package's owner scope matches the repository owner under the same
+  normalization; matching only the package name inside the scope is insufficient.
+
+Packages marked `removed` are rejected even when attested. A ✓ means a verified
+attested repository-to-package link; it does not prove how the package was built.
+Unmarked packages matched by name alone are unverified: check before installing.
+A squatter may register the matching name or an unclaimed npm owner scope. Still-listed
+malware has no structured flag in these lookup results, and legitimate packages can
+later be compromised. dep-rank is not a vulnerability scanner; use tools such as
+`pip-audit`, `npm audit`, or [OSV](https://osv.dev/) to check for known vulnerabilities.
+
+Counts may be inflated or stale, and periods differ: `/mo` means last month,
+`total` means all time, and other periods are shown explicitly. Raw counts across
+these periods are not directly comparable. Name matching can also miss legitimate
+packages (for example, a repository whose package has a different name). A `—`
+means no accepted package was found; `unavailable` means lookup failed. Lookup
+failures leave the deps run usable and print a warning to stderr, including in
+JSON mode.
+
+**Third-party egress:** opting in sends the repository URLs of displayed rows to
+ecosyste.ms and deps.dev. Lookup requests omit caller credentials.
+
+JSON adds a per-repository `downloads` object (or `null`) and a top-level
+`downloads_check`; without the flag these fields are omitted. This example is
+illustrative: selected packages and counts can change.
+
+```json
+{
+  "repos": [{
+    "owner": "facebook",
+    "name": "react",
+    "downloads": {
+      "ecosystem": "npm",
+      "name": "react-is",
+      "downloads": 1524448794,
+      "period": "last-month",
+      "verified": true
+    }
+  }],
+  "downloads_check": {
+    "complete": true,
+    "unavailable": []
+  }
+}
+```
+
+A `null` download value means no accepted package unless the repository's
+`owner/name` appears in `downloads_check.unavailable`; in that case the lookup
+failed and `downloads_check.complete` is false.
 
 ## Trust Ranking
 

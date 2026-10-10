@@ -83,6 +83,16 @@ class TrustScore(BaseModel):
     cautions: list[CautionSignal] = []
 
 
+class PackageDownloads(BaseModel):
+    """Most-downloaded registry package accepted for a repo (ecosyste.ms counts)."""
+
+    ecosystem: str  # "pypi", "npm", "cargo", ...
+    name: str
+    downloads: int
+    period: str  # verbatim from ecosyste.ms: "last-month", "total", ...
+    verified: bool  # True only when chosen via publish attestation (deps.dev)
+
+
 class Repository(BaseModel):
     """A GitHub repository that depends on the target repo."""
 
@@ -93,6 +103,7 @@ class Repository(BaseModel):
     description: str | None = None
     trust_signals: TrustSignals | None = Field(default=None, exclude=True)
     trust: TrustScore | None = None
+    downloads: PackageDownloads | None = None
 
 
 def _check_complete_matches_reason(model: ScrapeResult | DependentsResult) -> None:
@@ -152,6 +163,13 @@ class TrustCheckResult(BaseModel):
     unavailable: list[str] = []  # "owner/name"
 
 
+class DownloadsCheckResult(BaseModel):
+    """Outcome of the --downloads lookup over the displayed rows."""
+
+    complete: bool  # True iff no row is unavailable
+    unavailable: list[str] = []  # "owner/name"
+
+
 class DependentsResult(BaseModel):
     """Result of scraping dependents for a repository."""
 
@@ -167,6 +185,7 @@ class DependentsResult(BaseModel):
     estimated_total_pages: int = 0
     ranked_by: Literal["stars", "trust"] = "stars"
     trust_check: TrustCheckResult | None = None
+    downloads_check: DownloadsCheckResult | None = None
     # pages served from expired cache entries; excluded from JSON
     stale_pages: int = Field(default=0, exclude=True)
     # False when trust scores used partial metadata; excluded from JSON

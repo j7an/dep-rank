@@ -10,7 +10,12 @@ import httpx2
 import pytest
 
 from dep_rank.core.dependents import get_dependents
-from dep_rank.core.models import Repository, ScrapeResult, TrustMetadataResult
+from dep_rank.core.models import (
+    DownloadsCheckResult,
+    Repository,
+    ScrapeResult,
+    TrustMetadataResult,
+)
 from tests.conftest import FakeHTTP, dependents_page
 
 URL = "https://github.com/owner/repo"
@@ -82,3 +87,61 @@ def test_import_loads_no_cli_dependencies() -> None:
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "False"
+
+
+async def test_downloads_looks_up_only_displayed_rows(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_http.get(
+        FIRST, body=dependents_page([("a", "one", 100), ("b", "two", 200), ("c", "three", 300)])
+    )
+    seen: list[list[str]] = []
+    check = DownloadsCheckResult(complete=True)
+
+    async def fake(session: object, repos: list[Repository]) -> Any:
+        seen.append([r.name for r in repos])
+        return repos, check
+
+    monkeypatch.setattr("dep_rank.core.dependents.fetch_downloads", fake, raising=False)
+    result = await get_dependents(session, URL, rows=1, downloads=True)
+    assert seen == [["three"]]
+    assert [r.name for r in result.repos] == ["three"]
+    assert result.downloads_check == check
+
+
+async def test_downloads_runs_after_trust_ranking(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_http.get(
+        FIRST, body=dependents_page([("a", "one", 100), ("b", "two", 200), ("c", "three", 300)])
+    )
+
+    async def enrich(session: object, repos: list[Repository], *a: object, **k: object) -> Any:
+        return TrustMetadataResult(repos=repos, failed=False, complete=True)
+
+    seen: list[list[Repository]] = []
+    monkeypatch.setattr("dep_rank.core.dependents.enrich_with_trust_metadata", enrich)
+
+    async def fake(session: object, repos: list[Repository]) -> Any:
+        seen.append(repos)
+        return repos, DownloadsCheckResult(complete=True)
+
+    monkeypatch.setattr("dep_rank.core.dependents.fetch_downloads", fake, raising=False)
+    result = await get_dependents(session, URL, rows=1, rank_by="trust", token="t", downloads=True)
+    assert len(seen) == 1
+    assert len(seen[0]) == 1
+    assert result.ranked_by == "trust"
+    assert result.repos[0].trust is not None
+
+
+async def test_downloads_off_skips_lookup(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_http.get(FIRST, body=dependents_page([("a", "one", 100)]))
+
+    async def fail(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("downloads lookup should be skipped")
+
+    monkeypatch.setattr("dep_rank.core.dependents.fetch_downloads", fail, raising=False)
+    result = await get_dependents(session, URL)
+    assert result.downloads_check is None
