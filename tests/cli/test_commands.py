@@ -15,6 +15,9 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import httpx2
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
+from rich.live import Live
+from rich.spinner import Spinner
 
 from dep_rank import __version__
 from dep_rank.cli import app as cli_app
@@ -769,6 +772,123 @@ class TestDepsLiveTopK:
         assert mock_live_update.call_count >= 2
 
 
+def _frame_height(frame: Any) -> int:
+    return len(Console(width=80).render_lines(frame))
+
+
+async def _scrape_tall_table(*args: object, on_page: Any, **kwargs: object) -> ScrapeResult:
+    repos = [make_repo("o", f"r{i}", stars=1000 - i) for i in range(50)]
+    await on_page(
+        ScrapeSnapshot(
+            top_k=repos,
+            pages_scraped=1,
+            estimated_total_pages=1,
+            estimated_total_dependents=50,
+            matched_count=50,
+        )
+    )
+    return _scrape_result(repos, matched_count=50)
+
+
+class TestDepsLiveFrames:
+    """Live.stop() re-renders its frame uncropped, so that frame must fit the terminal."""
+
+    @pytest.fixture
+    def events(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
+        log: list[tuple[str, Any]] = []
+        update, stop = Live.update, Live.stop
+
+        def spy_update(self: Live, renderable: Any, *, refresh: bool = False) -> None:
+            log.append(("update", renderable))
+            update(self, renderable, refresh=refresh)
+
+        def spy_stop(self: Live) -> None:
+            log.append(("stop", self.renderable))
+            stop(self)
+
+        monkeypatch.setattr(Live, "update", spy_update)
+        monkeypatch.setattr(Live, "stop", spy_stop)
+        return log
+
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_tall_table_is_cleared_before_stop(
+        self, mock_scrape: AsyncMock, events: list[tuple[str, Any]]
+    ) -> None:
+        mock_scrape.side_effect = _scrape_tall_table
+        asyncio.run(cli_app.run_deps("https://github.com/o/r", 50, 0, False, False, "t"))
+        stops = [frame for kind, frame in events if kind == "stop"]
+        assert stops
+        assert all(_frame_height(frame) <= 1 for frame in stops)
+        # Nothing to wait for after a plain star-ranked scrape, so no spinner.
+        assert not any(isinstance(frame, Spinner) for _, frame in events)
+
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_tall_table_is_cleared_when_scrape_fails(
+        self, mock_scrape: AsyncMock, events: list[tuple[str, Any]]
+    ) -> None:
+        async def page_then_fail(*args: object, on_page: Any, **kwargs: object) -> ScrapeResult:
+            await _scrape_tall_table(on_page=on_page)
+            raise RuntimeError("boom")
+
+        mock_scrape.side_effect = page_then_fail
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(cli_app.run_deps("https://github.com/o/r", 50, 0, False, False, "t"))
+        stops = [frame for kind, frame in events if kind == "stop"]
+        assert stops
+        assert all(_frame_height(frame) <= 1 for frame in stops)
+
+    @pytest.mark.parametrize(
+        ("rank_by", "trust_check", "descriptions", "expected"),
+        [
+            ("trust", False, False, "Ranking 50 candidates by trust…"),
+            ("trust", True, False, "Ranking 50 candidates by trust and checking star history…"),
+            ("stars", False, True, "Fetching descriptions…"),
+        ],
+    )
+    @patch("dep_rank.core.dependents.check_star_history", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.enrich_with_trust_metadata", new_callable=AsyncMock)
+    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
+    def test_spinner_shows_while_enriching(
+        self,
+        mock_scrape: AsyncMock,
+        mock_enrich: AsyncMock,
+        mock_check: AsyncMock,
+        events: list[tuple[str, Any]],
+        rank_by: str,
+        trust_check: bool,
+        descriptions: bool,
+        expected: str,
+    ) -> None:
+        mock_scrape.side_effect = _scrape_tall_table
+
+        async def enrich(session: object, repos: list[Repository], *a: object, **k: object) -> Any:
+            events.append(("enrich", None))
+            return TrustMetadataResult(repos=repos, failed=False, complete=True)
+
+        mock_enrich.side_effect = enrich
+        mock_check.side_effect = lambda session, repos, *a, **k: (
+            repos,
+            TrustCheckResult(complete=True, window_weeks=30, repos_checked=len(repos)),
+        )
+        asyncio.run(
+            cli_app.run_deps(
+                "https://github.com/o/r",
+                5,
+                0,
+                descriptions,
+                False,
+                "t",
+                rank_by=rank_by,
+                trust_check=trust_check,
+            )
+        )
+        kinds = [kind for kind, _ in events]
+        shown = [frame for kind, frame in events[: kinds.index("enrich")] if kind == "update"]
+        assert isinstance(shown[-1], Spinner)
+        assert str(shown[-1].text) == expected
+        assert all(_frame_height(frame) <= 1 for kind, frame in events if kind == "stop")
+
+
 async def _scrape_calling_on_page(*args: object, on_page: Any, **kwargs: object) -> ScrapeResult:
     await on_page(
         ScrapeSnapshot(
@@ -824,7 +944,7 @@ class TestRetryStatus:
         mock_scrape.side_effect = page_then_retry
         result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
         assert result.exit_code == 0, result.output
-        group = mock_live_update.call_args_list[-1].args[0]
+        group = mock_live_update.call_args_list[-2].args[0]  # [-1] is the blank stop frame
         table, countdown = group.renderables
         assert table is mock_live_update.call_args_list[0].args[0]
         assert isinstance(countdown, RetryCountdown)
@@ -898,7 +1018,7 @@ class TestOnPageCallbacks:
         mock_scrape.side_effect = _scrape_calling_on_page
         result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
         assert result.exit_code == 0, result.output
-        assert mock_live_update.call_count == 1
+        assert mock_live_update.call_count == 2  # the page's table, then the blank stop frame
 
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
