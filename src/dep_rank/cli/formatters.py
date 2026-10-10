@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -140,18 +141,38 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
 
     Star mode (``include_rank_metadata=False``) excludes ``ranked_by``, ``trust_check``,
     and per-repo ``trust`` so CLI output stays byte-identical to pre-trust-ranking
-    releases. Trust mode includes ``trust_check`` only when a check was run.
+    releases. Trust mode includes ``trust_check`` only when a check was run. Downloads
+    fields are included only when a downloads check was run.
     ``trust_signals`` is excluded structurally by the model field. ``console.out`` writes
     the payload verbatim: no markup, emoji, or wrapping, any of which corrupts JSON values.
     """
     if include_rank_metadata:
-        payload = result.model_dump_json(
-            indent=2, exclude={"trust_check"} if result.trust_check is None else None
-        )
-    else:
+        exclude: Any = None
+        if result.downloads_check is None:
+            exclude = {"downloads_check": True, "repos": {"__all__": {"downloads"}}}
         payload = result.model_dump_json(
             indent=2,
-            exclude={"ranked_by": True, "trust_check": True, "repos": {"__all__": {"trust"}}},
+            exclude=(
+                {**(exclude or {}), "trust_check": True} if result.trust_check is None else exclude
+            ),
+        )
+    else:
+        if result.downloads_check is None:
+            exclude = {
+                "ranked_by": True,
+                "trust_check": True,
+                "downloads_check": True,
+                "repos": {"__all__": {"trust", "downloads"}},
+            }
+        else:
+            exclude = {
+                "ranked_by": True,
+                "trust_check": True,
+                "repos": {"__all__": {"trust"}},
+            }
+        payload = result.model_dump_json(
+            indent=2,
+            exclude=exclude,
         )
     console.out(payload, highlight=False)
 
