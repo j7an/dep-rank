@@ -239,15 +239,16 @@ Trust-ranked results may carry informational **caution signals**, built from the
 same metadata fetch without extra requests by default. The optional
 `--trust-check` adds a star-history caution using separate requests. Signals
 appear in JSON under each repo's `trust.cautions` (a list of `code` + `description`, possibly empty) and, in
-the table, as a `Cautions` column shown only when at least one result has a signal.
+the table, as a `Cautions` column of short tags, shown only when at least one result has a signal.
+A legend below the table defines each tag that appears.
 
-| Code | Shown when |
-|---|---|
-| `low_non_star_activity` | ≥ 500 stars, and both forks and issues + pull requests are below 1% of stars |
-| `stale_activity` | ≥ 500 stars and no push for more than 365 days |
-| `archived_or_disabled` | The repository is archived or disabled |
-| `new_with_high_stars` | ≥ 1,000 stars and created within the last 180 days |
-| `concentrated_starring` | Only with `--trust-check`: ≥ 200 stars in the sampled window and ≥ 15% arriving on one day |
+| Code | Table tag | Shown when |
+|---|---|---|
+| `low_non_star_activity` | `low-activity` | ≥ 500 stars, and both forks and issues + pull requests are below 1% of stars |
+| `stale_activity` | `stale` | ≥ 500 stars and no push for more than 365 days |
+| `archived_or_disabled` | `archived` | The repository is archived or disabled |
+| `new_with_high_stars` | `young` | ≥ 1,000 stars and created within the last 180 days |
+| `concentrated_starring` | `spike` | Only with `--trust-check`: ≥ 200 stars in the sampled window and ≥ 15% arriving on one day |
 
 Thresholds are fixed heuristics. Star floors stand in for a minimum sample size,
 and the low-activity signal requires forks *and* issues/PRs to be low together,

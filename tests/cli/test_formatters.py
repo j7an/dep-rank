@@ -11,6 +11,7 @@ import pytest
 from rich.console import Console
 
 from dep_rank.cli.formatters import (
+    _CAUTION_TAGS,
     RetryCountdown,
     build_topk_table,
     console,
@@ -340,8 +341,22 @@ class TestTrustTableAndJson:
         result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
         out = _render(print_dependents_table, result)
         assert "Cautions" in out
-        assert "stale_activity" in out
+        assert "stale_activity" not in out  # short tag in the cell, not the JSON code
+        assert "no recent pushes" in out  # legend line for the tag
         assert "not evidence of fake stars" in out
+
+    def test_caution_legend_lists_only_present_tags_in_code_order(self) -> None:
+        spike = CautionSignal(code=CautionCode.CONCENTRATED_STARRING, description="x")
+        young = CautionSignal(code=CautionCode.NEW_WITH_HIGH_STARS, description="y")
+        result = self._result(ranked_by="trust", repos=[self._trust_repo([spike, young])])
+        out = _render(print_dependents_table, result)
+        legend = out[out.index("not evidence of fake stars") :]
+        assert legend.index("young") < legend.index("spike")
+        assert "archived" not in legend
+        assert "stale" not in legend
+
+    def test_every_caution_code_has_a_tag(self) -> None:
+        assert set(_CAUTION_TAGS) == set(CautionCode)
 
     def test_trust_table_omits_cautions_column_when_none_flagged(self) -> None:
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
