@@ -17,6 +17,7 @@ from dep_rank.core.models import (
     CodeSearchResult,
     DependentsResult,
     DependentType,
+    Repository,
     RetryStatus,
     ScrapeReason,
     ScrapeSnapshot,
@@ -52,6 +53,25 @@ def humanize(num: int) -> str:
     return f"{num // 1000000}M"
 
 
+def downloads_cell(repo: Repository, unavailable: set[str]) -> str:
+    """Format the matched registry package and its download period for a table cell."""
+    if f"{repo.owner}/{repo.name}" in unavailable:
+        return "[dim]unavailable[/dim]"
+    package = repo.downloads
+    if package is None:
+        return "—"
+    if package.period == "last-month":
+        label = "/mo"
+    elif package.period == "total":
+        label = " total"
+    else:
+        label = f" ({escape(package.period)})"
+    return (
+        f"{humanize(package.downloads)}{label}  {escape(package.ecosystem)}:{escape(package.name)}"
+        + (" ✓" if package.verified else "")
+    )
+
+
 def print_dependents_table(result: DependentsResult) -> None:
     """Print a Rich table of dependents, dispatching on the ranking actually applied."""
     if result.estimated_total_dependents == 0:
@@ -75,6 +95,16 @@ def print_dependents_table(result: DependentsResult) -> None:
             style="dim",
         )
 
+    if result.downloads_check is not None:
+        console.print(
+            "Downloads: most-downloaded registry package that claims each repo (ecosyste.ms).\n"
+            "  ✓  verified attestation links this package to this repo (deps.dev)\n"
+            "     unmarked = matched by name only, not verified — check before installing\n"
+            "  /mo = last month; total = all time. Not used for ranking.",
+            style="dim",
+            highlight=False,
+        )
+
 
 def _print_dependents_table(result: DependentsResult) -> None:
     is_trust = result.ranked_by == "trust"
@@ -84,6 +114,10 @@ def _print_dependents_table(result: DependentsResult) -> None:
     if is_trust:
         table.add_column("Trust", justify="right", style="magenta")
     table.add_column("Stars", justify="right", style="yellow")
+    has_downloads = result.downloads_check is not None
+    unavailable = set(result.downloads_check.unavailable) if result.downloads_check else set()
+    if has_downloads:
+        table.add_column("Downloads", style="green")
 
     has_cautions = is_trust and any(r.trust and r.trust.cautions for r in result.repos)
     if has_cautions:
@@ -99,6 +133,8 @@ def _print_dependents_table(result: DependentsResult) -> None:
             score = round(repo.trust.score) if repo.trust else 0
             row.append(str(score))
         row.append(humanize(repo.stars))
+        if has_downloads:
+            row.append(downloads_cell(repo, unavailable))
         if has_cautions:
             codes = [c.code for c in repo.trust.cautions] if repo.trust else []
             row.append("\n".join(_CAUTION_TAGS[code][0] for code in codes))
