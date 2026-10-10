@@ -12,10 +12,12 @@ from typing import Literal
 import httpx2
 
 from dep_rank.core.cache import SqliteCache
+from dep_rank.core.downloads import fetch_downloads
 from dep_rank.core.graphql import enrich_with_trust_metadata
 from dep_rank.core.models import (
     DependentsResult,
     DependentType,
+    DownloadsCheckResult,
     RetryStatus,
     ScrapeResult,
     ScrapeSnapshot,
@@ -37,6 +39,7 @@ async def get_dependents(
     descriptions: bool = False,
     rank_by: Literal["stars", "trust"] = "stars",
     trust_check: bool = False,
+    downloads: bool = False,
     max_pages: int = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
     cache: SqliteCache | None = None,
@@ -46,6 +49,7 @@ async def get_dependents(
 ) -> DependentsResult:
     """Scrape and optionally enrich dependents using caller-owned session and cache.
 
+    Package downloads are display-only and looked up after ranking.
     Trust scores are pool-relative heuristics, not quality or fraud verdicts.
     Raises ValueError for invalid option combinations or URL. The caller owns
     ``session`` and ``cache``; neither is closed here. ``on_scraped`` is awaited
@@ -89,6 +93,7 @@ async def get_dependents(
     total_count = scrape_result.matched_count
     ranked_by: Literal["stars", "trust"] = "stars"
     trust_check_result: TrustCheckResult | None = None
+    downloads_check_result: DownloadsCheckResult | None = None
     trust_metadata_complete = True
     trust_pool_size = 0
     # One clock read: the output's scraped_at is also the reference time for
@@ -120,6 +125,9 @@ async def get_dependents(
             meta = await enrich_with_trust_metadata(session, repos, token, include_description=True)
             repos = sorted(meta.repos, key=lambda r: r.stars, reverse=True)[:rows]
 
+    if downloads:
+        repos, downloads_check_result = await fetch_downloads(session, repos)
+
     return DependentsResult(
         source=url,
         total_count=total_count,
@@ -133,6 +141,7 @@ async def get_dependents(
         estimated_total_pages=scrape_result.estimated_total_pages,
         ranked_by=ranked_by,
         trust_check=trust_check_result,
+        downloads_check=downloads_check_result,
         stale_pages=scrape_result.stale_pages,
         trust_metadata_complete=trust_metadata_complete,
         trust_pool_size=trust_pool_size,
