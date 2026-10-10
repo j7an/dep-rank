@@ -33,7 +33,7 @@ ACTION_PIN_LITERAL_RE = re.compile(
 def _pin_literal_violations(path: Path, *, reject_standalone_values: bool) -> list[str]:
     violations: list[str] = []
     display_path = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
@@ -134,7 +134,7 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
     shared_uses_lines: list[tuple[str, str]] = []
 
     for path in sorted(WORKFLOWS_DIR.glob("*.y*ml")):
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             if "j7an/shared-workflows/" in line:
                 shared_uses_lines.append((path.name, line))
 
@@ -159,7 +159,7 @@ def test_shared_workflows_refs_are_uniformly_pinned() -> None:
 
 def test_release_workflow_retains_caller_owned_contract() -> None:
     """Pin the AGENTS.md "Release Policy" invariants, not implementation text."""
-    release = (WORKFLOWS_DIR / "release.yml").read_text()
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
 
     required_lines = (
         # Release chain: CI gate, build, TestPyPI publish, verify, PyPI publish, release.
@@ -197,7 +197,7 @@ def test_release_workflow_retains_caller_owned_contract() -> None:
 
 
 def test_testpypi_verifier_disables_setup_uv_cache() -> None:
-    workflow = (WORKFLOWS_DIR / "release.yml").read_text()
+    workflow = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
 
     job_start = workflow.index("  verify-testpypi:")
     next_job = workflow.index("\n  publish-pypi:", job_start)
