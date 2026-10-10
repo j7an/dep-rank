@@ -840,8 +840,13 @@ class TestDepsLiveFrames:
     @pytest.mark.parametrize(
         ("rank_by", "trust_check", "descriptions", "expected"),
         [
-            ("trust", False, False, "Ranking 50 candidates by trust…"),
-            ("trust", True, False, "Ranking 50 candidates by trust and checking star history…"),
+            ("trust", False, False, "Scoring 50 candidates by trust for the top 5…"),
+            (
+                "trust",
+                True,
+                False,
+                "Scoring 50 candidates by trust for the top 5 and checking star history…",
+            ),
             ("stars", False, True, "Fetching descriptions…"),
         ],
     )

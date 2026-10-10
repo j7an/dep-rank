@@ -176,7 +176,8 @@ async def run_deps(
                 if live is not None and rank_by == "trust":
                     extra = " and checking star history" if trust_check else ""
                     count = len(scrape_result.repos)
-                    live.update(Spinner("dots", f"Ranking {count} candidates by trust{extra}…"))
+                    text = f"Scoring {count} candidates by trust for the top {rows}{extra}…"
+                    live.update(Spinner("dots", text))
                 elif live is not None and descriptions:
                     live.update(Spinner("dots", "Fetching descriptions…"))
                 else:

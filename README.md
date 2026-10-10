@@ -122,7 +122,9 @@ verdicts.
 Check `result.complete` and `result.reason` for partial results; counts are lower
 bounds when incomplete. `result.stale_pages` counts pages served from expired
 cache entries, and `result.trust_metadata_complete` is false when trust scores
-used partial metadata. Both fields exist on the result but are excluded from
+used partial metadata. `result.trust_pool_size` is the number of candidates trust
+scores are relative to (0 when not trust-ranked). These fields exist on the result
+but are excluded from
 `model_dump()` and JSON serialization (`model_dump_json()`).
 If trust metadata cannot be fetched, results fall back to stars; check
 `result.ranked_by == "trust"` to confirm trust ranking, since
@@ -184,6 +186,34 @@ dep-rank deps https://github.com/django/django --rank-by trust --token ghp_...
   slower** than star ranking.
 - `--rank-by trust` requires a GitHub token; trust scores appear in `--format json`
   output under each repo's `trust` field.
+
+### How the score is computed
+
+Trust mode scores a candidate pool of `min(100, rows × 10)` dependents (never fewer
+than `--rows`, fewer if fewer dependents match), taken from the top by stars, then
+shows the top `--rows` of them.
+The default `--rows 10` scores 100 candidates and shows 10; `--rows 50` scores 100
+and shows 50.
+
+Each of the four signals is log-scaled (except recency) and min-max normalized
+across the pool, so the pool's weakest repo gets 0 and its strongest gets 1. The
+score is the weighted sum × 100:
+
+| Signal | Weight |
+|---|---|
+| Stars | 35% |
+| Forks | 25% |
+| Issues + pull requests (all-time) | 20% |
+| Recency of last push | 20% |
+
+- **100** means strongest in the pool on every signal. **50** means roughly mid-pool.
+  A score of 50 is not "half as trustworthy" as 100.
+- Scores are only comparable within one run. A different target, `--rows`, or
+  `--min-stars` changes the pool and therefore every score.
+- Because the table shows the top of the pool, scores usually cluster high: the
+  defaults show only the top tenth. `--rows 100` shows the full range.
+- The table footer states the pool size. JSON includes the per-signal 0–1 values
+  under `trust.components`.
 
 ### Star-history check
 

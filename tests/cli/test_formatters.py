@@ -290,6 +290,17 @@ class TestTrustTableAndJson:
         header = next(line for line in out.splitlines() if "Stars" in line)
         assert header.index("Trust") < header.index("Stars")
 
+    def test_trust_table_footer_explains_pool_relative_score(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result.trust_pool_size = 100
+        out = _flat(_render(print_dependents_table, result))
+        assert "relative to the 100 candidates scored" in out
+        assert "not comparable across runs" in out
+
+    def test_star_table_has_no_trust_footer(self) -> None:
+        result = self._result(ranked_by="stars", repos=[make_repo("beta", "toolkit", stars=3200)])
+        assert "candidates scored" not in _flat(_render(print_dependents_table, result))
+
     def test_fallback_renders_star_table(self) -> None:
         # ranked_by == "stars" even though a star repo has no trust -> star layout.
         star_repo = make_repo("beta", "toolkit", stars=3200)

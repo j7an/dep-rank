@@ -90,6 +90,7 @@ async def get_dependents(
     ranked_by: Literal["stars", "trust"] = "stars"
     trust_check_result: TrustCheckResult | None = None
     trust_metadata_complete = True
+    trust_pool_size = 0
     # One clock read: the output's scraped_at is also the reference time for
     # age-based caution signals.
     now = datetime.now(tz=UTC)
@@ -108,6 +109,7 @@ async def get_dependents(
                 trust_check_result = skipped_trust_check(repos)
         else:
             trust_metadata_complete = meta.complete
+            trust_pool_size = len(meta.repos)
             repos = compute_trust_scores(meta.repos, now=now)[:rows]
             ranked_by = "trust"
             if trust_check:
@@ -133,4 +135,5 @@ async def get_dependents(
         trust_check=trust_check_result,
         stale_pages=scrape_result.stale_pages,
         trust_metadata_complete=trust_metadata_complete,
+        trust_pool_size=trust_pool_size,
     )
