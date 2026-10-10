@@ -88,6 +88,22 @@ class TestPrintDependentsTable:
         assert "Description" in out
         assert "A web framework" in out
 
+    def test_external_strings_render_literally(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A dependent's owner controls its description; the source URL's query is user input.
+        monkeypatch.setattr(console, "width", 200)
+        description = "[link=https://evil.example]docs[/link] [bold red]VERIFIED[/]"
+        result = DependentsResult(
+            source="https://github.com/django/django?x=[red]y",
+            total_count=1,
+            filtered_count=1,
+            repos=[make_repo("alpha", "framework", description=description)],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+        )
+        out = _flat(_render(print_dependents_table, result))
+        assert description in out
+        assert "https://github.com/django/django?x=[red]y" in out
+
 
 class TestPrintSearchResults:
     def test_no_hits(self) -> None:
@@ -119,6 +135,43 @@ class TestPrintSearchResults:
         row = next(line for line in out.splitlines() if "alpha/framework" in line)
         assert "app.py" in row
         assert "3" in row  # match count rendered as text
+
+    def test_brackets_render_literally(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(console, "width", 200)
+        hit = CodeSearchHit(
+            repo=make_repo("alpha", "framework"),
+            file_url="https://github.com/alpha/framework/blob/main/pages/[id].tsx",
+            file_path="pages/[id].tsx",
+            matches=1,
+        )
+        result = CodeSearchResult(
+            source="https://github.com/django/django", query="[red]x", hits=[hit], searched_repos=1
+        )
+        out = _render(print_search_results, result)
+        assert "Code search: '[red]x'" in _flat(out)
+        assert "pages/[id].tsx" in out
+
+    def test_no_hits_query_renders_literally(self) -> None:
+        result = CodeSearchResult(
+            source="https://github.com/django/django", query="[red]x", hits=[], searched_repos=5
+        )
+        assert "No results found for '[red]x'" in _render(print_search_results, result)
+
+
+def test_json_preserves_strings_exactly(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 80 columns is the piped-stdout width; markup, emoji codes, and long lines must all survive.
+    monkeypatch.setattr(console, "width", 80)
+    description = "Ship it :rocket: [bold]fast[/bold] " + "word " * 60 + "C:\\path\\"
+    result = DependentsResult(
+        source="https://github.com/django/django",
+        total_count=1,
+        filtered_count=1,
+        repos=[make_repo("alpha", "framework", description=description)],
+        dependent_type=DependentType.REPOSITORY,
+        scraped_at=datetime.now(tz=UTC),
+    )
+    payload = json.loads(_render(print_dependents_json, result))
+    assert payload["repos"][0]["description"] == description
 
 
 @pytest.mark.parametrize(
