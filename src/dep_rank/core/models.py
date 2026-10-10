@@ -171,6 +171,8 @@ class DependentsResult(BaseModel):
     stale_pages: int = Field(default=0, exclude=True)
     # False when trust scores used partial metadata; excluded from JSON
     trust_metadata_complete: bool = Field(default=True, exclude=True)
+    # Candidates scored together (trust scores are relative to these); excluded from JSON
+    trust_pool_size: int = Field(default=0, exclude=True)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> DependentsResult:

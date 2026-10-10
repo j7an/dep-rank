@@ -290,6 +290,28 @@ class TestTrustTableAndJson:
         header = next(line for line in out.splitlines() if "Stars" in line)
         assert header.index("Trust") < header.index("Stars")
 
+    def test_trust_footer_when_pool_larger_than_shown_rows(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo(), self._trust_repo()])
+        result.trust_pool_size = 100
+        out = _flat(_render(print_dependents_table, result))
+        assert (
+            "Trust scores rank the 100 most-starred dependents against each other; "
+            "the 2 rows above are the top of that ranking." in out
+        )
+        assert "100 = strongest on every signal; not comparable across runs." in out
+
+    def test_trust_footer_when_every_scored_repo_is_shown(self) -> None:
+        result = self._result(ranked_by="trust", repos=[self._trust_repo(), self._trust_repo()])
+        result.trust_pool_size = 2
+        out = _flat(_render(print_dependents_table, result))
+        assert "Trust scores rank these 2 rows against each other." in out
+        assert "most-starred" not in out
+        assert "100 = strongest on every signal; not comparable across runs." in out
+
+    def test_star_table_has_no_trust_footer(self) -> None:
+        result = self._result(ranked_by="stars", repos=[make_repo("beta", "toolkit", stars=3200)])
+        assert "Trust scores rank" not in _flat(_render(print_dependents_table, result))
+
     def test_fallback_renders_star_table(self) -> None:
         # ranked_by == "stars" even though a star repo has no trust -> star layout.
         star_repo = make_repo("beta", "toolkit", stars=3200)

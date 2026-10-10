@@ -10,7 +10,7 @@ import httpx2
 import pytest
 
 from dep_rank.core.dependents import get_dependents
-from dep_rank.core.models import ScrapeResult
+from dep_rank.core.models import Repository, ScrapeResult, TrustMetadataResult
 from tests.conftest import FakeHTTP, dependents_page
 
 URL = "https://github.com/owner/repo"
@@ -53,6 +53,24 @@ async def test_defaults_rank_by_stars_and_leave_session_open(
     assert result.stale_pages == 0
     assert result.trust_metadata_complete is True
     assert session.is_closed is False
+
+
+async def test_trust_pool_size_counts_scored_candidates_not_returned_rows(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_http.get(
+        FIRST, body=dependents_page([("a", "one", 100), ("b", "two", 200), ("c", "three", 300)])
+    )
+
+    async def enrich(session: object, repos: list[Repository], *a: object, **k: object) -> Any:
+        return TrustMetadataResult(repos=repos, failed=False, complete=True)
+
+    monkeypatch.setattr("dep_rank.core.dependents.enrich_with_trust_metadata", enrich)
+    result = await get_dependents(session, URL, rows=1, rank_by="trust", token="t")
+    assert result.ranked_by == "trust"
+    assert len(result.repos) == 1
+    assert result.trust_pool_size == 3
+    assert "trust_pool_size" not in result.model_dump_json()
 
 
 def test_import_loads_no_cli_dependencies() -> None:

@@ -176,7 +176,13 @@ async def run_deps(
                 if live is not None and rank_by == "trust":
                     extra = " and checking star history" if trust_check else ""
                     count = len(scrape_result.repos)
-                    live.update(Spinner("dots", f"Ranking {count} candidates by trust{extra}…"))
+                    # Only promise a "top N" when the table will hold fewer than were scraped.
+                    scope = (
+                        f"the {count:,} most-starred dependents to show the top {rows:,}"
+                        if count > rows
+                        else f"{count:,} dependents"
+                    )
+                    live.update(Spinner("dots", f"Trust-scoring {scope}{extra}…"))
                 elif live is not None and descriptions:
                     live.update(Spinner("dots", "Fetching descriptions…"))
                 else:
