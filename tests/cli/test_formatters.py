@@ -355,6 +355,17 @@ class TestTrustTableAndJson:
         assert "archived" not in legend
         assert "stale" not in legend
 
+    def test_multiple_caution_tags_stack_on_separate_lines_in_cell(self) -> None:
+        spike = CautionSignal(code=CautionCode.CONCENTRATED_STARRING, description="x")
+        young = CautionSignal(code=CautionCode.NEW_WITH_HIGH_STARS, description="y")
+        result = self._result(ranked_by="trust", repos=[self._trust_repo([spike, young])])
+        out = _render(print_dependents_table, result)
+        table_lines = out[: out.index("not evidence of fake stars")].splitlines()
+        spike_rows = [i for i, line in enumerate(table_lines) if "spike" in line]
+        young_rows = [i for i, line in enumerate(table_lines) if "young" in line]
+        assert len(spike_rows) == 1 and len(young_rows) == 1
+        assert young_rows[0] == spike_rows[0] + 1  # one tag per line, in signal order
+
     def test_every_caution_code_has_a_tag(self) -> None:
         assert set(_CAUTION_TAGS) == set(CautionCode)
 
