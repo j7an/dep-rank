@@ -130,6 +130,18 @@ class ScrapeSnapshot(BaseModel):
     matched_count: int
 
 
+class RetryStatus(BaseModel):
+    """A 429 retry handed to ``scrape_dependents``' ``on_retry`` before its wait begins.
+
+    ``attempt`` counts retries of ``page`` only; the ``max_retries`` budget is per page.
+    """
+
+    page: int
+    attempt: int
+    max_retries: int
+    delay: float  # seconds until the retry
+
+
 class TrustCheckResult(BaseModel):
     """Sampled star-history check over the top results (heuristic, never a fake-star verdict)."""
 

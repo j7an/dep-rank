@@ -12,6 +12,7 @@ from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     DependentType,
     Repository,
+    RetryStatus,
     ScrapeReason,
     ScrapeResult,
     ScrapeSnapshot,
@@ -575,3 +576,85 @@ async def test_rate_limited_with_stalled_body_stays_rate_limited(
         session, "https://github.com/owner/repo", rows=100, token="ghp_x"
     )
     assert result.reason == ScrapeReason.RATE_LIMITED
+
+
+class TestRetryReporting:
+    PAGE2_URL = "https://github.com/owner/repo/network/dependents?page=2"
+
+    async def _scrape(
+        self, session: httpx2.AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[ScrapeResult, list[RetryStatus], AsyncMock]:
+        sleep = AsyncMock()
+        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
+        seen: list[RetryStatus] = []
+
+        async def on_retry(status: RetryStatus) -> None:
+            seen.append(status)
+
+        result = await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            token="ghp_x",
+            rows=100,
+            rate_limiter=fast_limiter(),
+            on_retry=on_retry,
+        )
+        return result, seen, sleep
+
+    async def test_retry_count_is_per_page(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One 429 on each of two pages reports retry 1 for page 1, then page 2."""
+        mock_http.get(FIRST_URL, status=429, headers={"Retry-After": "120"})
+        mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_PAGE_1)
+        mock_http.get(self.PAGE2_URL, status=429, headers={"Retry-After": "120"})
+        mock_http.get(self.PAGE2_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        result, seen, _ = await self._scrape(session, monkeypatch)
+        assert result.complete is True
+        assert [(s.page, s.attempt, s.max_retries) for s in seen] == [
+            (1, 1, MAX_RETRIES),
+            (2, 1, MAX_RETRIES),
+        ]
+        assert all(s.delay == 120 for s in seen)  # Retry-After dominates first backoff
+        # The callback replaces the warning line, so a live display is not duplicated.
+        assert "Rate limited" not in caplog.text
+
+    async def test_retry_count_advances_on_same_page(
+        self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        for _ in range(2):
+            mock_http.get(FIRST_URL, status=429, headers={"Retry-After": "0"})
+        mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        _, seen, _ = await self._scrape(session, monkeypatch)
+        assert [(s.page, s.attempt) for s in seen] == [(1, 1), (1, 2)]
+
+    async def test_exhaustion_reports_only_real_retries(
+        self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+    ) -> None:
+        """The final 429 gives up at once: no "6/5" report and no wasted sleep."""
+        for _ in range(MAX_RETRIES + 1):
+            mock_http.get(FIRST_URL, status=429, headers={"Retry-After": "0"})
+        result, seen, sleep = await self._scrape(session, monkeypatch)
+        assert result.reason == ScrapeReason.RATE_LIMITED
+        assert [s.attempt for s in seen] == list(range(1, MAX_RETRIES + 1))
+        assert sleep.await_count == MAX_RETRIES
+
+    async def test_warning_logged_without_callback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_http: FakeHTTP,
+        session: httpx2.AsyncClient,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+        mock_http.get(FIRST_URL, status=429, headers={"Retry-After": "0"})
+        mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+        await scrape_dependents(
+            session, "https://github.com/owner/repo", rows=100, rate_limiter=fast_limiter()
+        )
+        assert "Rate limited on page 1" in caplog.text
+        assert f"(1/{MAX_RETRIES})" in caplog.text

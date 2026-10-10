@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
@@ -258,7 +259,7 @@ class TestSWRIntegration:
         mock_http.get(URL, status=200, body=b"<html>fresh</html>", headers={"ETag": '"new"'})
         limiter = _auth_limiter()
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
-        html, stale = await _read_page(session, URL, limiter, {}, cache, swr)
+        html, stale = await _read_page(session, URL, limiter, {}, cache, swr, AsyncMock())
         assert html == "<html>stale</html>"  # stale served synchronously
         assert stale is True
         await swr.drain()
