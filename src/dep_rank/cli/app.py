@@ -156,8 +156,10 @@ async def run_deps(
 
             async def on_retry(status: RetryStatus) -> None:
                 if live is not None:
+                    # Countdown leads: Live crops a frame taller than the terminal from the
+                    # bottom, and a trust-ranked table can hold 100 rows.
                     countdown = RetryCountdown(status)
-                    live.update(countdown if topk_table is None else Group(topk_table, countdown))
+                    live.update(countdown if topk_table is None else Group(countdown, topk_table))
 
             def stop_live() -> None:
                 # Blank the frame first: Live.stop() re-renders it uncropped, and a table

@@ -933,9 +933,11 @@ class TestRetryStatus:
 
     @patch("rich.live.Live.update")
     @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
-    def test_deps_countdown_sits_under_existing_table(
+    def test_deps_countdown_sits_above_existing_table(
         self, mock_scrape: AsyncMock, mock_live_update: MagicMock, runner: CliRunner
     ) -> None:
+        """Live crops overflow from the bottom, so the countdown must lead a tall table."""
+
         async def page_then_retry(*args: object, on_retry: Any, on_page: Any, **_: object) -> Any:
             result = await _scrape_calling_on_page(on_page=on_page)
             await on_retry(RETRY)
@@ -945,7 +947,7 @@ class TestRetryStatus:
         result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
         assert result.exit_code == 0, result.output
         group = mock_live_update.call_args_list[-2].args[0]  # [-1] is the blank stop frame
-        table, countdown = group.renderables
+        countdown, table = group.renderables
         assert table is mock_live_update.call_args_list[0].args[0]
         assert isinstance(countdown, RetryCountdown)
 
