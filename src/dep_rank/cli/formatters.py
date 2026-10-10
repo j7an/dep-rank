@@ -21,6 +21,19 @@ from dep_rank.core.models import (
 
 console = Console()
 
+# Short table tag and plain legend text per caution. Thresholds live in the README,
+# not here, so this text cannot drift from the constants in core/.
+_CAUTION_TAGS: dict[CautionCode, tuple[str, str]] = {
+    CautionCode.LOW_NON_STAR_ACTIVITY: ("low-activity", "few forks, issues, or PRs for its stars"),
+    CautionCode.STALE_ACTIVITY: ("stale", "no recent pushes"),
+    CautionCode.ARCHIVED_OR_DISABLED: ("archived", "repository is archived or disabled"),
+    CautionCode.NEW_WITH_HIGH_STARS: ("young", "created recently with many stars"),
+    CautionCode.CONCENTRATED_STARRING: (
+        "spike",
+        "an unusual share of recent stars arrived on one day",
+    ),
+}
+
 
 def humanize(num: int) -> str:
     """Convert large numbers to human-readable format: 1500 → '1.5K'."""
@@ -82,7 +95,7 @@ def _print_dependents_table(result: DependentsResult) -> None:
         row.append(humanize(repo.stars))
         if has_cautions:
             codes = [c.code for c in repo.trust.cautions] if repo.trust else []
-            row.append(", ".join(codes))
+            row.append("\n".join(_CAUTION_TAGS[code][0] for code in codes))
         if has_descriptions:
             row.append(repo.description or "")
         table.add_row(*row)
@@ -90,10 +103,18 @@ def _print_dependents_table(result: DependentsResult) -> None:
     console.print(table)
     console.print(f"\n[dim]{result.total_count:,} dependents at or above the star threshold[/dim]")
     if has_cautions:
-        console.print(
-            "[dim]Cautions are informational heuristics, "
-            "not evidence of fake stars or malicious behavior.[/dim]"
-        )
+        present = {c.code for r in result.repos if r.trust for c in r.trust.cautions}
+        width = max(len(_CAUTION_TAGS[code][0]) for code in present)
+        lines = [
+            "Cautions (informational heuristics, "
+            "not evidence of fake stars or malicious behavior):",
+            *(
+                f"  {tag:<{width}}  {text}"
+                for code, (tag, text) in _CAUTION_TAGS.items()
+                if code in present
+            ),
+        ]
+        console.print("\n".join(lines), style="dim", highlight=False)
 
 
 def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bool = False) -> None:
