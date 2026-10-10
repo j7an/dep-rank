@@ -123,7 +123,9 @@ async def run_deps(
     import httpx2
     from rich.console import Group
     from rich.live import Live
+    from rich.spinner import Spinner
     from rich.table import Table
+    from rich.text import Text
 
     from dep_rank.cli.formatters import RetryCountdown, build_topk_table
     from dep_rank.core.dependents import get_dependents
@@ -157,11 +159,26 @@ async def run_deps(
                     countdown = RetryCountdown(status)
                     live.update(countdown if topk_table is None else Group(topk_table, countdown))
 
-            async def on_scraped(scrape_result: ScrapeResult) -> None:
+            def stop_live() -> None:
+                # Blank the frame first: Live.stop() re-renders it uncropped, and a table
+                # taller than the terminal scrolls out of reach of the transient erase.
                 nonlocal live
                 if live is not None:
+                    live.update(Text(""))
                     live.stop()
                     live = None
+
+            async def on_scraped(scrape_result: ScrapeResult) -> None:
+                # Enrichment runs after the scrape with no other progress, so keep the Live
+                # up with a spinner until get_dependents returns.
+                if live is not None and rank_by == "trust":
+                    extra = " and checking star history" if trust_check else ""
+                    count = len(scrape_result.repos)
+                    live.update(Spinner("dots", f"Ranking {count} candidates by trust{extra}…"))
+                elif live is not None and descriptions:
+                    live.update(Spinner("dots", "Fetching descriptions…"))
+                else:
+                    stop_live()
                 if not quiet:
                     _print_scrape_outcome(console, scrape_result, min_stars)
                 if scrape_result.stale_pages and not token:
@@ -195,8 +212,7 @@ async def run_deps(
                     on_retry=on_retry if show_live and _renders_live(console) else None,
                 )
             finally:
-                if live is not None:
-                    live.stop()
+                stop_live()
 
             if rank_by == "trust" and result.ranked_by == "stars":
                 if not quiet:
