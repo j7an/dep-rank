@@ -155,9 +155,11 @@ Create a token at [github.com/settings/tokens](https://github.com/settings/token
 
 dep-rank uses a three-stage pipeline:
 
-1. **Scrape** — fetches GitHub's `/network/dependents` HTML pages to discover all dependents and their approximate star counts
+1. **Scrape** — fetches GitHub's `/network/dependents` HTML pages to discover the dependents GitHub lists and their approximate star counts
 2. **Enrich** (optional) — one GraphQL batch query fetches accurate star counts and descriptions for the top N results (replaces 100 individual REST API calls)
 3. **Present** — returns structured results as a Rich table
+
+GitHub only lists repositories whose dependency graph is enabled. Since June 2025 the graph defaults to off for new public repositories and is disabled on long-inactive ones, so counts can miss real dependents.
 
 Responses are cached in a local SQLite database (`~/Library/Caches/dep-rank` on macOS, `$XDG_CACHE_HOME/dep-rank` or `~/.cache/dep-rank` on Linux, and `%LOCALAPPDATA%\dep-rank\dep-rank\Cache` on Windows) with ETag support for conditional requests. Expired pages are served immediately and refreshed in the background (stale-while-revalidate) on authenticated runs. Unauthenticated runs serve expired pages as-is and never refresh them; `deps` prints a notice on stderr when that happens. Set a token or run `dep-rank cache clear` for current results.
 
