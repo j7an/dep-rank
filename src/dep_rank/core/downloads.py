@@ -109,9 +109,10 @@ def pick_package(
         ):
             continue
         verified = package_key(ecosystem, name) in attested
-        if name.startswith("@"):
-            scope, separator, rest = name[1:].partition("/")
-            name_match = bool(separator and rest and norm(scope) in owner_names)
+        # Namespaced names (@scope/x, vendor/x, publisher/x) match only by owner namespace.
+        namespace, separator, rest = name.removeprefix("@").partition("/")
+        if separator or name.startswith("@"):
+            name_match = bool(separator and rest) and norm(namespace) in owner_names
         else:
             name_match = bool(norm(name)) and norm(name) in repo_names
         if not (verified or name_match):

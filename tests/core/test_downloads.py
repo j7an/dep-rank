@@ -76,6 +76,10 @@ REJECTED = [
     ("o", "r", pkg("r", 5, period=None), set()),
     ("o", "r", pkg("r", 5, period=123), set()),
     ("o", "r", pkg("@o", 5), set()),
+    ("o", "r", pkg("@r", 5), set()),  # malformed scope never falls through to the repo name
+    ("o", "r", pkg("x/r", 5, "packagist"), set()),  # namespace only, as with @pika/react
+    # Namespace naming the repo rather than the owner stays rejected.
+    ("foambubble", "foam", pkg("foam/foam-vscode", 354366, "openvsx", "total"), set()),
 ]
 ACCEPTED = [
     ("babel", "babel", pkg("@babel/core", 1), set(), False),
@@ -84,6 +88,13 @@ ACCEPTED = [
     ("Pallets", "Flask", pkg("flask", 1, "pypi"), set(), False),
     ("Facebook", "react", pkg("@FACEBOOK/x", 1), set(), False),
     ("aws", "aws-cli", pkg("awscli", 0, "pypi"), set(), False),
+    (
+        "docker-php",
+        "docker-php",
+        pkg("docker-php/docker-php", 631920, "packagist", "total"),
+        set(),
+        False,
+    ),
     (
         "zopefoundation",
         "zope.interface",

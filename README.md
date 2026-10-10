@@ -185,15 +185,16 @@ A package is accepted when any of these rules holds:
 
 - deps.dev links the package to the repository through a publish or SLSA
   attestation with at least one attestation marked `verified: true`.
-- An unscoped package name matches the repository name after lowercasing,
+- A package name without a namespace matches the repository name after lowercasing,
   removing `-`, `_`, and `.`, and optionally stripping one recognized language affix.
-- A scoped package's owner scope matches the repository owner under the same
-  normalization; matching only the package name inside the scope is insufficient.
+- A namespaced package (`@scope/name`, `vendor/name`, `publisher/name`) matches only
+  when its namespace matches the repository owner under the same normalization;
+  matching only the name after the namespace is insufficient.
 
 Packages marked `removed` are rejected even when attested. A ✓ means a verified
 attested repository-to-package link; it does not prove how the package was built.
 Unmarked packages matched by name alone are unverified: check before installing.
-A squatter may register the matching name or an unclaimed npm owner scope. Still-listed
+A squatter may register the matching name or an unclaimed owner scope or vendor namespace. Still-listed
 malware has no structured flag in these lookup results, and legitimate packages can
 later be compromised. dep-rank is not a vulnerability scanner; use tools such as
 `pip-audit`, `npm audit`, or [OSV](https://osv.dev/) to check for known vulnerabilities.
