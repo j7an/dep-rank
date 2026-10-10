@@ -32,6 +32,14 @@ logging.basicConfig(
 )
 
 
+def _renders_live(console: Console) -> bool:
+    """Whether Rich Live/Progress draw updates on ``console`` (mirrors ``Live.refresh``).
+
+    Redirected or dumb-terminal stderr shows no live view, so retry status must be logged.
+    """
+    return console.is_terminal and not console.is_dumb_terminal
+
+
 def _win_local_appdata() -> str:  # pragma: no cover
     """Resolve the Windows shell's local application data folder."""
     if sys.platform != "win32":
@@ -183,8 +191,8 @@ async def run_deps(
                     cache=cache,
                     on_page=on_page,
                     on_scraped=on_scraped,
-                    # Without a live view the scraper logs each retry instead.
-                    on_retry=on_retry if show_live else None,
+                    # Without a visible live view the scraper logs each retry instead.
+                    on_retry=on_retry if show_live and _renders_live(console) else None,
                 )
             finally:
                 if live is not None:
@@ -443,7 +451,11 @@ def search(
                         max_pages=max_pages,
                         rows=max_repos,
                         adaptive_stop=False,
-                        on_retry=on_retry if progress_ctx is not None else None,
+                        on_retry=(
+                            on_retry
+                            if progress_ctx is not None and _renders_live(console)
+                            else None
+                        ),
                     )
                 finally:
                     if progress_ctx is not None:

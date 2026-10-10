@@ -793,6 +793,12 @@ async def _scrape_retrying_then_page(
 
 
 class TestRetryStatus:
+    @pytest.fixture(autouse=True)
+    def _terminal_stderr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The countdown is only wired up when stderr can render live updates.
+        monkeypatch.setattr(cli_app._stderr_console, "_force_terminal", True)
+        monkeypatch.delenv("TERM", raising=False)  # "dumb" would disable live rendering
+
     @patch("rich.live.Live.update")
     @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
     def test_deps_shows_countdown_in_live_then_clears(
@@ -850,6 +856,34 @@ class TestRetryStatus:
         first, second = mock_progress_update.call_args_list
         assert isinstance(first.kwargs["retry"], RetryCountdown)
         assert second.kwargs["retry"] == ""
+
+
+class TestRetryLogWithoutLiveTerminal:
+    """Redirected stderr renders no live view, so each retry must still be logged."""
+
+    @pytest.fixture(autouse=True)
+    def _one_429(self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP) -> None:
+        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+        first = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+        mock_http.get(first, status=429, headers={"Retry-After": "0"})
+        mock_http.get(first, body=DEPENDENTS_HTML_LAST_PAGE)
+
+    def test_deps(self, runner: CliRunner, caplog: pytest.LogCaptureFixture) -> None:
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "t"])
+        assert result.exit_code == 0, result.output
+        assert "Rate limited on page 1" in caplog.text
+
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    def test_search(
+        self, mock_search: AsyncMock, runner: CliRunner, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/owner/repo", query="q", hits=[], searched_repos=0
+        )
+        args = ["search", "https://github.com/owner/repo", "q", "--token", "t"]
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert "Rate limited on page 1" in caplog.text
 
 
 class TestOnPageCallbacks:
