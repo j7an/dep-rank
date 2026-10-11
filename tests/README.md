@@ -57,6 +57,11 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one cla
 Semantic checks on GitHub workflows: the shared-workflow caller set, SHA pin
 shape and uniformity, and the release policy invariants from `AGENTS.md`.
 
+### `tests/test_release_age_policy.py`
+
+The release-age window agrees across the Dependabot cooldowns, the
+dependency-safety `minimum_release_age_days` input, and `tool.uv.exclude-newer`.
+
 ## Shared fixtures (`tests/conftest.py`)
 
 Request these by name as test parameters:

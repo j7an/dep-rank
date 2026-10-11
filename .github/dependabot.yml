@@ -10,7 +10,7 @@ updates:
     open-pull-requests-limit: 10
     rebase-strategy: "disabled"
     cooldown:
-      default-days: 5
+      default-days: 7
     labels:
       - "dependencies"
       - "automated"
@@ -32,7 +32,7 @@ updates:
       interval: "weekly"
     rebase-strategy: "disabled"
     cooldown:
-      default-days: 5
+      default-days: 7
     labels:
       - "dependencies"
       - "github-actions"
