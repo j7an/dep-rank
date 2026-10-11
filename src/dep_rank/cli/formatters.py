@@ -9,6 +9,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -51,6 +52,11 @@ def humanize(num: int) -> str:
     if num < 10000000:
         return f"{num / 1000000:.1f}M"
     return f"{num // 1000000}M"
+
+
+def repo_cell(repo: Repository) -> Text:
+    """Render ``owner/name`` as a terminal hyperlink to the repo (plain text when piped)."""
+    return Text(f"{repo.owner}/{repo.name}", style=Style(link=repo.url))
 
 
 def downloads_cell(repo: Repository, unavailable: set[str]) -> str:
@@ -128,7 +134,7 @@ def _print_dependents_table(result: DependentsResult) -> None:
         table.add_column("Description", style="dim")
 
     for repo in result.repos:
-        row = [f"{repo.owner}/{repo.name}"]
+        row: list[str | Text] = [repo_cell(repo)]
         if is_trust:
             score = round(repo.trust.score) if repo.trust else 0
             row.append(str(score))
@@ -226,7 +232,7 @@ def print_search_results(result: CodeSearchResult) -> None:
 
     for hit in result.hits:
         table.add_row(
-            f"{hit.repo.owner}/{hit.repo.name}",
+            repo_cell(hit.repo),
             escape(hit.file_path),
             str(hit.matches),
         )
@@ -293,7 +299,7 @@ def build_topk_table(snapshot: ScrapeSnapshot) -> Table:
     table.add_column("Stars", justify="right", style="yellow")
     if snapshot.top_k:
         for repo in snapshot.top_k:
-            table.add_row(f"{repo.owner}/{repo.name}", humanize(repo.stars))
+            table.add_row(repo_cell(repo), humanize(repo.stars))
     else:
         table.add_row("(no matching repositories yet)", "—")
     return table

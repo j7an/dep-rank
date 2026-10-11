@@ -183,10 +183,36 @@ class TestDownloadsColumn:
             print_dependents_table(result)
         out = cap.get()
         assert injection in _flat(out)
-        assert "\x1b]8;" not in out
+        assert ";https://evil.example" not in out  # no OSC 8 hyperlink to the injected URL
+
+
+def _terminal_render(
+    fn: Callable[..., object], monkeypatch: pytest.MonkeyPatch, arg: object
+) -> str:
+    # Pin console capabilities: Rich drops OSC 8 links under auto-detected TERM=dumb
+    # (no color system) and on Windows consoles without VT support (Windows CI).
+    terminal = Console(
+        width=200, force_terminal=True, color_system="truecolor", legacy_windows=False
+    )
+    monkeypatch.setattr("dep_rank.cli.formatters.console", terminal)
+    with terminal.capture() as cap:
+        fn(arg)
+    return cap.get()
 
 
 class TestPrintDependentsTable:
+    def test_repo_name_links_to_github(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result = DependentsResult(
+            source="https://github.com/django/django",
+            total_count=1,
+            filtered_count=1,
+            repos=[make_repo("stablyai", "orca")],
+            dependent_type=DependentType.REPOSITORY,
+            scraped_at=datetime.now(tz=UTC),
+        )
+        out = _terminal_render(print_dependents_table, monkeypatch, result)
+        assert ";https://github.com/stablyai/orca\x1b\\" in out
+
     def test_table_with_descriptions(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(console, "width", 200)
         result = DependentsResult(
@@ -222,6 +248,19 @@ class TestPrintDependentsTable:
 
 
 class TestPrintSearchResults:
+    def test_repo_name_links_to_github(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        hit = CodeSearchHit(
+            repo=make_repo("stablyai", "orca"),
+            file_url="https://github.com/stablyai/orca/blob/main/app.py",
+            file_path="app.py",
+            matches=1,
+        )
+        result = CodeSearchResult(
+            source="https://github.com/django/django", query="q", hits=[hit], searched_repos=1
+        )
+        out = _terminal_render(print_search_results, monkeypatch, result)
+        assert ";https://github.com/stablyai/orca\x1b\\" in out
+
     def test_no_hits(self) -> None:
         result = CodeSearchResult(
             source="https://github.com/django/django",
@@ -413,6 +452,19 @@ class TestPartialWarning:
 
 
 class TestBuildTopKTable:
+    def test_repo_name_links_to_github(self) -> None:
+        snap = ScrapeSnapshot(
+            top_k=[make_repo("stablyai", "orca")],
+            pages_scraped=1,
+            estimated_total_pages=1,
+            estimated_total_dependents=1,
+            matched_count=1,
+        )
+        console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
+        with console.capture() as cap:
+            console.print(build_topk_table(snap))
+        assert ";https://github.com/stablyai/orca\x1b\\" in cap.get()
+
     def test_lists_repos_with_humanized_stars(self) -> None:
 
         snap = ScrapeSnapshot(
