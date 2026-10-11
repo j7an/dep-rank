@@ -189,8 +189,11 @@ class TestDownloadsColumn:
 def _terminal_render(
     fn: Callable[..., object], monkeypatch: pytest.MonkeyPatch, arg: object
 ) -> str:
-    # legacy_windows=False: Rich drops OSC 8 links on consoles without VT support (Windows CI).
-    terminal = Console(width=200, force_terminal=True, legacy_windows=False)
+    # Pin console capabilities: Rich drops OSC 8 links under auto-detected TERM=dumb
+    # (no color system) and on Windows consoles without VT support (Windows CI).
+    terminal = Console(
+        width=200, force_terminal=True, color_system="truecolor", legacy_windows=False
+    )
     monkeypatch.setattr("dep_rank.cli.formatters.console", terminal)
     with terminal.capture() as cap:
         fn(arg)
@@ -457,7 +460,7 @@ class TestBuildTopKTable:
             estimated_total_dependents=1,
             matched_count=1,
         )
-        console = Console(force_terminal=True, legacy_windows=False)
+        console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
         with console.capture() as cap:
             console.print(build_topk_table(snap))
         assert ";https://github.com/stablyai/orca\x1b\\" in cap.get()
