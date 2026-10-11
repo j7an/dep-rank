@@ -342,7 +342,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     is_flag=True,
     default=False,
     help="Show each dependent's most-downloaded registry package (third-party lookup "
-    "via ecosyste.ms and deps.dev; display only, not used for ranking).",
+    "via ecosyste.ms, deps.dev, and npm; display only, not used for ranking).",
 )
 @click.pass_context
 def deps(

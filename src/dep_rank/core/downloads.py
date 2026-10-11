@@ -14,6 +14,7 @@ from dep_rank.core.scraper import REQUEST_TIMEOUT
 
 logger = logging.getLogger(__name__)
 LOOKUP_URL = "https://packages.ecosyste.ms/api/v1/packages/lookup"
+NPM_DOWNLOADS_URL = "https://api.npmjs.org/downloads/point/last-month/"
 _LOOKUP_ECOSYSTEMS = {"go", "npm", "pypi", "cargo", "maven", "nuget", "rubygems"}
 
 ATTESTATION_KINDS = {
@@ -214,6 +215,25 @@ async def fetch_downloads(
                             },
                         )
                     )
+            winner = pick_package(candidates, owner=repo.owner, repo=repo.name, attested=attested)
+            # ponytail: refresh all accepted npm candidates on a reported stale-ordering mis-pick.
+            # ponytail: add a registry on measured stale last-month counts; Homebrew is next.
+            if winner is not None and winner.ecosystem == "npm":
+                response = await _request_downloads(
+                    session,
+                    NPM_DOWNLOADS_URL + quote(winner.name, safe="@"),
+                    allow_not_found=True,
+                )
+                if response.status_code == 404:
+                    winner = None
+                else:
+                    payload = response.json()
+                    downloads = payload.get("downloads") if isinstance(payload, dict) else None
+                    if not isinstance(downloads, int) or isinstance(downloads, bool):
+                        raise ValueError("npm downloads payload malformed")
+                    winner = winner.model_copy(
+                        update={"downloads": downloads, "period": "last-month"}
+                    )
         except (httpx2.RequestError, _ServiceUnavailableError) as exc:
             logger.debug("Downloads unavailable for %s: %s", full_name, exc)
             unavailable.extend(f"{row.owner}/{row.name}" for row in repos[index:])
@@ -223,14 +243,5 @@ async def fetch_downloads(
             logger.debug("Downloads unavailable for %s: %s", full_name, exc)
             unavailable.append(full_name)
             continue
-        updated[index] = repo.model_copy(
-            update={
-                "downloads": pick_package(
-                    candidates,
-                    owner=repo.owner,
-                    repo=repo.name,
-                    attested=attested,
-                )
-            }
-        )
+        updated[index] = repo.model_copy(update={"downloads": winner})
     return updated, DownloadsCheckResult(complete=not unavailable, unavailable=unavailable)
