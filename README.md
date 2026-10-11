@@ -40,6 +40,8 @@ dep-rank deps https://github.com/django/django --packages
 | `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
 | `--downloads` | off | Show each dependent's most-downloaded registry package (ecosyste.ms / deps.dev / npm; display only) |
 
+In table output (`deps`, `search`, and the live progress table), repository names are clickable links to their GitHub pages in terminals that support OSC 8 hyperlinks; piped or redirected output stays plain text.
+
 ### `dep-rank search` — Search code in dependents
 
 ```bash
