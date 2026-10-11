@@ -55,8 +55,11 @@ def humanize(num: int) -> str:
 
 
 def repo_cell(repo: Repository) -> Text:
-    """Render ``owner/name`` as a terminal hyperlink to the repo (plain text when piped)."""
-    return Text(f"{repo.owner}/{repo.name}", style=Style(link=repo.url))
+    """Render ``owner/name`` as a terminal hyperlink to the repo (plain text when piped).
+
+    The link is a span, not the Text's base style, so column padding is not clickable.
+    """
+    return Text.assemble((f"{repo.owner}/{repo.name}", Style(link=repo.url)))
 
 
 def downloads_cell(repo: Repository, unavailable: set[str]) -> str:

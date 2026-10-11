@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -464,6 +465,22 @@ class TestBuildTopKTable:
         with console.capture() as cap:
             console.print(build_topk_table(snap))
         assert ";https://github.com/stablyai/orca\x1b\\" in cap.get()
+
+    def test_repo_link_excludes_column_padding(self) -> None:
+        # "a/b" is padded to the width of "stablyai/orca"; only the name may be clickable.
+        snap = ScrapeSnapshot(
+            top_k=[make_repo("stablyai", "orca"), make_repo("a", "b")],
+            pages_scraped=1,
+            estimated_total_pages=1,
+            estimated_total_dependents=2,
+            matched_count=2,
+        )
+        console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
+        with console.capture() as cap:
+            console.print(build_topk_table(snap))
+        link = re.search(r"\x1b\]8;[^;]*;https://github\.com/a/b\x1b\\(.*?)\x1b\]8;;", cap.get())
+        assert link is not None
+        assert re.sub(r"\x1b\[[0-9;]*m", "", link.group(1)) == "a/b"
 
     def test_lists_repos_with_humanized_stars(self) -> None:
 
