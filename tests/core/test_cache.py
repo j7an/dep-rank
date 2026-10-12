@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import sqlite3
 from typing import Any
 
 import pytest
@@ -58,6 +61,13 @@ class TestSqliteCache:
         assert stats["entries"] == 2
         assert stats["size_bytes"] > 0
 
+    async def test_concurrent_operations(self, cache: SqliteCache) -> None:
+        """Concurrent callers (foreground walk + SWR refresh) share one connection safely."""
+        urls = [f"https://example.com/{i}" for i in range(20)]
+        await asyncio.gather(*(cache.put(url, url.encode(), etag=None, ttl=3600) for url in urls))
+        entries = await asyncio.gather(*(cache.get(url) for url in urls))
+        assert [e["body"] for e in entries if e] == [url.encode() for url in urls]
+
 
 class TestSqliteCacheUninitialized:
     """Test RuntimeError paths when cache is not initialized."""
@@ -91,3 +101,21 @@ class TestSqliteCacheUninitialized:
         c = self._make_uninit_cache(tmp_path)
         # close on uninitialized cache should not raise
         await c.close()
+
+
+async def test_close_after_cancelled_initialize_keeps_loop_responsive(tmp_path: Any) -> None:
+    """close() waits for a worker stuck on a database lock without blocking the loop."""
+    blocker = sqlite3.connect(os.path.join(tmp_path, "http_cache.db"), isolation_level=None)
+    blocker.execute("BEGIN EXCLUSIVE")
+    cache = SqliteCache(str(tmp_path))
+    init = asyncio.create_task(cache.initialize())
+    await asyncio.sleep(0.05)  # the worker is now waiting on the lock inside connect()
+    init.cancel()
+    await asyncio.wait({init})
+    assert init.cancelled()
+    close = asyncio.create_task(cache.close())
+    await asyncio.sleep(0.05)  # a blocked loop would not get here until close() finished
+    assert not close.done()
+    blocker.execute("ROLLBACK")
+    blocker.close()
+    await asyncio.wait_for(close, timeout=5)

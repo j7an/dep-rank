@@ -147,7 +147,7 @@ class TestImportCost:
     def test_cli_import_does_not_load_network_stack(self) -> None:
         code = (
             "import sys, dep_rank.cli.app; "
-            "print(sorted(m for m in ('httpx2', 'aiosqlite', 'selectolax') if m in sys.modules))"
+            "print(sorted(m for m in ('httpx2', 'sqlite3', 'selectolax') if m in sys.modules))"
         )
         out = subprocess.run(  # noqa: S603 - fixed test code in the current Python interpreter
             [sys.executable, "-c", code], capture_output=True, text=True, check=True
