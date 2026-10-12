@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -57,6 +58,13 @@ class TestSqliteCache:
         stats = await cache.stats()
         assert stats["entries"] == 2
         assert stats["size_bytes"] > 0
+
+    async def test_concurrent_operations(self, cache: SqliteCache) -> None:
+        """Concurrent callers (foreground walk + SWR refresh) share one connection safely."""
+        urls = [f"https://example.com/{i}" for i in range(20)]
+        await asyncio.gather(*(cache.put(url, url.encode(), etag=None, ttl=3600) for url in urls))
+        entries = await asyncio.gather(*(cache.get(url) for url in urls))
+        assert [e["body"] for e in entries if e] == [url.encode() for url in urls]
 
 
 class TestSqliteCacheUninitialized:
