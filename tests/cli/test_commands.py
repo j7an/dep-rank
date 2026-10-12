@@ -134,11 +134,12 @@ class TestCacheDir:
 
 class TestOpenCache:
     async def test_closes_on_error(self) -> None:
-
+        held: SqliteCache | None = None
         with pytest.raises(RuntimeError, match="boom"):
             async with _open_cache() as cache:
                 held = cache
                 raise RuntimeError("boom")
+        assert held is not None
         with pytest.raises(RuntimeError, match="not initialized"):
             await held.get("x")
 

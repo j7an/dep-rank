@@ -121,3 +121,8 @@ disallow_untyped_decorators = false
 [[tool.mypy.overrides]]
 module = "dep_rank.cli.app"
 disallow_untyped_decorators = false
+
+[tool.pyright]
+# Editor type checking only (mypy is the CI gate); resolve imports from the uv env.
+venvPath = "."
+venv = ".venv"

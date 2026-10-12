@@ -84,7 +84,7 @@ async def _run() -> int:
         # pass. A persistently inconclusive canary therefore shows as a wall of warnings.
         sys.stderr.write(
             f"::warning::INCONCLUSIVE on {CANARY_URL}: scrape ended on "
-            f"{result.reason.value}; selector health could not be checked this run.\n"
+            f"{result.reason}; selector health could not be checked this run.\n"
         )
         return 0
     problems = evaluate_drift(len(result.repos), result.estimated_total_dependents)
