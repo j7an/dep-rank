@@ -1513,3 +1513,30 @@ class TestEmptyDependents:
         assert result.exit_code == 0
         assert "Scraped all 2 pages" in result.stderr
         assert "%" not in result.stderr  # the progress bar's /--max-pages share is gone
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(["deps", "https://github.com/owner/repo", "--token", "t"], id="deps"),
+        pytest.param(
+            ["search", "https://github.com/owner/repo", "import os", "--token", "t"], id="search"
+        ),
+    ],
+)
+def test_requests_identify_installed_version(
+    runner: CliRunner, mock_http: FakeHTTP, command: list[str]
+) -> None:
+    mock_http.get(
+        "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+        body=DEPENDENTS_HTML_EMPTY,
+    )
+    result = runner.invoke(cli, command)
+    assert result.exit_code == 0, result.output
+    assert mock_http.request_count == 1
+    # Compared with the runtime version, so releases need no test edit.
+    assert all(
+        request.headers["User-Agent"] == f"dep-rank/{__version__}"
+        for requests in mock_http.requests.values()
+        for request in requests
+    )

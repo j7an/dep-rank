@@ -152,7 +152,7 @@ async def run_deps(
     async with _open_cache() as cache:
         dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
         async with httpx2.AsyncClient(
-            headers={"User-Agent": "dep-rank/0.1"},
+            headers={"User-Agent": f"dep-rank/{__version__}"},
             trust_env=False,
         ) as session:
             show_live = not verbose and not quiet
@@ -464,7 +464,7 @@ def search(
         console = _stderr_console
         async with _open_cache() as cache:
             async with httpx2.AsyncClient(
-                headers={"User-Agent": "dep-rank/0.1"},
+                headers={"User-Agent": f"dep-rank/{__version__}"},
                 trust_env=False,
             ) as session:
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
