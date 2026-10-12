@@ -51,9 +51,8 @@ Import these with `from tests.conftest import ...`:
 (`[tool.pytest.ini_options] addopts` and `[tool.coverage.*]`).
 
 On pull requests, the CI `coverage` job enforces at least 90% total branch
-coverage and at least 80% on changed lines of `src/dep_rank/` (excluding the
-generated `_version.py`). The `test` matrix runs with `--no-cov`. To check the
-changed-line gate locally:
+coverage and at least 80% on changed lines of `src/dep_rank/`. The `test` matrix
+runs with `--no-cov`. To check the changed-line gate locally:
 
 ```bash
 uv run pytest

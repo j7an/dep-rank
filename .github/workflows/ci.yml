@@ -95,7 +95,6 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-          fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
@@ -122,7 +121,6 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-          fetch-depth: 0
       - uses: ./.github/actions/setup-uv
       - name: Mypy
         run: uv run mypy src tests
@@ -159,7 +157,6 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-          fetch-depth: 0
       - uses: ./.github/actions/setup-uv
         with:
           python-version: ${{ matrix.python-version }}
@@ -200,7 +197,6 @@ jobs:
           minimum: "80"
           source-paths: src/dep_rank/
           exclude-paths: |
-            src/dep_rank/_version.py
             src/dep_rank/py.typed
 
   dependency-review:
@@ -214,9 +210,6 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-
       - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
         with:
