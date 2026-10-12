@@ -111,8 +111,8 @@ async def test_close_after_cancelled_initialize_keeps_loop_responsive(tmp_path: 
     init = asyncio.create_task(cache.initialize())
     await asyncio.sleep(0.05)  # the worker is now waiting on the lock inside connect()
     init.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await init
+    await asyncio.wait({init})
+    assert init.cancelled()
     close = asyncio.create_task(cache.close())
     await asyncio.sleep(0.05)  # a blocked loop would not get here until close() finished
     assert not close.done()
