@@ -38,7 +38,7 @@ async def test_invalid_input_raises_before_any_request(
 ) -> None:
     with pytest.raises(ValueError):
         await get_dependents(session, url, **kwargs)
-    assert sum(len(v) for v in mock_http.requests.values()) == 0
+    assert mock_http.request_count == 0
 
 
 async def test_defaults_rank_by_stars_and_leave_session_open(

@@ -4,8 +4,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = ROOT / "tests"
 WORKFLOWS_DIR = ROOT / ".github" / "workflows"
@@ -49,10 +47,9 @@ def _pin_literal_violations(path: Path, *, reject_standalone_values: bool) -> li
     return violations
 
 
-def test_shared_workflow_contract_tests_do_not_snapshot_pin_values() -> None:
+def _scan(tests_dir: Path) -> list[str]:
     violations: list[str] = []
-
-    for path in sorted(TESTS_DIR.rglob("test_*.py")):
+    for path in sorted(tests_dir.rglob("test_*.py")):
         policy_name = path.name.lower()
         violations.extend(
             _pin_literal_violations(
@@ -60,13 +57,15 @@ def test_shared_workflow_contract_tests_do_not_snapshot_pin_values() -> None:
                 reject_standalone_values="workflow" in policy_name or "action" in policy_name,
             )
         )
+    return violations
 
+
+def test_shared_workflow_contract_tests_do_not_snapshot_pin_values() -> None:
+    violations = _scan(TESTS_DIR)
     assert not violations, "literal shared-workflow pin snapshots found:\n" + "\n".join(violations)
 
 
-def test_pin_policy_reports_complete_snapshots_without_subject_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_policy_reports_complete_snapshots_without_subject_marker(tmp_path: Path) -> None:
     sha = "a" * 40
     version = "v7" + ".1.2"
     target = "actions/checkout"
@@ -81,36 +80,23 @@ def test_pin_policy_reports_complete_snapshots_without_subject_marker(
     path.write_text(
         "\n".join(f"PIN_{index} = {snapshot!r}" for index, snapshot in enumerate(snapshots))
     )
-    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
-
-    with pytest.raises(AssertionError) as exc_info:
-        test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
-
-    message = str(exc_info.value)
+    message = "\n".join(_scan(tmp_path))
     for snapshot in snapshots:
         pin_line = next(line for line in snapshot.splitlines() if target in line)
         assert pin_line in message
 
 
-def test_pin_policy_reports_standalone_values_in_workflow_tests(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_policy_reports_standalone_values_in_workflow_tests(tmp_path: Path) -> None:
     sha = "b" * 40
     version = "v8" + ".2.1"
     path = tmp_path / "test_workflow_contract.py"
     path.write_text(f"SHA = {sha!r}\nVERSION = {version!r}\n")
-    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
-
-    with pytest.raises(AssertionError) as exc_info:
-        test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
-
-    assert sha in str(exc_info.value)
-    assert version in str(exc_info.value)
+    message = "\n".join(_scan(tmp_path))
+    assert sha in message
+    assert version in message
 
 
-def test_pin_policy_allows_incomplete_pins_and_unrelated_values(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_pin_policy_allows_incomplete_pins_and_unrelated_values(tmp_path: Path) -> None:
     sha = "c" * 40
     version = "v9" + ".3.0"
     target = "actions/checkout"
@@ -125,9 +111,7 @@ def test_pin_policy_allows_incomplete_pins_and_unrelated_values(
             )
         )
     )
-    monkeypatch.setitem(globals(), "TESTS_DIR", tmp_path)
-
-    test_shared_workflow_contract_tests_do_not_snapshot_pin_values()
+    assert _scan(tmp_path) == []
 
 
 def test_shared_workflows_refs_are_uniformly_pinned() -> None:

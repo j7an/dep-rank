@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import heapq
 from collections import deque
+from typing import Any
 
 import httpx2
 import pytest
 
-from dep_rank.core.models import Repository, ScrapeReason
+from dep_rank.core.models import Repository, ScrapeReason, ScrapeResult
 from dep_rank.core.scraper import (
     ADAPTIVE_W_MIN,
     ADAPTIVE_WINDOW,
@@ -19,15 +20,7 @@ from tests.conftest import FakeHTTP, dependents_page, fast_limiter
 
 
 def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:
-    """Build a *real* min-heap (not a plain list) so ``heap[0]`` is the smallest entry.
-
-    ``_should_stop`` reads ``heap[0][0]`` as the K-th best (the heap minimum). A plain
-    list comprehension in arbitrary order would leave ``heap[0]`` as the *first* element
-    (e.g. the largest), so the predicate would compare the trailing window against the
-    wrong threshold — silently mis-passing or mis-failing. ``heapq.heapify`` restores the
-    invariant. (``count`` need not be negated here: these entries are never displaced via
-    ``_heap_push``; only ``heap[0][0]`` — the stars — is inspected.)
-    """
+    """Build a real min-heap: ``_should_stop`` reads ``heap[0][0]`` as the K-th best."""
     h = [
         (s, i, Repository(owner="o", name=f"r{i}", url=f"https://github.com/o/r{i}", stars=s))
         for i, s in enumerate(stars)
@@ -74,24 +67,31 @@ def _decaying_page(page_num: int, total_pages: int) -> str:
     )
 
 
-async def test_decaying_stream_stops_with_trend_converged(
-    mock_http: FakeHTTP, session: httpx2.AsyncClient
-) -> None:
-    total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
+async def _walk_decaying(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient, total: int, **kwargs: Any
+) -> ScrapeResult:
     mock_http.get(FIRST, body=_decaying_page(1, total))
     for p in range(2, total + 1):
         mock_http.get(
             f"https://github.com/owner/repo/network/dependents?page={p}",
             body=_decaying_page(p, total),
         )
-    result = await scrape_dependents(
+    return await scrape_dependents(
         session,
         "https://github.com/owner/repo",
         rows=3,
         min_stars=5,
         max_pages=1000,
         rate_limiter=fast_limiter(),
+        **kwargs,
     )
+
+
+async def test_decaying_stream_stops_with_trend_converged(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5  # enough pages to satisfy W_min + window
+    result = await _walk_decaying(mock_http, session, total)
     assert result.reason == ScrapeReason.TREND_CONVERGED
     assert result.complete is False
     assert result.pages_scraped < total  # stopped before exhausting
@@ -102,21 +102,7 @@ async def test_no_adaptive_stop_runs_to_exhaustion(
     mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     total = ADAPTIVE_W_MIN + ADAPTIVE_WINDOW + 5
-    mock_http.get(FIRST, body=_decaying_page(1, total))
-    for p in range(2, total + 1):
-        mock_http.get(
-            f"https://github.com/owner/repo/network/dependents?page={p}",
-            body=_decaying_page(p, total),
-        )
-    result = await scrape_dependents(
-        session,
-        "https://github.com/owner/repo",
-        rows=3,
-        min_stars=5,
-        max_pages=1000,
-        adaptive_stop=False,
-        rate_limiter=fast_limiter(),
-    )
+    result = await _walk_decaying(mock_http, session, total, adaptive_stop=False)
     assert result.complete is True
     assert result.reason is None
     assert result.pages_scraped == total
