@@ -178,7 +178,7 @@ class TestCheckStarHistory:
         for i in range(25):
             mock_http.get(history_url(str(i)), payload=[])
         returned, result = await check_star_history(session, repos, "tok", now=NOW)
-        assert sum(len(calls) for calls in mock_http.requests.values()) == 25
+        assert mock_http.request_count == 25
         assert result.repos_checked == 25
         assert result.complete is True
         assert returned == repos

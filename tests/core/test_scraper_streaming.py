@@ -1,13 +1,4 @@
-"""Tests for the streaming heap aggregator (top-K correctness + edge cases).
-
-Multi-page tests pass ``token="ghp_x"`` so the per-scrape limiter is built via
-``RateLimiter(60, 60.0)`` — the authenticated 60/min budget
-(bucket capacity 60, starts full), so ``acquire()`` returns immediately for every page.
-Without a token the limiter is the unauthenticated **1/min** bucket: page 1 drains the
-lone token and page 2's ``acquire()`` does a real ``asyncio.sleep(60)``, hanging the
-test. Single-page tests (``next_page=None``) make exactly one ``acquire()`` and so don't
-need a token, but passing one is harmless.
-"""
+"""Tests for the streaming heap aggregator (top-K correctness + edge cases)."""
 
 from __future__ import annotations
 
@@ -16,7 +7,7 @@ import pytest
 
 from dep_rank.core.models import Repository, ScrapeReason, ScrapeSnapshot
 from dep_rank.core.scraper import scrape_dependents
-from tests.conftest import FakeHTTP, dependents_page
+from tests.conftest import FakeHTTP, dependents_page, fast_limiter
 
 BASE = "https://github.com/owner/repo"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
@@ -30,7 +21,9 @@ async def test_top_k_ordering_across_pages(
     p2 = dependents_page([("c", "three", 9000), ("d", "four", 200)], next_page=None, repos=300)
     mock_http.get(FIRST, body=p1)
     mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-    result = await scrape_dependents(session, BASE, rows=2, token="ghp_x", adaptive_stop=False)
+    result = await scrape_dependents(
+        session, BASE, rows=2, rate_limiter=fast_limiter(), adaptive_stop=False
+    )
     assert [r.name for r in result.repos] == ["three", "two"]
     assert result.repos[0].stars == 9000
     assert result.matched_count == 4  # all four passed min_stars=5
@@ -79,7 +72,9 @@ async def test_duplicate_repos_counted_once(
     p2 = dependents_page([("a", "dup", 100), ("c", "new", 80)], next_page=None, repos=300)
     mock_http.get(FIRST, body=p1)
     mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
-    result = await scrape_dependents(session, BASE, rows=10, token="ghp_x", adaptive_stop=False)
+    result = await scrape_dependents(
+        session, BASE, rows=10, rate_limiter=fast_limiter(), adaptive_stop=False
+    )
     assert result.matched_count == 2
     assert sorted(r.name for r in result.repos) == ["dup", "new"]
 
@@ -96,7 +91,7 @@ async def test_max_pages_reached_sets_reason(
     mock_http.get(FIRST, body=p1)
     mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
     result = await scrape_dependents(
-        session, BASE, rows=5, max_pages=2, token="ghp_x", adaptive_stop=False
+        session, BASE, rows=5, max_pages=2, rate_limiter=fast_limiter(), adaptive_stop=False
     )
     assert result.pages_scraped == 2
     assert result.complete is False
@@ -116,7 +111,7 @@ async def test_on_page_fires_per_page_and_result_carries_outcome(
     mock_http.get(FIRST, body=p1)
     mock_http.get("https://github.com/owner/repo/network/dependents?page=2", body=p2)
     result = await scrape_dependents(
-        session, BASE, rows=5, token="ghp_x", adaptive_stop=False, on_page=on_page
+        session, BASE, rows=5, rate_limiter=fast_limiter(), adaptive_stop=False, on_page=on_page
     )
     assert seen == [1, 2]
     assert result.complete is True and result.reason is None

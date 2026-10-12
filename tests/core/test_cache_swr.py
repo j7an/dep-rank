@@ -16,35 +16,31 @@ from dep_rank.core.rate_limiter import RateLimiter
 from dep_rank.core.scraper import SWRManager, _read_page, scrape_dependents
 from tests.conftest import FakeHTTP, dependents_page
 
-
-def _auth_limiter() -> RateLimiter:
-    return RateLimiter(60, 60.0)
-
-
-async def _seed_expired(cache: SqliteCache, url: str, body: bytes, etag: str) -> None:
-    await cache.put(url, body, etag=etag, ttl=-1)  # already expired
-
-
 URL = "https://github.com/o/r/network/dependents?page=5"
 FIRST = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 STALE_PAGE = dependents_page([("a", "one", 100)], repos=30)
+
+
+async def delayed_304(request: httpx2.Request) -> httpx2.Response:
+    await asyncio.sleep(0.3)  # well under the 10 s drain timeout, so never cancelled
+    return httpx2.Response(304)
 
 
 class TestSWRManager:
     async def test_disabled_when_unauthenticated(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=False)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=False)
         swr.schedule(URL)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 0  # no refresh ever scheduled
+        assert mock_http.request_count == 0  # no refresh ever scheduled
 
     async def test_refresh_updates_cache_on_200(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         mock_http.get(URL, status=200, body=b"fresh", headers={"ETag": '"new"'})
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
         entry = await cache.get(URL)
@@ -56,12 +52,12 @@ class TestSWRManager:
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A 304 revalidation keeps the stale body but refreshes its TTL (no longer expired)."""
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         mock_http.get(URL, status=304)
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
+        assert mock_http.request_count == 1
         request = next(iter(mock_http.requests.values()))[0]
         assert request.headers["If-None-Match"] == '"old"'  # conditional revalidation
         entry = await cache.get(URL)
@@ -73,13 +69,13 @@ class TestSWRManager:
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         """A background 429 pauses further refreshes and preserves the stale body."""
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         limiter = RateLimiter(60, 60.0)
         mock_http.get(URL, status=429, headers={"Retry-After": "30"})
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
+        assert mock_http.request_count == 1
         # The shared limiter consumed the background 429.
         assert limiter.background_paused() is True
         # The 429 did not overwrite the cached stale body.
@@ -88,17 +84,17 @@ class TestSWRManager:
         # While background work is paused, a fresh URL's refresh is suppressed —
         # Count recorded attempts so an unmatched request cannot hide a regression.
         other = URL + "&x=2"
-        await _seed_expired(cache, other, b"stale2", '"old2"')
+        await cache.put(other, b"stale2", etag='"old2"', ttl=-1)
         swr.schedule(other)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1  # no new request fired
+        assert mock_http.request_count == 1  # no new request fired
 
     async def test_queued_refresh_skips_after_429(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
         other = URL + "&x=2"
-        await _seed_expired(cache, URL, b"stale", '"old"')
-        await _seed_expired(cache, other, b"stale", '"old2"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
+        await cache.put(other, b"stale", etag='"old2"', ttl=-1)
 
         async def delayed_429(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(0.01)
@@ -113,7 +109,7 @@ class TestSWRManager:
         await swr.drain()
         assert limiter.try_acquire(reserve=1) is True
         entry = await cache.get(other)
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
+        assert mock_http.request_count == 1
         assert entry is not None
         assert entry["body"] == b"stale"
 
@@ -124,7 +120,7 @@ class TestSWRManager:
         session: httpx2.AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         limiter = RateLimiter(60, 60.0)
         real_get = cache.get
 
@@ -138,23 +134,23 @@ class TestSWRManager:
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
         swr.schedule(URL)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 0
+        assert mock_http.request_count == 0
 
     async def test_dedup_one_refresh_per_url(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
 
         async def delayed_200(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(0.02)
             return httpx2.Response(200, content=b"fresh", headers={"ETag": '"new"'})
 
         mock_http.get(URL, callback=delayed_200)
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=True)
         swr.schedule(URL)
         swr.schedule(URL)  # second call must be a no-op (already in flight)
         await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
+        assert mock_http.request_count == 1
 
     @pytest.mark.parametrize(
         ("response", "logged"),
@@ -174,13 +170,13 @@ class TestSWRManager:
         session: httpx2.AsyncClient,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         mock_http.get(URL, **response)
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=True)
         with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
             swr.schedule(URL)
             await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
+        assert mock_http.request_count == 1
         # The failure is surfaced at WARNING (spec §3 "Logged at WARNING; silent to user").
         assert any(
             r.levelno == logging.WARNING and logged in r.getMessage() for r in caplog.records
@@ -191,7 +187,7 @@ class TestSWRManager:
     ) -> None:
         """Spec §3 foreground-priority: at low headroom the refresh makes no request AND
         a concurrent foreground ``acquire()`` is not delayed by the refresh path."""
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
         limiter = RateLimiter(60, 60.0)
         # Drain to exactly 1 token: below SWR headroom (a refresh needs >=2 via
         # try_acquire(reserve=1)) but the foreground can still take its single token.
@@ -208,22 +204,20 @@ class TestSWRManager:
         foreground = asyncio.create_task(limiter.acquire())
         await asyncio.wait_for(asyncio.gather(swr.drain(), foreground), timeout=1.0)
 
-        assert (
-            sum(len(v) for v in mock_http.requests.values()) == 0
-        )  # refresh aborted: try_acquire(reserve=1) saw <2 tokens
+        assert mock_http.request_count == 0  # refresh aborted: try_acquire(reserve=1) saw <2 tokens
         assert foreground.done()  # foreground acquired immediately, never queued behind SWR
 
     async def test_drain_cancels_stragglers_past_timeout(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
+        await cache.put(URL, b"stale", etag='"old"', ttl=-1)
 
         async def delayed_200(request: httpx2.Request) -> httpx2.Response:
             await asyncio.sleep(5.0)
             return httpx2.Response(200, content=b"fresh", headers={"ETag": '"new"'})
 
         mock_http.get(URL, callback=delayed_200)
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
+        swr = SWRManager(session, RateLimiter(60, 60.0), {}, cache, enabled=True)
         swr.schedule(URL)
         # Drain with a tiny timeout: must return promptly, cancelling the slow refresh.
         await swr.drain(timeout=0.05)
@@ -237,9 +231,9 @@ class TestSWRIntegration:
     async def test_read_page_serves_stale_and_schedules_refresh(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        await _seed_expired(cache, URL, b"<html>stale</html>", '"old"')
+        await cache.put(URL, b"<html>stale</html>", etag='"old"', ttl=-1)
         mock_http.get(URL, status=200, body=b"<html>fresh</html>", headers={"ETag": '"new"'})
-        limiter = _auth_limiter()
+        limiter = RateLimiter(60, 60.0)
         swr = SWRManager(session, limiter, {}, cache, enabled=True)
         html, stale = await _read_page(session, URL, limiter, {}, cache, swr, AsyncMock())
         assert html == "<html>stale</html>"  # stale served synchronously
@@ -252,34 +246,13 @@ class TestSWRIntegration:
     async def test_stream_blocks_on_drain_before_returning(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        """`scrape_dependents` must AWAIT `swr.drain()` in its finally *before returning* —
-        not leave the refresh as a fire-and-forget task that merely happens to finish in
-        time.
+        """``scrape_dependents`` awaits ``swr.drain()`` before returning.
 
-        The trap this avoids: with an immediate refresh response, the task can complete
-        opportunistically while the scrape is still walking pages, so a "is the
-        entry refreshed by the time scrape returns?" assertion passes *even if the
-        scrape never drained*. So we make completion-without-drain impossible: the
-        background refresh response is **delayed**, while the foreground walk is a single
-        stale cache-hit (no foreground fetch) that would return near-instantly on its own.
-
-        - If the scrape drains: the scrape return is BLOCKED until the delayed 304 lands
-          and bumps the TTL, so the entry is no longer expired when scrape returns.
-        - If it does NOT drain: scrape returns while the refresh is still mid-delay, the
-          entry is still expired, and this test fails — catching the exact lifecycle bug
-          (refresh deferred past the caller's `async with session` exit) the design fixes.
+        Page 1 is a stale cache hit, so the only request is the background refresh, and its
+        response is delayed. The entry can be refreshed by the time the scrape returns only
+        if the return blocked on drain; a fire-and-forget refresh would still be sleeping.
         """
         await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)  # expired
-
-        # Page 1 is served from the stale cache (no foreground fetch), so the ONLY
-        # session.get() is the delayed background refresh. The 0.3s delay (< the 10s drain
-        # timeout, so it is not cancelled) is what makes "completed by return" equivalent
-        # to "return was blocked on drain": on a single event loop the fast foreground walk
-        # cannot outrun a still-sleeping refresh task.
-        async def delayed_304(request: httpx2.Request) -> httpx2.Response:
-            await asyncio.sleep(0.3)
-            return httpx2.Response(304)
-
         mock_http.get(FIRST, callback=delayed_304)
         result = await scrape_dependents(
             session,
@@ -290,11 +263,7 @@ class TestSWRIntegration:
         )
         assert result.complete is True
         assert [r.name for r in result.repos] == ["one"]
-        assert (
-            sum(len(v) for v in mock_http.requests.values()) == 1
-        )  # the background refresh actually ran
-        # Refreshed-by-return is only possible if the return blocked on drain; a
-        # fire-and-forget task would still be mid-delay at this point.
+        assert mock_http.request_count == 1  # the background refresh actually ran
         refreshed = await cache.get(FIRST)
         assert refreshed is not None
         assert refreshed["expired"] is False
@@ -307,7 +276,7 @@ async def test_unauthenticated_expired_hit_serves_stale_without_request(
     mock_http.get(FIRST, exception=AssertionError("unexpected foreground fetch"))
     result = await scrape_dependents(session, "https://github.com/owner/repo", rows=5, cache=cache)
     assert [r.name for r in result.repos] == ["one"]
-    assert sum(len(v) for v in mock_http.requests.values()) == 0
+    assert mock_http.request_count == 0
     assert result.stale_pages == 1  # reported so the CLI can say the data was not refreshed
 
 
@@ -315,11 +284,6 @@ async def test_on_page_exception_still_drains_refresh(
     cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     await cache.put(FIRST, STALE_PAGE.encode(), etag='"old"', ttl=-1)
-
-    async def delayed_304(request: httpx2.Request) -> httpx2.Response:
-        await asyncio.sleep(0.3)
-        return httpx2.Response(304)
-
     mock_http.get(FIRST, callback=delayed_304)
 
     async def on_page(snap: ScrapeSnapshot) -> None:
@@ -334,7 +298,7 @@ async def test_on_page_exception_still_drains_refresh(
             cache=cache,
             on_page=on_page,
         )
-    assert sum(len(v) for v in mock_http.requests.values()) == 1
+    assert mock_http.request_count == 1
     refreshed = await cache.get(FIRST)
     assert refreshed is not None
     assert refreshed["expired"] is False  # the delayed refresh finished before the raise

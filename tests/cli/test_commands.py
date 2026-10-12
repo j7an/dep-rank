@@ -53,29 +53,14 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _scrape_result(
-    repos: list[Repository],
-    *,
-    pages_scraped: int = 1,
-    max_pages: int = 1000,
-    estimated_total_pages: int = 30,
-    estimated_total_dependents: int = 900,
-    matched_count: int = 0,
-    complete: bool = True,
-    reason: ScrapeReason | None = None,
-    stale_pages: int = 0,
-) -> ScrapeResult:
-    return ScrapeResult(
-        repos=repos,
-        pages_scraped=pages_scraped,
-        max_pages=max_pages,
-        estimated_total_pages=estimated_total_pages,
-        estimated_total_dependents=estimated_total_dependents,
-        matched_count=matched_count,
-        complete=complete,
-        reason=reason,
-        stale_pages=stale_pages,
-    )
+def _scrape_result(repos: list[Repository], **fields: Any) -> ScrapeResult:
+    base = {
+        "pages_scraped": 1,
+        "max_pages": 1000,
+        "estimated_total_pages": 30,
+        "estimated_total_dependents": 900,
+    }
+    return ScrapeResult(repos=repos, **{**base, **fields})
 
 
 @pytest.fixture
@@ -200,10 +185,9 @@ print(json.dumps(captured))
         assert "scraper warning survives" in captures[0]
 
 
-class TestJsonStdout:
-    def test_enrichment_warning_stays_off_json_stdout(self) -> None:
-        code = """import tests.conftest
+_DESCRIPTIONS_CHILD = """import tests.conftest
 import json
+import sys
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 from tests.conftest import FakeHTTP
@@ -235,66 +219,33 @@ with TemporaryDirectory() as cache_dir:
             httpx2.AsyncClient, transport=httpx2.MockTransport(fake)
         )):
             r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
-                                       "--token", "t", "--format", "json", "--rows", "2"])
+                                       "--token", "t", "--rows", "2", *sys.argv[1:]])
         print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
 """
-        result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=Path(__file__).resolve().parents[2],
-        )
-        child = json.loads(result.stdout)
+
+
+def _descriptions_child(*extra_args: str) -> dict[str, Any]:
+    """Run ``deps --descriptions`` against a partial GraphQL response in a fresh process."""
+    result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
+        [sys.executable, "-c", _DESCRIPTIONS_CHILD, *extra_args],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=Path(__file__).resolve().parents[2],
+    )
+    child: dict[str, Any] = json.loads(result.stdout)
+    return child
+
+
+class TestJsonStdout:
+    def test_enrichment_warning_stays_off_json_stdout(self) -> None:
+        child = _descriptions_child("--format", "json")
         assert child["code"] == 0
         assert json.loads(child["stdout"])["repos"]
         assert "partial errors" in child["stderr"]
 
     def test_scrape_summary_precedes_enrichment_warnings(self) -> None:
-        code = """import tests.conftest
-import json
-from tempfile import TemporaryDirectory
-from unittest.mock import AsyncMock, patch
-from tests.conftest import FakeHTTP
-import functools
-import httpx2
-from click.testing import CliRunner
-from dep_rank.cli.app import cli
-from dep_rank.core.models import Repository, ScrapeResult
-
-repos = [
-    Repository(owner="alpha", name="framework",
-               url="https://github.com/alpha/framework", stars=12500),
-    Repository(owner="beta", name="toolkit", url="https://github.com/beta/toolkit", stars=3200),
-]
-payload = {
-    "data": {"repo_0": {"stargazerCount": 10, "description": "A"}, "repo_1": None},
-    "errors": [{"type": "NOT_FOUND", "message": "x"}],
-}
-with TemporaryDirectory() as cache_dir:
-    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
-         patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock) as scrape:
-        scrape.return_value = ScrapeResult(
-            repos=repos, pages_scraped=1, max_pages=1000,
-            estimated_total_pages=30, estimated_total_dependents=900,
-        )
-        fake = FakeHTTP()
-        fake.post("https://api.github.com/graphql", payload=payload)
-        with patch("httpx2.AsyncClient", functools.partial(
-            httpx2.AsyncClient, transport=httpx2.MockTransport(fake)
-        )):
-            r = CliRunner().invoke(cli, ["deps", "https://github.com/x/y", "--descriptions",
-                                       "--token", "t", "--rows", "2"])
-        print(json.dumps({"stdout": r.stdout, "stderr": r.stderr, "code": r.exit_code}))
-"""
-        result = subprocess.run(  # noqa: S603 - fixed test code in the current interpreter
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=Path(__file__).resolve().parents[2],
-        )
-        child = json.loads(result.stdout)
+        child = _descriptions_child()
         assert child["code"] == 0
         assert child["stderr"].index("Scraped 1 page") < child["stderr"].index("partial errors")
 

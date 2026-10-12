@@ -55,6 +55,53 @@ def _flat(text: str) -> str:
     return " ".join(text.split())
 
 
+@pytest.fixture(autouse=True)
+def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Render at 200 columns, independent of the test terminal's width."""
+    monkeypatch.setattr(console, "width", 200)
+
+
+def _trust_repo(cautions: list[CautionSignal] | None = None) -> Repository:
+    return make_repo(
+        "alpha",
+        "framework",
+        stars=12500,
+        trust=TrustScore(
+            score=87.4,
+            forks=900,
+            issues=300,
+            pull_requests=120,
+            pushed_at=None,
+            components=TrustComponents(stars=0.9, forks=0.8, engagement=0.7, recency=0.5),
+            cautions=cautions or [],
+        ),
+    )
+
+
+def _result(*, repos: list[Repository], **fields: Any) -> DependentsResult:
+    return DependentsResult(
+        **{
+            "source": "https://github.com/django/django",
+            "total_count": 100,
+            "filtered_count": 50,
+            "repos": repos,
+            "dependent_type": DependentType.REPOSITORY,
+            "scraped_at": datetime.now(tz=UTC),
+            **fields,
+        }
+    )
+
+
+def _snapshot(top_k: list[Repository], **fields: int) -> ScrapeSnapshot:
+    counts = {
+        "pages_scraped": 1,
+        "estimated_total_pages": 1,
+        "estimated_total_dependents": len(top_k),
+        "matched_count": len(top_k),
+    }
+    return ScrapeSnapshot(top_k=top_k, **{**counts, **fields})
+
+
 @pytest.mark.parametrize(
     ("num", "expected"),
     [
@@ -110,11 +157,8 @@ class TestDownloadsColumn:
         assert downloads_cell(make_repo("o", "r", downloads=downloads), unavailable) == expected
 
     @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
-    def test_column_and_legend_only_with_check(
-        self, ranked_by: Literal["stars", "trust"], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(console, "width", 200)
-        result = DependentsResult(
+    def test_column_and_legend_only_with_check(self, ranked_by: Literal["stars", "trust"]) -> None:
+        result = _result(
             source="https://github.com/o/source",
             total_count=3,
             filtered_count=3,
@@ -123,8 +167,6 @@ class TestDownloadsColumn:
                 make_repo("o", "none"),
                 make_repo("o", "failed"),
             ],
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
             ranked_by=ranked_by,
         )
         out = _render(print_dependents_table, result)
@@ -147,13 +189,9 @@ class TestDownloadsColumn:
         assert out.count(legend) == 1
         assert out.index("dependents at or above") < out.index("Downloads:")
 
-    def test_legend_follows_existing_trust_footers(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(console, "width", 200)
-        fixture = TestTrustTableAndJson()
-        repo = fixture._trust_repo(
-            [CautionSignal(code=CautionCode.STALE_ACTIVITY, description="x")]
-        )
-        result = fixture._result(ranked_by="trust", repos=[repo])
+    def test_legend_follows_existing_trust_footers(self) -> None:
+        repo = _trust_repo([CautionSignal(code=CautionCode.STALE_ACTIVITY, description="x")])
+        result = _result(ranked_by="trust", repos=[repo])
         result.downloads_check = DownloadsCheckResult(complete=True)
         result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
         out = _render(print_dependents_table, result)
@@ -171,13 +209,11 @@ class TestDownloadsColumn:
         package = dl("react", 1500).model_copy(update={field: injection})
         terminal = Console(width=400, force_terminal=True, color_system="truecolor")
         monkeypatch.setattr("dep_rank.cli.formatters.console", terminal)
-        result = DependentsResult(
+        result = _result(
             source="https://github.com/o/source",
             total_count=1,
             filtered_count=1,
             repos=[make_repo("o", "r", downloads=package)],
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
             downloads_check=DownloadsCheckResult(complete=True),
         )
         with terminal.capture() as cap:
@@ -203,45 +239,29 @@ def _terminal_render(
 
 class TestPrintDependentsTable:
     def test_repo_name_links_to_github(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        result = DependentsResult(
-            source="https://github.com/django/django",
-            total_count=1,
-            filtered_count=1,
-            repos=[make_repo("stablyai", "orca")],
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
-        )
+        result = _result(total_count=1, filtered_count=1, repos=[make_repo("stablyai", "orca")])
         out = _terminal_render(print_dependents_table, monkeypatch, result)
         assert ";https://github.com/stablyai/orca\x1b\\" in out
 
-    def test_table_with_descriptions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(console, "width", 200)
-        result = DependentsResult(
-            source="https://github.com/django/django",
-            total_count=100,
-            filtered_count=50,
+    def test_table_with_descriptions(self) -> None:
+        result = _result(
             repos=[
                 make_repo("alpha", "framework", stars=12500, description="A web framework"),
                 make_repo("beta", "toolkit", stars=3200, description=None),
-            ],
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
+            ]
         )
         out = _render(print_dependents_table, result)
         assert "Description" in out
         assert "A web framework" in out
 
-    def test_external_strings_render_literally(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_external_strings_render_literally(self) -> None:
         # A dependent's owner controls its description; the source URL's query is user input.
-        monkeypatch.setattr(console, "width", 200)
         description = "[link=https://evil.example]docs[/link] [bold red]VERIFIED[/]"
-        result = DependentsResult(
+        result = _result(
             source="https://github.com/django/django?x=[red]y",
             total_count=1,
             filtered_count=1,
             repos=[make_repo("alpha", "framework", description=description)],
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
         )
         out = _flat(_render(print_dependents_table, result))
         assert description in out
@@ -292,8 +312,7 @@ class TestPrintSearchResults:
         assert "app.py" in row
         assert "3" in row  # match count rendered as text
 
-    def test_brackets_render_literally(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(console, "width", 200)
+    def test_brackets_render_literally(self) -> None:
         hit = CodeSearchHit(
             repo=make_repo("alpha", "framework"),
             file_url="https://github.com/alpha/framework/blob/main/pages/[id].tsx",
@@ -318,13 +337,10 @@ def test_json_preserves_strings_exactly(monkeypatch: pytest.MonkeyPatch) -> None
     # 80 columns is the piped-stdout width; markup, emoji codes, and long lines must all survive.
     monkeypatch.setattr(console, "width", 80)
     description = "Ship it :rocket: [bold]fast[/bold] " + "word " * 60 + "C:\\path\\"
-    result = DependentsResult(
-        source="https://github.com/django/django",
+    result = _result(
         total_count=1,
         filtered_count=1,
         repos=[make_repo("alpha", "framework", description=description)],
-        dependent_type=DependentType.REPOSITORY,
-        scraped_at=datetime.now(tz=UTC),
     )
     payload = json.loads(_render(print_dependents_json, result))
     assert payload["repos"][0]["description"] == description
@@ -415,13 +431,7 @@ class TestPartialWarning:
 
 class TestBuildTopKTable:
     def test_repo_name_links_to_github(self) -> None:
-        snap = ScrapeSnapshot(
-            top_k=[make_repo("stablyai", "orca")],
-            pages_scraped=1,
-            estimated_total_pages=1,
-            estimated_total_dependents=1,
-            matched_count=1,
-        )
+        snap = _snapshot([make_repo("stablyai", "orca")])
         console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
         with console.capture() as cap:
             console.print(build_topk_table(snap))
@@ -429,13 +439,7 @@ class TestBuildTopKTable:
 
     def test_repo_link_excludes_column_padding(self) -> None:
         # "a/b" is padded to the width of "stablyai/orca"; only the name may be clickable.
-        snap = ScrapeSnapshot(
-            top_k=[make_repo("stablyai", "orca"), make_repo("a", "b")],
-            pages_scraped=1,
-            estimated_total_pages=1,
-            estimated_total_dependents=2,
-            matched_count=2,
-        )
+        snap = _snapshot([make_repo("stablyai", "orca"), make_repo("a", "b")])
         console = Console(force_terminal=True, color_system="truecolor", legacy_windows=False)
         with console.capture() as cap:
             console.print(build_topk_table(snap))
@@ -445,10 +449,8 @@ class TestBuildTopKTable:
 
     def test_lists_repos_with_humanized_stars(self) -> None:
 
-        snap = ScrapeSnapshot(
-            top_k=[
-                make_repo("a", "b", stars=1500),
-            ],
+        snap = _snapshot(
+            [make_repo("a", "b", stars=1500)],
             pages_scraped=2,
             estimated_total_pages=5,
             estimated_total_dependents=100,
@@ -468,12 +470,8 @@ class TestBuildTopKTable:
         """A snapshot with no top-K (e.g. high --min-stars early on) must still render
         progress context and a placeholder row, never a blank frame."""
 
-        snap = ScrapeSnapshot(
-            top_k=[],
-            pages_scraped=3,
-            estimated_total_pages=5,
-            estimated_total_dependents=100,
-            matched_count=0,
+        snap = _snapshot(
+            [], pages_scraped=3, estimated_total_pages=5, estimated_total_dependents=100
         )
         console = Console()
         with console.capture() as cap:
@@ -484,38 +482,8 @@ class TestBuildTopKTable:
 
 
 class TestTrustTableAndJson:
-    def _trust_repo(self, cautions: list[CautionSignal] | None = None) -> Repository:
-        return make_repo(
-            "alpha",
-            "framework",
-            stars=12500,
-            trust=TrustScore(
-                score=87.4,
-                forks=900,
-                issues=300,
-                pull_requests=120,
-                pushed_at=None,
-                components=TrustComponents(stars=0.9, forks=0.8, engagement=0.7, recency=0.5),
-                cautions=cautions or [],
-            ),
-        )
-
-    def _result(
-        self, *, ranked_by: Literal["stars", "trust"], repos: list[Repository]
-    ) -> DependentsResult:
-        return DependentsResult(
-            source="https://github.com/django/django",
-            total_count=100,
-            filtered_count=50,
-            repos=repos,
-            dependent_type=DependentType.REPOSITORY,
-            scraped_at=datetime.now(tz=UTC),
-            ranked_by=ranked_by,
-        )
-
-    def test_trust_table_renders_score_and_stars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(console, "width", 200)  # independent of the test terminal's width
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+    def test_trust_table_renders_score_and_stars(self) -> None:
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         out = _render(print_dependents_table, result)
         assert "alpha/framework" in out
         assert "87" in out  # rounded trust score
@@ -525,7 +493,7 @@ class TestTrustTableAndJson:
         assert header.index("Trust") < header.index("Stars")
 
     def test_trust_footer_when_pool_larger_than_shown_rows(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo(), self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo(), _trust_repo()])
         result.trust_pool_size = 100
         out = _flat(_render(print_dependents_table, result))
         assert (
@@ -535,7 +503,7 @@ class TestTrustTableAndJson:
         assert "100 = strongest on every signal; not comparable across runs." in out
 
     def test_trust_footer_when_every_scored_repo_is_shown(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo(), self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo(), _trust_repo()])
         result.trust_pool_size = 2
         out = _flat(_render(print_dependents_table, result))
         assert "Trust scores rank these 2 rows against each other." in out
@@ -543,20 +511,20 @@ class TestTrustTableAndJson:
         assert "100 = strongest on every signal; not comparable across runs." in out
 
     def test_star_table_has_no_trust_footer(self) -> None:
-        result = self._result(ranked_by="stars", repos=[make_repo("beta", "toolkit", stars=3200)])
+        result = _result(ranked_by="stars", repos=[make_repo("beta", "toolkit", stars=3200)])
         assert "Trust scores rank" not in _flat(_render(print_dependents_table, result))
 
     def test_fallback_renders_star_table(self) -> None:
         # ranked_by == "stars" even though a star repo has no trust -> star layout.
         star_repo = make_repo("beta", "toolkit", stars=3200)
-        result = self._result(ranked_by="stars", repos=[star_repo])
+        result = _result(ranked_by="stars", repos=[star_repo])
         out = _render(print_dependents_table, result)
         assert "beta/toolkit" in out
         assert "Trust" not in out  # no trust column in star/fallback layout
         assert "(by trust)" not in _flat(out)
 
     def test_json_star_mode_excludes_trust_and_ranked_by(self) -> None:
-        result = self._result(ranked_by="stars", repos=[self._trust_repo()])
+        result = _result(ranked_by="stars", repos=[_trust_repo()])
         out = _render(print_dependents_json, result, include_rank_metadata=False)
         assert "ranked_by" not in out
         assert "trust" not in out
@@ -568,7 +536,7 @@ class TestTrustTableAndJson:
         # description (the field must remain present, not be dropped by exclude_none).
 
         repo = make_repo("alpha", "framework", stars=12500, description=None)
-        result = self._result(ranked_by="stars", repos=[repo])
+        result = _result(ranked_by="stars", repos=[repo])
         out = _render(print_dependents_json, result, include_rank_metadata=False)
         assert '"description": null' in out  # key present with explicit null
         payload = json.loads(out)
@@ -591,7 +559,7 @@ class TestTrustTableAndJson:
     def test_json_without_downloads_check_has_no_downloads_keys(
         self, ranked_by: Literal["stars", "trust"], trust_check: bool
     ) -> None:
-        result = self._result(ranked_by=ranked_by, repos=[self._trust_repo()])
+        result = _result(ranked_by=ranked_by, repos=[_trust_repo()])
         if trust_check:
             result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
         out = _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")
@@ -614,7 +582,7 @@ class TestTrustTableAndJson:
                 verified=True,
             ),
         )
-        result = self._result(ranked_by=ranked_by, repos=[found, make_repo("beta", "toolkit")])
+        result = _result(ranked_by=ranked_by, repos=[found, make_repo("beta", "toolkit")])
         if trust_check:
             result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=2)
         result.downloads_check = DownloadsCheckResult(complete=False, unavailable=["beta/toolkit"])
@@ -638,9 +606,7 @@ class TestTrustTableAndJson:
     def test_json_key_sets_per_mode(
         self, rank_metadata: bool, trust_check: bool, downloads_check: bool
     ) -> None:
-        result = self._result(
-            ranked_by="trust" if rank_metadata else "stars", repos=[self._trust_repo()]
-        )
+        result = _result(ranked_by="trust" if rank_metadata else "stars", repos=[_trust_repo()])
         if trust_check:
             result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
         if downloads_check:
@@ -673,7 +639,7 @@ class TestTrustTableAndJson:
         assert set(payload["repos"][0]) == repo
 
     def test_json_trust_mode_includes_metadata(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         out = _render(print_dependents_json, result, include_rank_metadata=True)
         assert '"ranked_by": "trust"' in out
         assert '"score": 87.4' in out
@@ -681,7 +647,7 @@ class TestTrustTableAndJson:
 
     def test_trust_table_shows_cautions_column_and_footer_when_flagged(self) -> None:
         stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
-        result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
+        result = _result(ranked_by="trust", repos=[_trust_repo([stale])])
         out = _render(print_dependents_table, result)
         assert "Cautions" in out
         assert "stale_activity" not in out  # short tag in the cell, not the JSON code
@@ -691,7 +657,7 @@ class TestTrustTableAndJson:
     def test_caution_legend_lists_only_present_tags_in_code_order(self) -> None:
         spike = CautionSignal(code=CautionCode.CONCENTRATED_STARRING, description="x")
         young = CautionSignal(code=CautionCode.NEW_WITH_HIGH_STARS, description="y")
-        result = self._result(ranked_by="trust", repos=[self._trust_repo([spike, young])])
+        result = _result(ranked_by="trust", repos=[_trust_repo([spike, young])])
         out = _render(print_dependents_table, result)
         legend = out[out.index("not evidence of fake stars") :]
         assert legend.index("young") < legend.index("spike")
@@ -701,7 +667,7 @@ class TestTrustTableAndJson:
     def test_multiple_caution_tags_stack_on_separate_lines_in_cell(self) -> None:
         spike = CautionSignal(code=CautionCode.CONCENTRATED_STARRING, description="x")
         young = CautionSignal(code=CautionCode.NEW_WITH_HIGH_STARS, description="y")
-        result = self._result(ranked_by="trust", repos=[self._trust_repo([spike, young])])
+        result = _result(ranked_by="trust", repos=[_trust_repo([spike, young])])
         out = _render(print_dependents_table, result)
         table_lines = out[: out.index("not evidence of fake stars")].splitlines()
         spike_rows = [i for i, line in enumerate(table_lines) if "spike" in line]
@@ -713,7 +679,7 @@ class TestTrustTableAndJson:
         assert set(_CAUTION_TAGS) == set(CautionCode)
 
     def test_trust_table_omits_cautions_column_when_none_flagged(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         out = _render(print_dependents_table, result)
         assert "Cautions" not in out
         assert "not evidence of fake stars" not in out
@@ -721,7 +687,7 @@ class TestTrustTableAndJson:
     def test_json_trust_mode_includes_caution_code_and_description(self) -> None:
 
         stale = CautionSignal(code=CautionCode.STALE_ACTIVITY, description="No pushes in 400 days")
-        result = self._result(ranked_by="trust", repos=[self._trust_repo([stale])])
+        result = _result(ranked_by="trust", repos=[_trust_repo([stale])])
         out = _render(print_dependents_json, result, include_rank_metadata=True)
         payload = json.loads(out)
         assert payload["repos"][0]["trust"]["cautions"] == [
@@ -730,13 +696,13 @@ class TestTrustTableAndJson:
 
     def test_json_trust_mode_without_check_has_no_trust_check_key(self) -> None:
 
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         out = _render(print_dependents_json, result, include_rank_metadata=True)
         assert "trust_check" not in json.loads(out)
 
     def test_json_trust_mode_with_check_includes_it(self) -> None:
 
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         result.trust_check = TrustCheckResult(
             complete=False, window_weeks=30, repos_checked=1, unavailable=["alpha/framework"]
         )
@@ -744,26 +710,20 @@ class TestTrustTableAndJson:
         assert json.loads(out)["trust_check"]["unavailable"] == ["alpha/framework"]
 
     @pytest.mark.parametrize("ranked_by", ["stars", "trust"])
-    def test_footer_prints_matched_count_once(
-        self, ranked_by: Literal["stars", "trust"], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        repo = (
-            self._trust_repo() if ranked_by == "trust" else make_repo("beta", "toolkit", stars=3200)
-        )
-        result = self._result(ranked_by=ranked_by, repos=[repo])
-        monkeypatch.setattr(console, "width", 200)
+    def test_footer_prints_matched_count_once(self, ranked_by: Literal["stars", "trust"]) -> None:
+        repo = _trust_repo() if ranked_by == "trust" else make_repo("beta", "toolkit", stars=3200)
+        result = _result(ranked_by=ranked_by, repos=[repo])
         out = _render(print_dependents_table, result)
         assert out.count("100 dependents at or above the star threshold") == 1
         assert "with stars above threshold" not in out
         assert "total dependents" not in out
 
-    def test_table_footer_counts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_table_footer_counts(self) -> None:
         concentrated = CautionSignal(
             code=CautionCode.CONCENTRATED_STARRING, description="A concentrated day"
         )
-        result = self._result(ranked_by="trust", repos=[self._trust_repo([concentrated])])
+        result = _result(ranked_by="trust", repos=[_trust_repo([concentrated])])
         result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
-        monkeypatch.setattr(console, "width", 200)
         out = _render(print_dependents_table, result)
         assert (
             "Trust check (last 30 weeks of star history): 1 of 1 repos checked · "
@@ -771,7 +731,7 @@ class TestTrustTableAndJson:
         ) in out
 
     def test_table_footer_reflects_cap(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo() for _ in range(40)])
+        result = _result(ranked_by="trust", repos=[_trust_repo() for _ in range(40)])
         result.trust_check = TrustCheckResult(
             complete=True,
             window_weeks=30,
@@ -782,20 +742,19 @@ class TestTrustTableAndJson:
         assert "25 of 40 repos checked" in out
         assert "1 insufficient history" in out
 
-    def test_fallback_star_table_prints_footer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_fallback_star_table_prints_footer(self) -> None:
         repo = make_repo("beta", "toolkit", stars=3200)
-        result = self._result(ranked_by="stars", repos=[repo])
+        result = _result(ranked_by="stars", repos=[repo])
         result.trust_check = TrustCheckResult(
             complete=False, window_weeks=30, repos_checked=1, unavailable=["beta/toolkit"]
         )
-        monkeypatch.setattr(console, "width", 200)
         out = _render(print_dependents_table, result)
         assert "Trust check (last 30 weeks of star history): 1 of 1 repos checked" in out
         assert "0 concentrated · 0 insufficient history · 1 unavailable" in out
         assert out.index("Trust check") > out.index("star threshold")
 
     def test_no_footer_without_check(self) -> None:
-        result = self._result(ranked_by="trust", repos=[self._trust_repo()])
+        result = _result(ranked_by="trust", repos=[_trust_repo()])
         out = _render(print_dependents_table, result)
         assert "Trust check" not in out
 

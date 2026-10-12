@@ -15,84 +15,58 @@ from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import Repository
 from dep_rank.core.rate_limiter import RateLimiter
 
-_ResponseSpec = tuple[
-    int,
-    bytes | str | None,
-    Any,
-    dict[str, str],
-    Callable[[httpx2.Request], Awaitable[httpx2.Response]] | None,
-    BaseException | None,
-]
+_Respond = Callable[[httpx2.Request], Awaitable[httpx2.Response]]
 
 
 class FakeHTTP:
     """Queue deterministic responses for the suite’s HTTP requests."""
 
     def __init__(self) -> None:
-        self._responses: dict[tuple[str, str], deque[_ResponseSpec]] = defaultdict(deque)
+        self._responses: dict[tuple[str, str], deque[_Respond]] = defaultdict(deque)
         self.requests: dict[tuple[str, str], list[httpx2.Request]] = defaultdict(list)
 
-    def get(
-        self,
-        url: str,
-        *,
-        status: int = 200,
-        body: bytes | str | None = None,
-        payload: Any = None,
-        headers: dict[str, str] | None = None,
-        content_type: str | None = None,
-        callback: Callable[[httpx2.Request], Awaitable[httpx2.Response]] | None = None,
-        exception: BaseException | None = None,
-    ) -> None:
-        self._register(
-            "GET", url, status, body, payload, headers, content_type, callback, exception
-        )
+    @property
+    def request_count(self) -> int:
+        return sum(len(calls) for calls in self.requests.values())
 
-    def post(
-        self,
-        url: str,
-        *,
-        status: int = 200,
-        body: bytes | str | None = None,
-        payload: Any = None,
-        headers: dict[str, str] | None = None,
-        content_type: str | None = None,
-        callback: Callable[[httpx2.Request], Awaitable[httpx2.Response]] | None = None,
-        exception: BaseException | None = None,
-    ) -> None:
-        self._register(
-            "POST", url, status, body, payload, headers, content_type, callback, exception
-        )
+    def get(self, url: str, **spec: Any) -> None:
+        self._register("GET", url, **spec)
+
+    def post(self, url: str, **spec: Any) -> None:
+        self._register("POST", url, **spec)
 
     def _register(
         self,
         method: str,
         url: str,
-        status: int,
-        body: bytes | str | None,
-        payload: Any,
-        headers: dict[str, str] | None,
-        content_type: str | None,
-        callback: Callable[[httpx2.Request], Awaitable[httpx2.Response]] | None,
-        exception: BaseException | None,
+        *,
+        status: int = 200,
+        body: bytes | str | None = None,
+        payload: Any = None,
+        headers: dict[str, str] | None = None,
+        content_type: str | None = None,
+        callback: _Respond | None = None,
+        exception: BaseException | None = None,
     ) -> None:
         response_headers = dict(headers or {})
         if content_type is not None:
             response_headers["Content-Type"] = content_type
-        key = (method, str(httpx2.URL(url)))
-        self._responses[key].append((status, body, payload, response_headers, callback, exception))
+
+        async def respond(request: httpx2.Request) -> httpx2.Response:
+            if exception is not None:
+                raise exception
+            if callback is not None:
+                return await callback(request)
+            return httpx2.Response(status, content=body, json=payload, headers=response_headers)
+
+        self._responses[(method, str(httpx2.URL(url)))].append(respond)
 
     async def __call__(self, request: httpx2.Request) -> httpx2.Response:
         key = (request.method, str(request.url))
         self.requests[key].append(request)
         if not self._responses[key]:
             raise httpx2.ConnectError(f"No registered response for {key}", request=request)
-        status, body, payload, headers, callback, exception = self._responses[key].popleft()
-        if exception is not None:
-            raise exception
-        if callback is not None:
-            return await callback(request)
-        return httpx2.Response(status, content=body, json=payload, headers=headers)
+        return await self._responses[key].popleft()(request)
 
 
 def dependents_page(

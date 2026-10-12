@@ -21,7 +21,7 @@ async def test_registrations_consumed_once_in_order() -> None:
         assert (await c.get("https://x.test/a?q=1")).status_code == 429
         with pytest.raises(httpx2.ConnectError):
             await c.get("https://x.test/a?q=1")
-    assert sum(len(v) for v in fake.requests.values()) == 3
+    assert fake.request_count == 3
 
 
 async def test_payload_headers_exception_and_callback() -> None:

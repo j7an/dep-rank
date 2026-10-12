@@ -35,7 +35,7 @@ Import these with `from tests.conftest import ...`:
 ## Writing tests
 
 - Mock HTTP with `FakeHTTP` (the `mock_http` fixture), never live GitHub.
-- When asserting that **no** request was made, count `mock_http.requests`. An
+- When asserting that **no** request was made, assert `mock_http.request_count == 0`. An
   unregistered URL raises `httpx2.ConnectError`, which the scraper
   retries with backoff and the background refresher swallows, so an assertion
   that relies on that error passes for the wrong reason or fails slowly. To make

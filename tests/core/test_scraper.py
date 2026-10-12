@@ -230,7 +230,7 @@ class TestScrapeDependentsEdgeCases:
             cache=cache,
             rows=100,
         )
-        assert sum(len(v) for v in mock_http.requests.values()) == 0
+        assert mock_http.request_count == 0
         assert len(result.repos) == 1
         assert result.repos[0].owner == "delta"
         assert result.stale_pages == 0  # a fresh hit is not stale
