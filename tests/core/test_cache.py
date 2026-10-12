@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -69,38 +70,24 @@ class TestSqliteCache:
         assert [e["body"] for e in entries if e] == [url.encode() for url in urls]
 
 
-class TestSqliteCacheUninitialized:
-    """Test RuntimeError paths when cache is not initialized."""
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda c: c.get("https://example.com"), id="get"),
+        pytest.param(lambda c: c.put("https://example.com", b"data", None, 3600), id="put"),
+        pytest.param(lambda c: c.clear(), id="clear"),
+        pytest.param(lambda c: c.stats(), id="stats"),
+    ],
+)
+async def test_operation_raises_without_init(
+    call: Callable[[SqliteCache], Awaitable[object]], tmp_path: Any
+) -> None:
+    with pytest.raises(RuntimeError, match="not initialized"):
+        await call(SqliteCache(str(tmp_path)))
 
-    def _make_uninit_cache(self, tmp_path: Any) -> SqliteCache:
-        c = SqliteCache(str(tmp_path))
-        # Do NOT call initialize
-        return c
 
-    async def test_get_raises_without_init(self, tmp_path: Any) -> None:
-        c = self._make_uninit_cache(tmp_path)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await c.get("https://example.com")
-
-    async def test_put_raises_without_init(self, tmp_path: Any) -> None:
-        c = self._make_uninit_cache(tmp_path)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await c.put("https://example.com", b"data", None, 3600)
-
-    async def test_clear_raises_without_init(self, tmp_path: Any) -> None:
-        c = self._make_uninit_cache(tmp_path)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await c.clear()
-
-    async def test_stats_raises_without_init(self, tmp_path: Any) -> None:
-        c = self._make_uninit_cache(tmp_path)
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await c.stats()
-
-    async def test_close_without_init(self, tmp_path: Any) -> None:
-        c = self._make_uninit_cache(tmp_path)
-        # close on uninitialized cache should not raise
-        await c.close()
+async def test_close_without_init(tmp_path: Any) -> None:
+    await SqliteCache(str(tmp_path)).close()  # must not raise
 
 
 async def test_close_after_cancelled_initialize_keeps_loop_responsive(tmp_path: Any) -> None:

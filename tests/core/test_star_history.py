@@ -71,15 +71,17 @@ def test_parse_rejects_malformed(payload: object) -> None:
         parse_star_history(payload)
 
 
-def test_insufficient_below_floor() -> None:
-    verdict = evaluate_star_history(daily(date(2026, 3, 5), [1] * 199), now=NOW)
-    assert verdict.sufficient is False
-    assert verdict.caution is None
-
-
-def test_floor_is_inclusive() -> None:
-    verdict = evaluate_star_history(daily(date(2026, 3, 5), [1] * 200), now=NOW)
-    assert verdict.sufficient is True
+@pytest.mark.parametrize(
+    ("total", "sufficient"),
+    [
+        pytest.param(0, False, id="empty"),
+        (199, False),
+        pytest.param(200, True, id="floor-inclusive"),
+    ],
+)
+def test_sufficiency_floor(total: int, sufficient: bool) -> None:
+    verdict = evaluate_star_history(daily(date(2026, 3, 5), [1] * total), now=NOW)
+    assert verdict.sufficient is sufficient
     assert verdict.caution is None
 
 
@@ -93,13 +95,15 @@ def test_share_threshold_inclusive(peak: int, concentrated: bool) -> None:
         assert verdict.caution is None
 
 
-def test_future_days_excluded() -> None:
-    counts = daily(date(2026, 3, 5), [1] * 200) + [(date(2026, 9, 21), 500)]
-    assert evaluate_star_history(counts, now=NOW).caution is None
-
-
-def test_non_utc_now_uses_utc_date() -> None:
-    now = datetime(2026, 9, 21, 1, tzinfo=timezone(timedelta(hours=5)))
+@pytest.mark.parametrize(
+    "now",
+    [
+        pytest.param(NOW, id="future-day"),
+        # 2026-09-21 01:00 +05:00 is still 2026-09-20 in UTC.
+        pytest.param(datetime(2026, 9, 21, 1, tzinfo=timezone(timedelta(hours=5))), id="non-utc"),
+    ],
+)
+def test_days_after_utc_today_excluded(now: datetime) -> None:
     counts = daily(date(2026, 3, 5), [1] * 200) + [(date(2026, 9, 21), 500)]
     assert evaluate_star_history(counts, now=now).caution is None
 
@@ -110,12 +114,6 @@ def test_peak_tie_picks_earliest() -> None:
     verdict = evaluate_star_history(counts, now=NOW)
     assert verdict.caution is not None
     assert verdict.caution.description.endswith("2026-09-01")
-
-
-def test_empty_daily_is_insufficient() -> None:
-    verdict = evaluate_star_history([], now=NOW)
-    assert verdict.sufficient is False
-    assert verdict.caution is None
 
 
 def history_repo(name: str) -> Repository:
@@ -189,17 +187,19 @@ class TestCheckStarHistory:
     async def test_mixed_failures_are_unavailable(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        repos = [history_repo(name) for name in "abcde"]
+        repos = [history_repo(name) for name in "abcdefg"]
         mock_http.get(history_url("a"), payload=concentrated_payload())
         mock_http.get(history_url("b"), status=404)
         mock_http.get(history_url("c"), exception=httpx2.ConnectError("network failure"))
         mock_http.get(history_url("d"), payload={"message": "x"})
         mock_http.get(history_url("e"), payload=[])
+        mock_http.get(history_url("f"), exception=httpx2.ReadTimeout("slow"))
+        mock_http.get(history_url("g"), body="{", content_type="application/json")
         returned, result = await check_star_history(session, repos, "tok", now=NOW)
-        assert result.unavailable == ["o/b", "o/c", "o/d"]
+        assert result.unavailable == ["o/b", "o/c", "o/d", "o/f", "o/g"]
         assert result.insufficient_history == ["o/e"]
         assert result.complete is False
-        assert result.repos_checked == 5
+        assert result.repos_checked == 7
         assert returned[1:] == repos[1:]
 
     @pytest.mark.parametrize("status", [401, 403, 429])
@@ -214,17 +214,6 @@ class TestCheckStarHistory:
         assert result.unavailable == ["o/a"]
         assert result.insufficient_history == ["o/b"]
         assert result.repos_checked == 2
-
-    async def test_timeout_and_bad_json_are_unavailable(
-        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
-    ) -> None:
-        mock_http.get(history_url("a"), exception=httpx2.ReadTimeout("slow"))
-        mock_http.get(history_url("b"), body="{", content_type="application/json")
-        _, result = await check_star_history(
-            session, [history_repo("a"), history_repo("b")], "tok", now=NOW
-        )
-        assert result.unavailable == ["o/a", "o/b"]
-        assert result.complete is False
 
     async def test_concentrated_repo_without_trust_is_preserved(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
