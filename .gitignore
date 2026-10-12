@@ -1,11 +1,7 @@
 .idea
-example
-ghtopdep.egg-info
-.ghtopdep_cache/
 dist/
 *.pyc
 .vscode
 docs/
 .worktrees/
-src/dep_rank/_version.py
 coverage.xml

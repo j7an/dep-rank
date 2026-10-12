@@ -101,7 +101,6 @@ request, run the checks that cover every changed area and then the full suite.
 - Do not block the event loop with synchronous network or file operations in
   async request paths.
 - Keep CLI formatting in `cli/` and reusable behavior in `core/`.
-- Do not edit `src/dep_rank/_version.py`; hatch-vcs generates it during builds.
 - Ruff, mypy, pytest, build, and coverage settings live in `pyproject.toml`; do
   not add `setup.cfg` or `pytest.ini`.
 
