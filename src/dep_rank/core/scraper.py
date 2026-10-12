@@ -8,7 +8,6 @@ import itertools
 import logging
 import math
 import re
-import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
@@ -52,7 +51,6 @@ DEFAULT_MAX_PAGES = 200
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 
-SWR_COOLDOWN = 300.0  # seconds a URL serves stale without re-refreshing after a failure
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
 SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
 #                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
@@ -89,7 +87,7 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
         stars_text = stars_node.text(strip=True)
         try:
             stars = int(stars_text.replace(",", ""))
-        except (ValueError, AttributeError):
+        except ValueError:
             continue
 
         parts = href.strip("/").split("/")
@@ -272,7 +270,7 @@ class SWRManager:
     Disabled when unauthenticated (refresh would displace the foreground walk under
     the 1/min budget). Refreshes are deduped per URL, capped at one in flight,
     paused after a recent 429, gated *at refresh time* on
-    foreground token headroom (via ``try_acquire(reserve=...)``), cooled down on
+    foreground token headroom (via ``try_acquire(reserve=...)``), logged on
     failure, and drained before ``scrape_dependents`` returns (while the session is still
     open) — never at cache.close(). Refresh outcomes feed the shared limiter
     (``note_success`` on 200/304, ``note_429`` on 429), so background rate pressure
@@ -287,21 +285,18 @@ class SWRManager:
         cache: SqliteCache | None,
         *,
         enabled: bool,
-        now: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session = session
         self._limiter = limiter
         self._auth_headers = auth_headers
         self._cache = cache
         self._enabled = enabled and cache is not None
-        self._now = now
         self._semaphore = asyncio.Semaphore(1)
         self._inflight: set[str] = set()
-        self._cooldown_until: dict[str, float] = {}
         self._tasks: set[asyncio.Task[None]] = set()
 
     def schedule(self, url: str) -> None:
-        """Schedule a background refresh if enabled, not deduped, off cooldown, and not paused.
+        """Schedule a background refresh if enabled, not already in flight, and not paused.
 
         Token headroom is deliberately **not** checked here. A schedule-time
         availability read is lock-unaware and races the foreground walk
@@ -311,9 +306,6 @@ class SWRManager:
         headroom for the foreground and consumes in one lock-aware step.
         """
         if not self._enabled or url in self._inflight:
-            return
-        until = self._cooldown_until.get(url)
-        if until is not None and self._now() < until:
             return
         if self._limiter.background_paused():
             # Yield to foreground retries after a recent 429.
@@ -341,15 +333,11 @@ class SWRManager:
                     self._session, url, self._limiter, self._auth_headers, self._cache, cached
                 )
                 if result.body is None:
-                    self._cool_down(url, f"HTTP {result.status}")
+                    logger.warning("SWR refresh for %s failed (HTTP %d)", url, result.status)
         except httpx2.RequestError as exc:
-            self._cool_down(url, exc.__class__.__name__)
+            logger.warning("SWR refresh for %s failed (%s)", url, exc.__class__.__name__)
         finally:
             self._inflight.discard(url)
-
-    def _cool_down(self, url: str, why: str) -> None:
-        self._cooldown_until[url] = self._now() + SWR_COOLDOWN
-        logger.warning("SWR refresh for %s failed (%s); cooling down %.0fs", url, why, SWR_COOLDOWN)
 
     async def drain(self, timeout: float = SWR_DRAIN_TIMEOUT) -> None:
         """Await outstanding refreshes up to ``timeout``, then cancel any stragglers."""

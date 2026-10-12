@@ -156,36 +156,26 @@ class TestSWRManager:
         await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
 
-    async def test_failed_refresh_enters_cooldown(
+    async def test_failed_refresh_is_logged(
         self,
         cache: SqliteCache,
         mock_http: FakeHTTP,
         session: httpx2.AsyncClient,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        clock = {"t": 0.0}
         await _seed_expired(cache, URL, b"stale", '"old"')
-        mock_http.get(URL, status=500)  # one failing response only
-        swr = SWRManager(
-            session,
-            _auth_limiter(),
-            {},
-            cache,
-            enabled=True,
-            now=lambda: clock["t"],
-        )
+        mock_http.get(URL, status=500)
+        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
             swr.schedule(URL)
             await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1  # failed once
-        # The failure is surfaced at WARNING (spec §3 "Logged at WARNING; silent to user").
-        assert any(r.levelno == logging.WARNING for r in caplog.records)
-        # within cooldown: a second schedule must NOT fire another request
-        swr.schedule(URL)
-        await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
+        # The failure is surfaced at WARNING (spec §3 "Logged at WARNING; silent to user").
+        assert any(
+            r.levelno == logging.WARNING and "HTTP 500" in r.getMessage() for r in caplog.records
+        )
 
-    async def test_transport_error_enters_cooldown(
+    async def test_transport_error_is_logged(
         self,
         cache: SqliteCache,
         mock_http: FakeHTTP,
@@ -200,9 +190,6 @@ class TestSWRManager:
             await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
         assert any("ConnectError" in r.getMessage() for r in caplog.records)
-        swr.schedule(URL)  # within cooldown: no second request
-        await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
 
     async def test_no_refresh_without_foreground_headroom(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient

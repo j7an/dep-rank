@@ -670,6 +670,47 @@ class TestTrustTableAndJson:
         assert payload["repos"][1]["downloads"] is None
         assert payload["downloads_check"] == {"complete": False, "unavailable": ["beta/toolkit"]}
 
+    @pytest.mark.parametrize("downloads_check", [False, True])
+    @pytest.mark.parametrize(
+        ("rank_metadata", "trust_check"), [(False, False), (True, False), (True, True)]
+    )
+    def test_json_key_sets_per_mode(
+        self, rank_metadata: bool, trust_check: bool, downloads_check: bool
+    ) -> None:
+        result = self._result(
+            ranked_by="trust" if rank_metadata else "stars", repos=[self._trust_repo()]
+        )
+        if trust_check:
+            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
+        if downloads_check:
+            result.downloads_check = DownloadsCheckResult(complete=True)
+        payload = json.loads(
+            _render(print_dependents_json, result, include_rank_metadata=rank_metadata)
+        )
+        top = {
+            "source",
+            "total_count",
+            "filtered_count",
+            "repos",
+            "dependent_type",
+            "scraped_at",
+            "complete",
+            "reason",
+            "pages_scraped",
+            "estimated_total_pages",
+        }
+        repo = {"owner", "name", "url", "stars", "description"}
+        if rank_metadata:
+            top.add("ranked_by")
+            repo.add("trust")
+        if trust_check:
+            top.add("trust_check")
+        if downloads_check:
+            top.add("downloads_check")
+            repo.add("downloads")
+        assert set(payload) == top
+        assert set(payload["repos"][0]) == repo
+
     def test_json_trust_mode_includes_metadata(self) -> None:
         result = self._result(ranked_by="trust", repos=[self._trust_repo()])
         out = _render(print_dependents_json, result, include_rank_metadata=True)

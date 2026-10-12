@@ -42,7 +42,7 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one cla
   callback, and stop reasons.
 - **`test_scraper_adaptive_stop.py`**: the adaptive-stop heuristic.
 - **`test_cache.py`**: SQLite get/put/expiry/clear/stats and the uninitialized-cache error.
-- **`test_cache_swr.py`**: stale-while-revalidate refreshes — dedup, cooldown,
+- **`test_cache_swr.py`**: stale-while-revalidate refreshes — dedup, failure logging,
   429 pause, foreground headroom, conditional `If-None-Match` requests, and drain.
 - **`test_rate_limiter.py`**: token bucket, 429 backoff, and the background pause.
 - **`test_graphql.py`**: trust-metadata query construction and enrichment,
