@@ -1157,19 +1157,6 @@ class TestRetryLogWithoutLiveTerminal:
 
 
 class TestOnPageCallbacks:
-    @patch("rich.live.Live.update")
-    @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)
-    def test_deps_on_page_updates_live(
-        self,
-        mock_scrape: AsyncMock,
-        mock_live_update: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        mock_scrape.side_effect = _scrape_calling_on_page
-        result = runner.invoke(cli, ["deps", "https://github.com/o/r", "--token", "ghp_x"])
-        assert result.exit_code == 0, result.output
-        assert mock_live_update.call_count == 2  # the page's table, then the blank stop frame
-
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)

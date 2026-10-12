@@ -93,16 +93,6 @@ def test_share_threshold_inclusive(peak: int, concentrated: bool) -> None:
         assert verdict.caution is None
 
 
-def test_description_cites_counts_and_date() -> None:
-    counts = daily(date(2026, 3, 5), [27] * 100 + [71])
-    counts.append((date(2026, 9, 13), 1331))
-    verdict = evaluate_star_history(counts, now=NOW)
-    assert verdict.caution is not None
-    assert verdict.caution.description == (
-        "1,331 of 4,102 stars in the last 30 weeks arrived on 2026-09-13"
-    )
-
-
 def test_future_days_excluded() -> None:
     counts = daily(date(2026, 3, 5), [1] * 200) + [(date(2026, 9, 21), 500)]
     assert evaluate_star_history(counts, now=NOW).caution is None

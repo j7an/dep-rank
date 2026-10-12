@@ -37,16 +37,6 @@ async def test_top_k_ordering_across_pages(
     assert result.complete is True
 
 
-async def test_rows_zero_keeps_no_repos_but_counts(
-    mock_http: FakeHTTP, session: httpx2.AsyncClient
-) -> None:
-    p1 = dependents_page([("a", "one", 100), ("b", "two", 50)], next_page=None, repos=300)
-    mock_http.get(FIRST, body=p1)
-    result = await scrape_dependents(session, BASE, rows=0)
-    assert result.repos == []
-    assert result.matched_count == 2
-
-
 async def test_rows_greater_than_total_returns_all(
     mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:

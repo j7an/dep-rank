@@ -13,55 +13,6 @@ uv run pytest tests/core/test_validation.py -v  # one file
 uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one class
 ```
 
-## Layout
-
-### `tests/cli/` — CLI surface
-
-- **`conftest.py`**: autouse fixture pointing `dep_rank.cli.app._cache_dir` at a
-  per-test temporary directory, so CLI tests use a real SQLite cache without
-  touching the developer's cache.
-- **`test_commands.py`**: `deps`, `search`, `cache`, and `--version` through
-  Click's `CliRunner` — argument and token validation, table/JSON output, trust
-  ranking and its fallbacks, live progress, the cache directory resolver, and the
-  subprocess checks that need the real logging setup.
-- **`test_formatters.py`**: Rich tables and JSON output — `humanize`, the
-  dependents table (star and trust layouts, cautions, footer), search results,
-  scrape summaries, and partial-result warnings.
-
-### `tests/core/` — library logic
-
-- **`test_dependents.py`**: `get_dependents` input validation, the default
-  star-ranked call, and importing it loads no CLI dependencies.
-- **`test_validation.py`**: `validate_github_url` accepted forms and error messages.
-- **`test_models.py`**: model behavior the project defines — the
-  `complete == (reason is None)` invariant, defaults, enum wire values, and JSON
-  field exclusions.
-- **`test_scraper.py`**: page parsing, the `scrape_dependents` walk, retries,
-  `Retry-After` and backoff handling, and cache hits.
-- **`test_scraper_streaming.py`**: top-K aggregation, dedup, the `on_page`
-  callback, and stop reasons.
-- **`test_scraper_adaptive_stop.py`**: the adaptive-stop heuristic.
-- **`test_cache.py`**: SQLite get/put/expiry/clear/stats and the uninitialized-cache error.
-- **`test_cache_swr.py`**: stale-while-revalidate refreshes — dedup, failure logging,
-  429 pause, foreground headroom, conditional `If-None-Match` requests, and drain.
-- **`test_rate_limiter.py`**: token bucket, 429 backoff, and the background pause.
-- **`test_graphql.py`**: trust-metadata query construction and enrichment,
-  including batches, partial responses, and failure fallbacks.
-- **`test_trust.py`**: the pool-relative trust score and caution signals.
-- **`test_star_history.py`**: the sampled star-history trust check.
-- **`test_search.py`**: `search_code` over the bounded dependent set.
-- **`test_drift_check.py`**: the drift canary's evaluation and exit codes.
-
-### `tests/test_shared_workflows_contract.py`
-
-Semantic checks on GitHub workflows: the shared-workflow caller set, SHA pin
-shape and uniformity, and the release policy invariants from `AGENTS.md`.
-
-### `tests/test_release_age_policy.py`
-
-The release-age window agrees across the Dependabot cooldowns, the
-dependency-safety `minimum_release_age_days` input, and `tool.uv.exclude-newer`.
-
 ## Shared fixtures (`tests/conftest.py`)
 
 Request these by name as test parameters:
