@@ -69,7 +69,7 @@ async def search_code(
             )
 
     return CodeSearchResult(
-        source=repos[0].url if repos else "",
+        source=repos[0].url,
         query=query,
         hits=hits,
         searched_repos=len(search_repos),

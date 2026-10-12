@@ -87,7 +87,7 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
         stars_text = stars_node.text(strip=True)
         try:
             stars = int(stars_text.replace(",", ""))
-        except (ValueError, AttributeError):
+        except ValueError:
             continue
 
         parts = href.strip("/").split("/")

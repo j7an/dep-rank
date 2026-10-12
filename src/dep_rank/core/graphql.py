@@ -105,10 +105,7 @@ async def enrich_with_trust_metadata(
     if not repos:
         return TrustMetadataResult(repos=[], failed=False, complete=True)
 
-    headers = {
-        "Authorization": f"bearer {token}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"bearer {token}"}
     enriched: list[Repository] = []
     any_success = False
     complete = True
