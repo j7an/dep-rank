@@ -113,5 +113,7 @@ class SqliteCache:
             await self._run(sqlite3.Connection.close)
             self._db = None
         if self._executor:
-            self._executor.shutdown()
-            self._executor = None
+            executor, self._executor = self._executor, None
+            # Wait for the worker off the loop: a cancelled initialize() may still be
+            # blocked on a database lock inside it.
+            await asyncio.to_thread(executor.shutdown)
