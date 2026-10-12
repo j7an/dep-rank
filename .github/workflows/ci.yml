@@ -95,7 +95,8 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-uv
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
       - name: Ruff check
@@ -121,7 +122,8 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-uv
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
       - name: Mypy
         run: uv run mypy src tests
 
@@ -157,9 +159,10 @@ jobs:
         with:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-uv
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: ${{ matrix.python-version }}
+      - run: uv sync --locked
       - name: Pytest
         run: uv run pytest --no-cov
 
@@ -185,7 +188,8 @@ jobs:
           ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: ./.github/actions/setup-uv
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
       - name: Pytest with coverage
         run: uv run pytest
       - name: Diff coverage
