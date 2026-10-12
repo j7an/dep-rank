@@ -191,35 +191,19 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
     ``trust_signals`` is excluded structurally by the model field. ``console.out`` writes
     the payload verbatim: no markup, emoji, or wrapping, any of which corrupts JSON values.
     """
-    if include_rank_metadata:
-        exclude: Any = None
-        if result.downloads_check is None:
-            exclude = {"downloads_check": True, "repos": {"__all__": {"downloads"}}}
-        payload = result.model_dump_json(
-            indent=2,
-            exclude=(
-                {**(exclude or {}), "trust_check": True} if result.trust_check is None else exclude
-            ),
-        )
-    else:
-        if result.downloads_check is None:
-            exclude = {
-                "ranked_by": True,
-                "trust_check": True,
-                "downloads_check": True,
-                "repos": {"__all__": {"trust", "downloads"}},
-            }
-        else:
-            exclude = {
-                "ranked_by": True,
-                "trust_check": True,
-                "repos": {"__all__": {"trust"}},
-            }
-        payload = result.model_dump_json(
-            indent=2,
-            exclude=exclude,
-        )
-    console.out(payload, highlight=False)
+    exclude: dict[str, Any] = {}
+    repo_exclude: set[str] = set()
+    if not include_rank_metadata:
+        exclude.update(ranked_by=True, trust_check=True)
+        repo_exclude.add("trust")
+    elif result.trust_check is None:
+        exclude["trust_check"] = True
+    if result.downloads_check is None:
+        exclude["downloads_check"] = True
+        repo_exclude.add("downloads")
+    if repo_exclude:
+        exclude["repos"] = {"__all__": repo_exclude}
+    console.out(result.model_dump_json(indent=2, exclude=exclude or None), highlight=False)
 
 
 def print_search_results(result: CodeSearchResult) -> None:
