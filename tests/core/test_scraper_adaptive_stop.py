@@ -6,6 +6,7 @@ import heapq
 from collections import deque
 
 import httpx2
+import pytest
 
 from dep_rank.core.models import Repository, ScrapeReason
 from dep_rank.core.scraper import (
@@ -35,26 +36,25 @@ def _heap(stars: list[int]) -> list[tuple[int, int, Repository]]:
     return h
 
 
-class TestShouldStopPredicate:
-    def test_converged_stops(self) -> None:
-        heap = _heap([1000, 900, 800])  # kth_best (min) = 800
-        recent = deque([10, 20, 5] * 7, maxlen=ADAPTIVE_WINDOW)  # all far below 800
-        assert _should_stop(heap, rows=3, recent_max=recent, page=ADAPTIVE_W_MIN) is True
-
-    def test_non_converged_continues(self) -> None:
-        heap = _heap([1000, 900, 800])
-        recent = deque([850] * ADAPTIVE_WINDOW, maxlen=ADAPTIVE_WINDOW)  # exceeds kth_best=800
-        assert _should_stop(heap, rows=3, recent_max=recent, page=ADAPTIVE_W_MIN) is False
-
-    def test_sparse_min_stars_never_saturates(self) -> None:
-        heap = _heap([1000, 900])  # only 2 < rows=3 -> not saturated
-        recent = deque([5] * ADAPTIVE_WINDOW, maxlen=ADAPTIVE_WINDOW)
-        assert _should_stop(heap, rows=3, recent_max=recent, page=ADAPTIVE_W_MIN) is False
-
-    def test_no_stop_before_w_min(self) -> None:
-        heap = _heap([1000, 900, 800])
-        recent = deque([5] * ADAPTIVE_WINDOW, maxlen=ADAPTIVE_WINDOW)
-        assert _should_stop(heap, rows=3, recent_max=recent, page=ADAPTIVE_W_MIN - 1) is False
+@pytest.mark.parametrize(
+    ("stars", "recent", "page", "expected"),
+    [
+        # kth_best (the heap minimum) = 800; every recent page max is far below it.
+        pytest.param([1000, 900, 800], [10, 20, 5] * 7, ADAPTIVE_W_MIN, True, id="converged"),
+        # recent page maxima exceed kth_best=800.
+        pytest.param(
+            [1000, 900, 800], [850] * ADAPTIVE_WINDOW, ADAPTIVE_W_MIN, False, id="non-converged"
+        ),
+        # only 2 < rows=3 -> not saturated
+        pytest.param([1000, 900], [5] * ADAPTIVE_WINDOW, ADAPTIVE_W_MIN, False, id="unsaturated"),
+        pytest.param(
+            [1000, 900, 800], [5] * ADAPTIVE_WINDOW, ADAPTIVE_W_MIN - 1, False, id="before-w-min"
+        ),
+    ],
+)
+def test_should_stop(stars: list[int], recent: list[int], page: int, expected: bool) -> None:
+    window = deque(recent, maxlen=ADAPTIVE_WINDOW)
+    assert _should_stop(_heap(stars), rows=3, recent_max=window, page=page) is expected
 
 
 # --- End-to-end: a decaying-star stream stops early with trend_converged ---

@@ -118,21 +118,14 @@ class TestEnrichWithTrustMetadata:
         assert repo.trust_signals.is_disabled is False
         assert repo.trust_signals.created_at == datetime(2005, 7, 13, tzinfo=UTC)
 
-    async def test_malformed_created_at_degrades_to_missing(self, run_trust: RunTrust) -> None:
-
-        repos = [make_repo("django", "django", stars=80000)]
-        payload = {"data": {"repo_0": {"stargazerCount": 82400, "createdAt": "not-a-date"}}}
-        result, _ = await run_trust(repos, payload)
-        assert result.failed is False
-        assert result.repos[0].trust_signals is not None
-        assert result.repos[0].trust_signals.created_at is None
-
-    async def test_malformed_pushed_at_degrades_recency_not_crash(
-        self, run_trust: RunTrust
+    @pytest.mark.parametrize(
+        ("field", "attr"), [("createdAt", "created_at"), ("pushedAt", "pushed_at")]
+    )
+    async def test_malformed_timestamp_degrades_to_missing(
+        self, field: str, attr: str, run_trust: RunTrust
     ) -> None:
-        # A non-ISO pushedAt must not abort the run; recency degrades to "missing"
-        # (pushed_at=None) while the rest of the signals are still applied.
-
+        # A non-ISO timestamp must not abort the run; that signal degrades to "missing"
+        # while the rest of the signals are still applied.
         repos = [make_repo("django", "django", stars=80000)]
         payload = {
             "data": {
@@ -141,7 +134,7 @@ class TestEnrichWithTrustMetadata:
                     "forkCount": 31000,
                     "issues": {"totalCount": 500},
                     "pullRequests": {"totalCount": 300},
-                    "pushedAt": "not-a-date",
+                    field: "not-a-date",
                 }
             }
         }
@@ -149,87 +142,68 @@ class TestEnrichWithTrustMetadata:
         assert result.failed is False
         repo = result.repos[0]
         assert repo.trust_signals is not None
-        assert repo.trust_signals.pushed_at is None  # unparseable -> missing recency
+        assert getattr(repo.trust_signals, attr) is None  # unparseable -> missing
         assert repo.trust_signals.forks == 31000  # other signals intact
 
-    async def test_401_short_circuits_to_failed(self, run_trust: RunTrust) -> None:
-
-        repos = [make_repo("a", "b")]
-        expected = [repo.model_copy(deep=True) for repo in repos]
-        result, _ = await run_trust(repos, 401, token="bad")
-        assert result.failed is True
-        assert result.complete is False
-        assert result.repos == expected
-
-    async def test_graphql_error_marks_failed_when_only_batch(self, run_trust: RunTrust) -> None:
-
-        repos = [make_repo("a", "b")]
-        expected = [repo.model_copy(deep=True) for repo in repos]
-        result, _ = await run_trust(repos, {"errors": [{"message": "boom"}]})
-        assert result.failed is True  # the only batch errored -> no usable metadata
-        assert result.complete is False
-        assert result.repos == expected
-
-    async def test_missing_repo_data_is_partial_not_failed(self, run_trust: RunTrust) -> None:
-
-        repos = [make_repo("a", "b"), make_repo("c", "d")]
-        expected = [repo.model_copy(deep=True) for repo in repos]
-        payload = {
-            "data": {
-                "repo_0": {
-                    "stargazerCount": 10,
-                    "forkCount": 1,
-                    "issues": {"totalCount": 1},
-                    "pullRequests": {"totalCount": 1},
-                    "pushedAt": "2026-01-01T00:00:00Z",
-                }
-                # repo_1 missing
-            }
-        }
-        result, _ = await run_trust(repos, payload)
-        assert result.failed is False
-        assert result.complete is False
-        assert result.repos[0].trust_signals is not None
-        assert result.repos[1].trust_signals is None
-        assert result.repos[0].stars == 10
-        assert result.repos[1] == expected[1]
-
-    async def test_data_with_errors_is_partial_not_failed(self, run_trust: RunTrust) -> None:
-
-        repos = [make_repo("a", "b"), make_repo("c", "d")]
-        payload = {
-            "data": {
-                "repo_0": {
-                    "stargazerCount": 10,
-                    "forkCount": 1,
-                    "issues": {"totalCount": 1},
-                    "pullRequests": {"totalCount": 1},
-                    "pushedAt": "2026-01-01T00:00:00Z",
-                },
-                "repo_1": None,
-            },
-            "errors": [{"message": "Could not resolve repo_1"}],
-        }
-        result, _ = await run_trust(repos, payload)
-        assert result.failed is False  # usable data present
-        assert result.complete is False  # errors -> incomplete
-        assert result.repos[0].trust_signals is not None
-        assert result.repos[1].trust_signals is None
-
-    @pytest.mark.parametrize("data", [None, {"repo_0": None}], ids=["data-null", "repos-null"])
-    async def test_data_all_null_is_failed(
-        self, data: dict[str, None] | None, run_trust: RunTrust
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param(401, id="http-401"),
+            pytest.param({"errors": [{"message": "boom"}]}, id="errors-only"),
+            pytest.param(
+                {"data": None, "errors": [{"message": "Could not resolve"}]}, id="data-null"
+            ),
+            pytest.param(
+                {"data": {"repo_0": None}, "errors": [{"message": "Could not resolve"}]},
+                id="repos-null",
+            ),
+        ],
+    )
+    async def test_unusable_response_is_failed(
+        self, response: dict[str, Any] | int, run_trust: RunTrust
     ) -> None:
-
-        # Null data and all-null repository data both preserve the scraped fallback.
+        # With no usable metadata from the only batch, the scraped fallback is preserved.
         repos = [make_repo("a", "b")]
         expected = [repo.model_copy(deep=True) for repo in repos]
-        payload = {"data": data, "errors": [{"message": "Could not resolve"}]}
-        result, _ = await run_trust(repos, payload)
+        result, _ = await run_trust(repos, response)
         assert result.failed is True
         assert result.complete is False
         assert result.repos[0].trust_signals is None
         assert result.repos == expected
+
+    @pytest.mark.parametrize(
+        ("repo_1", "errors"),
+        [
+            pytest.param({}, None, id="repo-missing"),
+            pytest.param(
+                {"repo_1": None},
+                [{"message": "Could not resolve repo_1"}],
+                id="repo-null-with-errors",
+            ),
+        ],
+    )
+    async def test_partial_data_is_partial_not_failed(
+        self, repo_1: dict[str, None], errors: list[dict[str, str]] | None, run_trust: RunTrust
+    ) -> None:
+        repos = [make_repo("a", "b"), make_repo("c", "d")]
+        expected = [repo.model_copy(deep=True) for repo in repos]
+        repo_0 = {
+            "stargazerCount": 10,
+            "forkCount": 1,
+            "issues": {"totalCount": 1},
+            "pullRequests": {"totalCount": 1},
+            "pushedAt": "2026-01-01T00:00:00Z",
+        }
+        payload: dict[str, Any] = {"data": {"repo_0": repo_0, **repo_1}}
+        if errors:
+            payload["errors"] = errors
+        result, _ = await run_trust(repos, payload)
+        assert result.failed is False  # usable data present
+        assert result.complete is False  # a repo without data -> incomplete
+        assert result.repos[0].trust_signals is not None
+        assert result.repos[1].trust_signals is None
+        assert result.repos[0].stars == 10
+        assert result.repos[1] == expected[1]
 
     def test_batch_size_stays_under_observed_resource_limit(self) -> None:
         # Live probe: one 74-repo query hit RESOURCE_LIMITS_EXCEEDED from alias ~41 on;

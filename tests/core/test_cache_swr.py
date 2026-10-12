@@ -156,15 +156,26 @@ class TestSWRManager:
         await swr.drain()
         assert sum(len(v) for v in mock_http.requests.values()) == 1
 
+    @pytest.mark.parametrize(
+        ("response", "logged"),
+        [
+            pytest.param({"status": 500}, "HTTP 500", id="http-error"),
+            pytest.param(
+                {"exception": httpx2.ConnectError("refused")}, "ConnectError", id="transport-error"
+            ),
+        ],
+    )
     async def test_failed_refresh_is_logged(
         self,
+        response: dict[str, Any],
+        logged: str,
         cache: SqliteCache,
         mock_http: FakeHTTP,
         session: httpx2.AsyncClient,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         await _seed_expired(cache, URL, b"stale", '"old"')
-        mock_http.get(URL, status=500)
+        mock_http.get(URL, **response)
         swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
         with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
             swr.schedule(URL)
@@ -172,24 +183,8 @@ class TestSWRManager:
         assert sum(len(v) for v in mock_http.requests.values()) == 1
         # The failure is surfaced at WARNING (spec §3 "Logged at WARNING; silent to user").
         assert any(
-            r.levelno == logging.WARNING and "HTTP 500" in r.getMessage() for r in caplog.records
+            r.levelno == logging.WARNING and logged in r.getMessage() for r in caplog.records
         )
-
-    async def test_transport_error_is_logged(
-        self,
-        cache: SqliteCache,
-        mock_http: FakeHTTP,
-        session: httpx2.AsyncClient,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        await _seed_expired(cache, URL, b"stale", '"old"')
-        mock_http.get(URL, exception=httpx2.ConnectError("refused"))
-        swr = SWRManager(session, _auth_limiter(), {}, cache, enabled=True)
-        with caplog.at_level(logging.WARNING, logger="dep_rank.core.scraper"):
-            swr.schedule(URL)
-            await swr.drain()
-        assert sum(len(v) for v in mock_http.requests.values()) == 1
-        assert any("ConnectError" in r.getMessage() for r in caplog.records)
 
     async def test_no_refresh_without_foreground_headroom(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient

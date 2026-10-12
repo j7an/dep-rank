@@ -299,12 +299,61 @@ with TemporaryDirectory() as cache_dir:
         assert child["stderr"].index("Scraped 1 page") < child["stderr"].index("partial errors")
 
 
-class TestDepsCommand:
-    def test_missing_url(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["deps"])
-        assert result.exit_code == 2
-        assert "Missing argument 'URL'" in result.output
+@pytest.mark.parametrize(
+    ("args", "exit_code", "message"),
+    [
+        pytest.param(["deps"], 2, "Missing argument 'URL'", id="deps-missing-url"),
+        pytest.param(
+            ["deps", "https://gitlab.com/foo/bar"],
+            1,
+            "Error: URL must be a github.com repository URL, got: gitlab.com",
+            id="deps-invalid-url",
+        ),
+        pytest.param(
+            ["search", "https://github.com/django/django", "import os"],
+            2,
+            "Missing option '--token'",
+            id="search-missing-token",
+        ),
+        pytest.param(
+            ["search", "https://gitlab.com/foo/bar", "import os", "--token", "test-token"],
+            1,
+            "Error: URL must be a github.com repository URL, got: gitlab.com",
+            id="search-invalid-url",
+        ),
+        pytest.param(
+            ["deps", "https://github.com/django/django", "--descriptions"],
+            1,
+            "requires a GitHub token",
+            id="descriptions-without-token",
+        ),
+        pytest.param(
+            ["deps", "https://github.com/django/django", "--rank-by", "trust"],
+            1,
+            "requires a GitHub token",
+            id="trust-without-token",
+        ),
+        pytest.param(
+            ["deps", "https://github.com/a/b", "--trust-check"],
+            1,
+            "Error: --trust-check requires --rank-by trust",
+            id="trust-check-without-rank-by-trust",
+        ),
+        pytest.param(
+            ["deps", "https://github.com/a/b", "--rank-by", "trust", "--trust-check"],
+            1,
+            "requires a GitHub token",
+            id="trust-check-without-token",
+        ),
+    ],
+)
+def test_argument_errors(runner: CliRunner, args: list[str], exit_code: int, message: str) -> None:
+    result = runner.invoke(cli, args)
+    assert result.exit_code == exit_code
+    assert message in result.stderr
 
+
+class TestDepsCommand:
     @patch("dep_rank.cli.app.run_deps")
     def test_json_output(
         self, mock_run: AsyncMock, runner: CliRunner, mock_result: DependentsResult
@@ -401,17 +450,6 @@ class TestDepsCommand:
         else:
             assert "Downloads" in result.stdout
 
-    def test_invalid_url(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["deps", "https://gitlab.com/foo/bar"])
-        assert result.exit_code == 1
-        assert "Error: URL must be a github.com repository URL, got: gitlab.com" in result.stderr
-
-
-class TestSearchCommand:
-    def test_missing_token(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["search", "https://github.com/django/django", "import os"])
-        assert result.exit_code != 0
-
 
 class TestDepsCommandFull:
     """Tests that exercise the full deps command body with mocked core functions."""
@@ -491,23 +529,6 @@ class TestDepsCommandFull:
         )
         assert result.exit_code == 0
         mock_enrich.assert_not_called()
-
-    def test_deps_descriptions_without_token(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["deps", "https://github.com/django/django", "--descriptions"])
-        assert result.exit_code != 0
-        assert "requires a GitHub token" in result.output
-
-
-class TestSearchCommandFull:
-    """Tests that exercise the full search command body."""
-
-    def test_search_invalid_url(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli,
-            ["search", "https://gitlab.com/foo/bar", "import os", "--token", "test-token"],
-        )
-        assert result.exit_code == 1
-        assert "Error: URL must be a github.com repository URL, got: gitlab.com" in result.stderr
 
 
 async def _seed_cli_cache(*bodies: bytes) -> None:
@@ -1180,13 +1201,6 @@ class TestOnPageCallbacks:
 
 
 class TestRankByTrust:
-    def test_trust_without_token_errors(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli, ["deps", "https://github.com/django/django", "--rank-by", "trust"]
-        )
-        assert result.exit_code != 0
-        assert "requires a GitHub token" in result.output
-
     @pytest.mark.parametrize(
         ("rows", "expected_pool"),
         [(0, 0), (5, 50), (10, 100), (50, 100), (200, 200)],
@@ -1321,18 +1335,6 @@ class TestRankByTrust:
             assert "falling back to star ranking" in result.output
         else:
             assert "partial data" in result.output
-
-    def test_trust_check_requires_rank_by_trust(self, runner: CliRunner) -> None:
-        result = runner.invoke(cli, ["deps", "https://github.com/a/b", "--trust-check"])
-        assert result.exit_code != 0
-        assert "Error: --trust-check requires --rank-by trust" in result.stderr
-
-    def test_trust_check_without_token_errors(self, runner: CliRunner) -> None:
-        result = runner.invoke(
-            cli, ["deps", "https://github.com/a/b", "--rank-by", "trust", "--trust-check"]
-        )
-        assert result.exit_code != 0
-        assert "requires a GitHub token" in result.stderr
 
     @pytest.mark.parametrize("trust_check", [False, True])
     @patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock)

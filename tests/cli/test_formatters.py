@@ -330,93 +330,62 @@ def test_json_preserves_strings_exactly(monkeypatch: pytest.MonkeyPatch) -> None
     assert payload["repos"][0]["description"] == description
 
 
+def _summary(
+    pages: int, max_pages: int, est_pages: int, found: int, min_stars: int, complete: bool
+) -> dict[str, Any]:
+    return {
+        "pages_scraped": pages,
+        "max_pages": max_pages,
+        "estimated_total_pages": est_pages,
+        "found_count": found,
+        "min_stars": min_stars,
+        "complete": complete,
+    }
+
+
 @pytest.mark.parametrize(
     ("kwargs", "must_contain", "must_not_contain"),
     [
-        (
-            {
-                "pages_scraped": 42,
-                "max_pages": 1000,
-                "estimated_total_pages": 76515,
-                "found_count": 387,
-                "min_stars": 5,
-                "complete": False,
-            },
+        pytest.param(
+            _summary(42, 1000, 76515, 387, 5, complete=False),
             [
                 "42/1000 pages (4.2%)",
                 "42/~76,515 estimated pages (0.05%)",
                 "Found 387 dependents with ≥5 stars",
             ],
             [],
+            id="with-estimate",
         ),
-        (
-            {
-                "pages_scraped": 42,
-                "max_pages": 1000,
-                "estimated_total_pages": 0,
-                "found_count": 387,
-                "min_stars": 5,
-                "complete": False,
-            },
+        pytest.param(
+            _summary(42, 1000, 0, 387, 5, complete=False),
             ["42/1000 pages (4.2%)", "Found 387 dependents with ≥5 stars"],
             ["estimated"],
+            id="without-estimate",
         ),
-        (
-            {
-                "pages_scraped": 1000,
-                "max_pages": 1000,
-                "estimated_total_pages": 76515,
-                "found_count": 5000,
-                "min_stars": 10,
-                "complete": False,
-            },
+        pytest.param(
+            _summary(1000, 1000, 76515, 5000, 10, complete=False),
             ["1000/1000 pages (100.0%)", "1000/~76,515 estimated pages (1.31%)"],
             [],
+            id="full-scrape",
         ),
-        (
-            {
-                "pages_scraped": 0,
-                "max_pages": 1000,
-                "estimated_total_pages": 0,
-                "found_count": 0,
-                "min_stars": 5,
-                "complete": False,
-            },
+        pytest.param(
+            _summary(0, 1000, 0, 0, 5, complete=False),
             ["0/1000 pages (0.0%)", "Found 0 dependents"],
             [],
+            id="zero-pages",
         ),
-        (
-            {
-                "pages_scraped": 3,
-                "max_pages": 200,
-                "estimated_total_pages": 3,
-                "found_count": 42,
-                "min_stars": 5,
-                "complete": True,
-            },
+        pytest.param(
+            _summary(3, 200, 3, 42, 5, complete=True),
             ["Scraped all 3 pages", "Found 42 dependents with ≥5 stars"],
             ["%", "/200", "estimated"],
+            id="complete-multi-page",
         ),
-        (
-            {
-                "pages_scraped": 1,
-                "max_pages": 20,
-                "estimated_total_pages": 0,
-                "found_count": 2,
-                "min_stars": 5,
-                "complete": True,
-            },
+        pytest.param(
+            _summary(1, 20, 0, 2, 5, complete=True),
             ["Scraped 1 page ·"],
             ["%", "all"],
+            id="complete-single-page",
         ),
-    ],
-    ids=[
-        "with-estimate",
-        "without-estimate",
-        "full-scrape",
-        "zero-pages",
-        "complete-multi-page",
-        "complete-single-page",
     ],
 )
 def test_format_scrape_summary(
@@ -432,16 +401,8 @@ def test_format_scrape_summary(
 class TestPartialWarning:
     def test_reasons_have_distinct_messages(self) -> None:
 
-        msgs = {
-            partial_warning(r)
-            for r in (
-                ScrapeReason.MAX_PAGES_REACHED,
-                ScrapeReason.TREND_CONVERGED,
-                ScrapeReason.NETWORK_FAILURE,
-                ScrapeReason.RATE_LIMITED,
-            )
-        }
-        assert len(msgs) == 4  # each reason renders a distinct line
+        msgs = {partial_warning(r) for r in ScrapeReason}
+        assert len(msgs) == len(ScrapeReason)  # each reason renders a distinct line
 
     def test_max_pages_mentions_flag(self) -> None:
 

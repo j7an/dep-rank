@@ -49,76 +49,35 @@ from tests.conftest import (
 FIRST_URL = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
 
 
-class TestParseDependentCounts:
-    def test_parse_both_counts(self) -> None:
-        html = """
-        <html><body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected"
-               href="/owner/repo/network/dependents?dependent_type=REPOSITORY">
-                2,295,450
-                Repositories
-            </a>
-            <a class="btn-link " href="/owner/repo/network/dependents?dependent_type=PACKAGE">
-                44,317
-                Packages
-            </a>
-        </div>
-        </body></html>
-        """
-        counts = parse_dependent_counts(html)
-        assert counts == {"REPOSITORY": 2295450, "PACKAGE": 44317}
+def _header(*links: tuple[str, str]) -> str:
+    """A dependents-page count header with one ``count``/``label`` link per tuple."""
+    anchors = "".join(
+        f'<a class="btn-link" href="?dependent_type=X">\n    {count}\n    {label}\n</a>'
+        for count, label in links
+    )
+    return f'<div class="table-list-header-toggle states flex-auto pl-0">{anchors}</div>'
 
-    def test_parse_single_count(self) -> None:
-        html = """
-        <html><body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
-                500
-                Repositories
-            </a>
-        </div>
-        </body></html>
-        """
-        counts = parse_dependent_counts(html)
-        assert counts == {"REPOSITORY": 500}
 
-    def test_parse_missing_structure(self) -> None:
-        html = "<html><body><p>No dependents info</p></body></html>"
-        counts = parse_dependent_counts(html)
-        assert counts == {}
-
-    def test_parse_non_numeric(self) -> None:
-        html = """
-        <html><body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
-                NaN
-                Repositories
-            </a>
-        </div>
-        </body></html>
-        """
-        counts = parse_dependent_counts(html)
-        assert counts == {}
-
-    def test_parse_singular_forms(self) -> None:
-        html = """
-        <html><body>
-        <div class="table-list-header-toggle states flex-auto pl-0">
-            <a class="btn-link selected" href="?dependent_type=REPOSITORY">
-                1
-                Repository
-            </a>
-            <a class="btn-link " href="?dependent_type=PACKAGE">
-                1
-                Package
-            </a>
-        </div>
-        </body></html>
-        """
-        counts = parse_dependent_counts(html)
-        assert counts == {"REPOSITORY": 1, "PACKAGE": 1}
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        pytest.param(
+            _header(("2,295,450", "Repositories"), ("44,317", "Packages")),
+            {"REPOSITORY": 2295450, "PACKAGE": 44317},
+            id="both-counts",
+        ),
+        pytest.param(_header(("500", "Repositories")), {"REPOSITORY": 500}, id="single-count"),
+        pytest.param("<p>No dependents info</p>", {}, id="missing-structure"),
+        pytest.param(_header(("NaN", "Repositories")), {}, id="non-numeric"),
+        pytest.param(
+            _header(("1", "Repository"), ("1", "Package")),
+            {"REPOSITORY": 1, "PACKAGE": 1},
+            id="singular-forms",
+        ),
+    ],
+)
+def test_parse_dependent_counts(html: str, expected: dict[str, int]) -> None:
+    assert parse_dependent_counts(f"<html><body>{html}</body></html>") == expected
 
 
 class TestParseDependentsPage:
@@ -212,65 +171,31 @@ class TestScrapeDependents:
 
 
 class TestScrapeDependentsEdgeCases:
-    def test_parse_malformed_html_no_repo_link(self) -> None:
-        """Items without a repo link are skipped."""
-        html = """
+    @pytest.mark.parametrize(
+        ("anchor_class", "href", "stars", "expected"),
+        [
+            pytest.param("text-bold", "/foo/bar", "100", 1, id="valid-row-control"),
+            pytest.param("other-class", "/foo/bar", "100", 0, id="no-repo-link"),
+            pytest.param("text-bold", "/foo/bar", "not-a-number", 0, id="non-numeric-stars"),
+            pytest.param("text-bold", "", "100", 0, id="empty-href"),
+            pytest.param("text-bold", "/only-one", "100", 0, id="one-path-segment"),
+        ],
+    )
+    def test_parse_skips_malformed_rows(
+        self, anchor_class: str, href: str, stars: str, expected: int
+    ) -> None:
+        html = f"""
         <html><body>
         <div id="dependents"><div class="Box">
             <div class="flex-items-center">
-                <span><a class="other-class" href="/foo/bar">foo/bar</a></span>
-                <div><span>100</span></div>
+                <span><a class="{anchor_class}" href="{href}">foo/bar</a></span>
+                <div><div><span>{stars}</span></div></div>
             </div>
         </div></div>
         </body></html>
         """
-        repos, next_url = parse_dependents_page(html)
-        assert len(repos) == 0
-
-    def test_parse_missing_stars(self) -> None:
-        """Items where stars text is not numeric are skipped."""
-        html = """
-        <html><body>
-        <div id="dependents"><div class="Box">
-            <div class="flex-items-center">
-                <span><a class="text-bold" href="/foo/bar">foo/bar</a></span>
-                <div><div><span>not-a-number</span></div></div>
-            </div>
-        </div></div>
-        </body></html>
-        """
-        repos, next_url = parse_dependents_page(html)
-        assert len(repos) == 0
-
-    def test_parse_empty_href(self) -> None:
-        """Items with empty href are skipped."""
-        html = """
-        <html><body>
-        <div id="dependents"><div class="Box">
-            <div class="flex-items-center">
-                <span><a class="text-bold" href="">foo/bar</a></span>
-                <div><div><span>100</span></div></div>
-            </div>
-        </div></div>
-        </body></html>
-        """
-        repos, next_url = parse_dependents_page(html)
-        assert len(repos) == 0
-
-    def test_parse_invalid_path_segments(self) -> None:
-        """Items where href has wrong number of segments are skipped."""
-        html = """
-        <html><body>
-        <div id="dependents"><div class="Box">
-            <div class="flex-items-center">
-                <span><a class="text-bold" href="/only-one">only-one</a></span>
-                <div><div><span>100</span></div></div>
-            </div>
-        </div></div>
-        </body></html>
-        """
-        repos, next_url = parse_dependents_page(html)
-        assert len(repos) == 0
+        repos, _ = parse_dependents_page(html)
+        assert len(repos) == expected
 
     async def test_error_response_sets_network_failure(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
