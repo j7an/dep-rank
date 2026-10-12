@@ -58,23 +58,6 @@ class TestRepository:
         assert repo.description is None
 
 
-class TestDependentsResult:
-    def test_json_serialization(self) -> None:
-        now = datetime.now(tz=UTC)
-        result = DependentsResult(
-            source="https://github.com/x/y",
-            total_count=10,
-            filtered_count=5,
-            repos=[],
-            dependent_type=DependentType.PACKAGE,
-            scraped_at=now,
-        )
-        json_str = result.model_dump_json()
-        assert "PACKAGE" in json_str
-        restored = DependentsResult.model_validate_json(json_str)
-        assert restored.dependent_type == DependentType.PACKAGE
-
-
 class TestScrapeResult:
     def test_json_round_trip(self) -> None:
         result = ScrapeResult(

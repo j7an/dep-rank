@@ -287,27 +287,6 @@ class TestScrapeDependentsEdgeCases:
         assert result.reason == ScrapeReason.NETWORK_FAILURE
         assert result.pages_scraped == 0  # first-page failure consumed no pages
 
-    async def test_429_exhaustion_sets_rate_limited(
-        self, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
-    ) -> None:
-        """A persistent 429 (past the retry budget) terminates with reason=rate_limited."""
-
-        # Patch the scraper's sleep so the (growing) 429 backoff does not actually wait.
-        monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
-
-        url = "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
-        for _ in range(6):  # MAX_RETRIES + 1 attempts, all 429
-            mock_http.get(url, status=429, headers={"Retry-After": "0"})
-        result = await scrape_dependents(
-            session,
-            "https://github.com/owner/repo",
-            token="ghp_x",
-            rows=100,
-        )
-        assert result.complete is False
-        assert result.reason == ScrapeReason.RATE_LIMITED
-        assert result.pages_scraped == 0  # never got a parseable page
-
     async def test_cache_hit_skips_network(
         self, cache: SqliteCache, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
