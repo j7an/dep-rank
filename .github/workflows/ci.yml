@@ -193,7 +193,7 @@ jobs:
       - name: Pytest with coverage
         run: uv run pytest
       - name: Diff coverage
-        uses: j7an/shared-workflows/actions/coverage@30425ad6ef4ee3c3cbccdd563b22de749887f622 # v4.11.0
+        uses: j7an/shared-workflows/actions/coverage@0cfe3ca15c18d38525bf950c029ada77805a9578 # v4.12.1
         with:
           report-path: coverage.xml
           diff-cover-path: ${{ github.workspace }}/.venv/bin/diff-cover
