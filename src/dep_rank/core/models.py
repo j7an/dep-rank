@@ -220,6 +220,7 @@ class CodeSearchResult(BaseModel):
     hits: list[CodeSearchHit]
     searched_repos: int
     failed_repos: dict[str, str] = {}  # "owner/name" -> reason; these repos were not searched
+    incomplete_repos: list[str] = []  # "owner/name"; search timed out, hits may be partial
     complete: bool = True
     reason: ScrapeReason | None = None
 

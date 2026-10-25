@@ -50,7 +50,42 @@ async def test_search_reports_repo_on_bad_response(
 
     assert result.searched_repos == 1
     assert result.failed_repos == {"alpha/framework": reason}
+    assert result.incomplete_repos == []
     assert [(hit.repo, hit.file_path) for hit in result.hits] == [(repos[1], "app.py")]
+
+
+@pytest.mark.parametrize(
+    ("incomplete", "items", "expected"),
+    [
+        (
+            True,
+            [{"html_url": "https://github.com/alpha/framework/blob/main/a.py", "path": "a.py"}],
+            ["alpha/framework"],
+        ),
+        (True, [], ["alpha/framework"]),
+        (False, [], []),
+    ],
+    ids=["timed-out-with-hits", "timed-out-no-hits", "explicit-false"],
+)
+async def test_search_reports_incomplete_results(
+    incomplete: bool,
+    items: list[dict[str, str]],
+    expected: list[str],
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
+) -> None:
+    repos = [make_repo("alpha", "framework")]
+    mock_http.get(
+        "https://api.github.com/search/code?q=test%20repo%3Aalpha%2Fframework",
+        payload={"total_count": len(items), "incomplete_results": incomplete, "items": items},
+    )
+
+    result = await search_code(session, repos, "test", token="fake")
+
+    assert result.incomplete_repos == expected
+    assert result.searched_repos == 1
+    assert result.failed_repos == {}
+    assert [hit.file_path for hit in result.hits] == [item["path"] for item in items]
 
 
 class TestSearchCode:
@@ -77,6 +112,7 @@ class TestSearchCode:
         )
         result = await search_code(session, repos, "import pandas", token="fake")
         assert result.searched_repos == 1
+        assert result.incomplete_repos == []
         assert len(result.hits) == 2
         assert result.hits[0].file_path == "src/app.py"
 
