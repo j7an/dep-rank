@@ -168,9 +168,10 @@ Monitor progress at:
   Each release also adds three untagged versions on the package page: the amd64 and
   arm64 images and the provenance bundle, referenced by the version tag's index and its
   `sha256-<digest>` attestation tag. Never delete untagged versions (for example with
-  `actions/delete-package-versions`): that breaks `docker pull` and attestation
-  verification. Re-running `publish-ghcr` can leave the earlier push's versions truly
-  unreferenced; public image storage is free, so leave them too.
+  `actions/delete-package-versions`): that breaks `docker pull` and registry-side
+  attestation lookup (`gh attestation verify --bundle-from-oci`). Re-running
+  `publish-ghcr` can leave the earlier push's versions truly unreferenced; public image
+  storage is free, so leave them too.
 - [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
 
 ---
