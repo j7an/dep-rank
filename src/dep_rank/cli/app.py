@@ -423,8 +423,7 @@ def search(
         from dep_rank.cli.formatters import RetryCountdown, print_search_results
         from dep_rank.core.cache import open_cache
         from dep_rank.core.models import RetryStatus, ScrapeSnapshot
-        from dep_rank.core.scraper import scrape_dependents
-        from dep_rank.core.search import search_code
+        from dep_rank.core.search import search_dependents
 
         console = _stderr_console
         async with open_cache() as cache:
@@ -471,19 +470,31 @@ def search(
                     if progress_ctx is not None and task_id is not None:
                         progress_ctx.update(task_id, retry=RetryCountdown(status))
 
+                no_dependents = False
+
+                async def on_scraped(scrape_result: ScrapeResult) -> None:
+                    nonlocal no_dependents
+                    if progress_ctx is not None:
+                        progress_ctx.stop()
+                    _print_scrape_outcome(
+                        console, scrape_result, min_stars, url, DependentType.REPOSITORY
+                    )
+                    no_dependents = scrape_result.estimated_total_dependents == 0
+
                 if progress_ctx is not None:
                     progress_ctx.start()
                 try:
-                    scrape_result = await scrape_dependents(
+                    result = await search_dependents(
                         session,
                         url,
+                        query,
+                        token=token,
+                        max_repos=max_repos,
                         min_stars=min_stars,
+                        max_pages=max_pages,
                         cache=cache,
                         on_page=on_page,
-                        token=token,
-                        max_pages=max_pages,
-                        rows=max_repos,
-                        adaptive_stop=False,
+                        on_scraped=on_scraped,
                         on_retry=(
                             on_retry
                             if progress_ctx is not None and _renders_live(console)
@@ -492,22 +503,10 @@ def search(
                     )
                 finally:
                     if progress_ctx is not None:
-                        progress_ctx.stop()
+                        progress_ctx.stop()  # idempotent; covers a scrape that raised
 
-                repos = scrape_result.repos
-                _print_scrape_outcome(
-                    console, scrape_result, min_stars, url, DependentType.REPOSITORY
-                )
-                if scrape_result.estimated_total_dependents == 0:
+                if no_dependents:
                     return  # the outcome message is the whole answer; nothing to search
-
-                result = await search_code(
-                    session,
-                    repos,
-                    query,
-                    token=token,
-                    max_repos=max_repos,
-                )
                 print_search_results(result)
 
     asyncio.run(_run())

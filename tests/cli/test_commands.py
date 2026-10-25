@@ -627,7 +627,7 @@ class TestDepsHardeningFlags:
 
 class TestSearchHardening:
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_uses_bounded_non_adaptive_topk(
         self,
         mock_scrape: AsyncMock,
@@ -679,7 +679,7 @@ class TestSearchHardening:
         assert "a/b" in result.output  # search results are printed
 
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_max_pages_above_ceiling_warns_and_clamps(
         self,
         mock_scrape: AsyncMock,
@@ -712,7 +712,7 @@ class TestSearchHardening:
         assert kwargs["max_pages"] == 1000  # clamped before the scrape
 
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_summary_reports_matched_count_not_len_repos(
         self,
         mock_scrape: AsyncMock,
@@ -1025,7 +1025,7 @@ class TestRetryStatus:
 
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_shows_countdown_in_progress_then_clears(
         self,
         mock_scrape: AsyncMock,
@@ -1075,7 +1075,7 @@ class TestRetryLogWithoutLiveTerminal:
 class TestOnPageCallbacks:
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_on_page_updates_progress(
         self,
         mock_scrape: AsyncMock,

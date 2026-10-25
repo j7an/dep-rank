@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from dep_rank.core.models import (
     CautionCode,
+    CodeSearchResult,
     DependentsResult,
     DependentType,
     Repository,
@@ -171,3 +172,8 @@ class TestTrustModels:
         data = repo.model_dump_json()
         assert '"score":72.5' in data
         assert '"components"' in data
+
+
+def test_code_search_result_rejects_incomplete_without_reason() -> None:
+    with pytest.raises(ValidationError):
+        CodeSearchResult(source="u", query="q", hits=[], searched_repos=0, complete=False)

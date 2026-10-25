@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
 
-from dep_rank.core.search import search_code
+from dep_rank.core.models import CodeSearchResult, ScrapeReason, ScrapeResult
+from dep_rank.core.search import search_code, search_dependents
 from tests.conftest import FakeHTTP, fast_limiter, make_repo
 
 
@@ -93,3 +95,63 @@ class TestSearchCode:
         result = await search_code(session, [], "query", token="fake")
         assert result.searched_repos == 0
         assert len(result.hits) == 0
+
+
+SOURCE_URL = "https://github.com/o/r"
+
+
+async def test_search_dependents_bounded_non_adaptive_and_copies_completeness(
+    session: httpx2.AsyncClient,
+) -> None:
+    repo = make_repo("a", "b")
+    scraped = ScrapeResult(
+        repos=[repo],
+        pages_scraped=3,
+        max_pages=3,
+        estimated_total_pages=9,
+        estimated_total_dependents=5,
+        complete=False,
+        reason=ScrapeReason.MAX_PAGES_REACHED,
+    )
+    searched = CodeSearchResult(source=repo.url, query="q", hits=[], searched_repos=1)
+    on_scraped = AsyncMock()
+    with (
+        patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock) as scrape_mock,
+        patch("dep_rank.core.search.search_code", new_callable=AsyncMock) as search_mock,
+    ):
+        scrape_mock.return_value = scraped
+        search_mock.return_value = searched
+        result = await search_dependents(
+            session, SOURCE_URL, "q", token="t", max_repos=7, on_scraped=on_scraped
+        )
+    assert scrape_mock.await_args is not None
+    assert scrape_mock.await_args.kwargs["adaptive_stop"] is False
+    assert scrape_mock.await_args.kwargs["rows"] == 7
+    on_scraped.assert_awaited_once_with(scraped)
+    search_mock.assert_awaited_once()
+    assert (result.source, result.complete, result.reason) == (
+        SOURCE_URL,
+        False,
+        ScrapeReason.MAX_PAGES_REACHED,
+    )
+
+
+async def test_search_dependents_zero_dependents_skips_search(
+    session: httpx2.AsyncClient,
+) -> None:
+    scraped = ScrapeResult(
+        repos=[],
+        pages_scraped=1,
+        max_pages=200,
+        estimated_total_pages=1,
+        estimated_total_dependents=0,
+    )
+    with (
+        patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock) as scrape_mock,
+        patch("dep_rank.core.search.search_code", new_callable=AsyncMock) as search_mock,
+    ):
+        scrape_mock.return_value = scraped
+        result = await search_dependents(session, SOURCE_URL, "q", token="t")
+    search_mock.assert_not_awaited()
+    assert (result.source, result.searched_repos, result.hits) == (SOURCE_URL, 0, [])
+    assert (result.complete, result.reason) == (True, None)
