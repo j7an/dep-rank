@@ -132,12 +132,15 @@ class _ScrapeProgress:
 
 
 def _http_client() -> httpx2.AsyncClient:
-    return httpx2.AsyncClient(
-        headers={"User-Agent": f"dep-rank/{__version__}"},
+    headers = {"User-Agent": f"dep-rank/{__version__}"}
+    try:
         # Docker MCP Toolkit's --block-network egress proxy is reached via proxy env vars;
         # in httpx2 this covers proxy vars and SSL_CERT_FILE/SSL_CERT_DIR, not .netrc.
-        trust_env=True,
-    )
+        return httpx2.AsyncClient(headers=headers, trust_env=True)
+    except ImportError:
+        # A SOCKS proxy (e.g. ALL_PROXY=socks5://...) needs socksio, which is not installed;
+        # ignore proxy env as before rather than failing every call.
+        return httpx2.AsyncClient(headers=headers, trust_env=False)
 
 
 def _check_call(url: str) -> str:

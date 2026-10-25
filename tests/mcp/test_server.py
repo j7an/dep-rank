@@ -598,11 +598,25 @@ async def test_cancelled_call_drains_refresh_before_releasing(
     assert refreshed["expired"] is False  # the refresh's write landed before teardown
 
 
-async def test_http_client_honors_proxy_environment() -> None:
+async def test_http_client_honors_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     # Docker MCP Toolkit enforces allowHosts (--block-network) via an L7 proxy reached
     # through http_proxy/https_proxy; ignoring them makes every request fail.
+    for name in ("ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("https_proxy", "http://proxy.invalid:3128")
     client = server._http_client()
     try:
         assert client.trust_env is True
+    finally:
+        await client.aclose()
+
+
+async def test_http_client_survives_socks_all_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A SOCKS ALL_PROXY needs socksio, which dep-rank does not install; the client must
+    # still build (ignoring proxy env, as before proxy support) instead of failing.
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
+    client = server._http_client()
+    try:
+        assert client.trust_env is False
     finally:
         await client.aclose()

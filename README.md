@@ -106,7 +106,7 @@ Caveats:
 - Trust scores are pool-relative heuristics, not quality or fraud verdicts; see [Trust Ranking](#trust-ranking).
 - Calls run one at a time; a call that arrives while another is running waits for it.
 - Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
-- The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment.
+- The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported; when one is set, the server ignores proxy settings.
 
 ### Docker MCP Toolkit
 
@@ -132,6 +132,8 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
      - github.com:443
      - api.github.com:443
    ```
+
+   `get_dependents` with `downloads` also needs `packages.ecosyste.ms:443`, `api.npmjs.org:443`, and `api.deps.dev:443` in `allowHosts`; without them, download stats are reported as unavailable.
 
    For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
 
