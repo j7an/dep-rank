@@ -152,9 +152,16 @@ Monitor progress at:
   at the released version
 - [ ] Stable releases only: smoke-test `uvx --with "dep-rank[mcp]" dep-rank@X mcp`
   (it should start and wait on stdin)
-- [ ] First release with an image only: in the repo's **Packages** settings, set the
-  `dep-rank` GHCR package visibility to **public** (new packages start private) and confirm
-  it is linked to `j7an/dep-rank`
+- [ ] Confirm the GHCR image is publicly pullable (an anonymous manifest fetch, no login):
+
+      TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:j7an/dep-rank:pull" | jq -r .token)
+      curl -sf -o /dev/null -H "Authorization: Bearer $TOKEN" \
+        -H "Accept: application/vnd.oci.image.index.v1+json" \
+        "https://ghcr.io/v2/j7an/dep-rank/manifests/${VERSION}" && echo public
+
+  The package took the repository's public visibility on its first push (v0.9.0), so
+  no manual step is expected. If the check fails, set it public under the package's
+  **Package settings → Change visibility**; GitHub does not allow making it private again.
 - [ ] Verify the image: `docker pull "ghcr.io/j7an/dep-rank:${VERSION}"` and
   `gh attestation verify "oci://ghcr.io/j7an/dep-rank:${VERSION}" --repo j7an/dep-rank`
 - [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
