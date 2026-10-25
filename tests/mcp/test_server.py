@@ -19,6 +19,7 @@ from mcp.server.session import ServerSession
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import TextContent
 
+from dep_rank import __version__
 from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     CodeSearchResult,
@@ -627,3 +628,9 @@ def test_http_client_rejects_socks_proxy(
         monkeypatch.setenv(name, value)
     with pytest.raises(ToolError, match="SOCKS"):
         server._http_client()
+
+
+async def test_server_reports_dep_rank_version() -> None:
+    async with Client(mcp) as client:
+        assert client.server_info is not None
+        assert client.server_info.version == __version__

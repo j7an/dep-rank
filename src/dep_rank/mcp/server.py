@@ -52,7 +52,7 @@ _ANNOTATIONS = ToolAnnotations(
     destructive_hint=False,
 )
 
-mcp = FastMCP("dep-rank", instructions=INSTRUCTIONS)
+mcp = FastMCP("dep-rank", instructions=INSTRUCTIONS, version=__version__)
 
 # ponytail: tool calls serialize; share one limiter across concurrent walks if queued-call
 # timeouts appear in practice.
