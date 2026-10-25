@@ -1,14 +1,27 @@
 [project]
 name = "dep-rank"
 dynamic = ["version"]
-description = "Analyze GitHub repository dependents, ranked by stars or trust."
+description = "Rank a GitHub repo's dependents by stars or trust heuristic, and search their code — CLI and MCP server."
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
     {name = "j7an"}
 ]
 readme = "README.md"
-keywords = ["github", "dependencies", "cli", "stars", "ranking", "dependents", "mcp", "mcp-server"]
+keywords = [
+    "github",
+    "dependents",
+    "reverse-dependencies",
+    "dependency-graph",
+    "ranking",
+    "stars",
+    "trust",
+    "code-search",
+    "cli",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
