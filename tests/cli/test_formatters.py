@@ -291,6 +291,36 @@ class TestPrintSearchResults:
         )
         out = _render(print_search_results, result)
         assert "No results found for 'import os'" in out
+        assert "not searched" not in out
+
+    def test_no_hits_warns_about_failed_repos(self) -> None:
+        result = CodeSearchResult(
+            source="https://github.com/django/django",
+            query="q",
+            hits=[],
+            searched_repos=0,
+            failed_repos={"a/b": "ConnectError", "c/d": "HTTP 401", "e/f": "HTTP 401"},
+        )
+        out = _flat(_render(print_search_results, result))
+        assert "No results found for 'q'" in out
+        assert "⚠ 3 repos not searched: HTTP 401 (2), ConnectError (1)" in out
+
+    def test_hits_warn_about_failed_repos(self) -> None:
+        hit = CodeSearchHit(
+            repo=make_repo("alpha", "framework"),
+            file_url="https://github.com/alpha/framework/blob/main/app.py",
+            file_path="app.py",
+            matches=1,
+        )
+        result = CodeSearchResult(
+            source="https://github.com/django/django",
+            query="q",
+            hits=[hit],
+            searched_repos=1,
+            failed_repos={"c/d": "HTTP 403"},
+        )
+        out = _flat(_render(print_search_results, result))
+        assert "⚠ 1 repos not searched: HTTP 403 (1)" in out
 
     def test_with_hits(self) -> None:
         repo = make_repo("alpha", "framework", stars=5000)
@@ -311,6 +341,7 @@ class TestPrintSearchResults:
         row = next(line for line in out.splitlines() if "alpha/framework" in line)
         assert "app.py" in row
         assert "3" in row  # match count rendered as text
+        assert "not searched" not in out
 
     def test_brackets_render_literally(self) -> None:
         hit = CodeSearchHit(
