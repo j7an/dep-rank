@@ -48,6 +48,7 @@ async def search_code(
 
     hits: list[CodeSearchHit] = []
     failed: dict[str, str] = {}
+    incomplete: list[str] = []
     search_repos = repos[:max_repos]
     headers = {
         "Authorization": f"token {token}",
@@ -77,6 +78,8 @@ async def search_code(
             failed[full_name] = "invalid JSON"
             continue
 
+        if data.get("incomplete_results"):
+            incomplete.append(full_name)
         for item in data.get("items", []):
             text_matches = item.get("text_matches", [])
             hits.append(
@@ -94,6 +97,7 @@ async def search_code(
         hits=hits,
         searched_repos=len(search_repos) - len(failed),
         failed_repos=failed,
+        incomplete_repos=incomplete,
     )
 
 
