@@ -293,3 +293,52 @@ def test_docker_build_job_contract() -> None:
     assert "packages:" not in job
     on_block = ci[: ci.index("\njobs:")]
     assert "paths" not in on_block
+
+
+def _permissions_block(job: str) -> set[str]:
+    block = job[job.index("    permissions:\n") :].split("\n    steps:")[0]
+    return {line.strip() for line in block.splitlines()[1:] if line.strip()}
+
+
+def test_publish_ghcr_job_contract() -> None:
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    ci = (WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8")
+    job = _job_text(release, "publish-ghcr")
+    assert "needs: publish-pypi" in job
+    assert _permissions_block(job) == {
+        "contents: read",
+        "packages: write",
+        "id-token: write",
+        "attestations: write",
+    }
+    for needle in (
+        "persist-credentials: false",
+        "enable-cache: false",
+        "name: pypi-dist",
+        "platforms: linux/amd64,linux/arm64",
+        "registry: ghcr.io",
+        "secrets.GITHUB_TOKEN",
+        "scripts/smoke-test-image.sh",
+        "push-to-registry: true",
+        "scripts/classify-prerelease.sh",
+        "imagetools create",
+    ):
+        assert needle in job
+    # latest is added only after the smoke test, and only for stable releases.
+    assert job.index("scripts/smoke-test-image.sh") < job.index("imagetools create")
+    latest_step = job[job.rindex("\n      - name:", 0, job.index("imagetools create")) :]
+    assert "== 'false'" in latest_step.split("\n      - name:")[1]
+    assert ":latest" not in job[: job.index("imagetools create")]
+    # One export command shared with the PR-time build.
+    assert EXPORT_RE.findall(job) == EXPORT_RE.findall(_job_text(ci, "docker-build"))
+    assert len(EXPORT_RE.findall(job)) == 1
+
+
+def test_dependabot_docker_entry_holds_python_minor() -> None:
+    config = (ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    start = config.index('package-ecosystem: "docker"')
+    nxt = config.find("package-ecosystem:", start + 1)
+    entry = config[start : nxt if nxt != -1 else len(config)]
+    assert "version-update:semver-minor" in entry
+    assert "version-update:semver-major" in entry
+    assert "cooldown:" in entry
