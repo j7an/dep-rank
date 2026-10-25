@@ -46,6 +46,7 @@ builds, and hatch-vcs for versions derived from Git tags.
 - `src/dep_rank/core/star_history.py` owns the opt-in sampled star-history trust check.
 - `src/dep_rank/core/search.py` owns code search over the bounded dependent set.
 - `src/dep_rank/core/models.py` owns Pydantic result and repository models.
+- `src/dep_rank/mcp/server.py` owns the FastMCP tool surface; thin over core.
 - `src/dep_rank/scripts/drift_check.py` supports the scheduled scraper-drift
   canary.
 - `scripts/derive-published-version.sh` and `scripts/classify-prerelease.sh`
