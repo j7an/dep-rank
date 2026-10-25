@@ -97,7 +97,7 @@ add the new key everywhere, verify, then remove the old one.
    does not hard-gate tag creation on that report; the `main` ruleset's
    signed-commit requirement is the upstream enforcement point.
 4. The `v*` tag push triggers `release.yml` (test → build → TestPyPI →
-   PyPI → GitHub Release)
+   PyPI → GitHub Release → MCP Registry, stable only)
 
 The "auto" bump analyzer reads commit subjects since the last tag, so
 **Conventional Commits** matter: every commit in a PR should match the PR's
@@ -116,11 +116,14 @@ as prerelease automatically:
 
 Use **PEP 440 canonical** forms (no hyphens): `a1` / `b1` / `rc1` / `.dev1`.
 
+Prerelease tags skip the MCP Registry job, because the registry would mark them
+"latest".
+
 ---
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs six jobs in sequence. Its leading `test` job is
+The `release.yml` workflow runs seven jobs in sequence (the last is skipped for prereleases). Its leading `test` job is
 a deliberate dep-rank-owned CI gate in addition to the shared-workflows
 caller-owned PyPI template:
 
@@ -132,6 +135,7 @@ caller-owned PyPI template:
 | `verify-testpypi` | Uses Python 3.13 and an explicit uv source to install only `dep-rank` from TestPyPI while resolving ordinary dependencies from PyPI, then runs `dep-rank --version` |
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
 | `github-release` | Publishes the GitHub Release with auto-generated notes and attached artifacts |
+| `publish-mcp-registry` | **Stable releases only** (skipped when the release is a prerelease). Writes the tag version into `server.json`, installs a checksum-pinned `mcp-publisher`, and publishes to the MCP Registry via GitHub OIDC (no secrets) |
 
 Monitor progress at:
 `https://github.com/j7an/dep-rank/actions`
@@ -143,6 +147,10 @@ Monitor progress at:
 - [ ] Approve the `pypi` environment deployment when GitHub prompts you
 - [ ] Verify the live package: `pip install "dep-rank==${VERSION}"`
 - [ ] Smoke-test: `dep-rank --version`
+- [ ] Stable releases only: verify the registry listing for `io.github.j7an/dep-rank`
+  at the released version
+- [ ] Stable releases only: smoke-test `uvx --with "dep-rank[mcp]" dep-rank@X mcp`
+  (it should start and wait on stdin)
 - [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
 
 ---
@@ -182,3 +190,9 @@ skipped, create the release manually:
     gh release create "v${VERSION}" dist/* \
       --title "v${VERSION}" \
       --generate-notes
+
+### MCP Registry publish failed
+
+`publish-mcp-registry` runs after the GitHub Release and does not affect PyPI. Re-run
+the failed job alone from the Actions run page; it is safe to repeat until the registry
+accepts the version.
