@@ -20,17 +20,17 @@ def _fresh_search_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "bad_response",
+    ("bad_response", "reason"),
     [
-        {"body": b"<html>not json"},
-        {"exception": httpx2.ReadTimeout("slow")},
-        {"status": 403},
-        {"exception": httpx2.ConnectError("connection failed")},
+        ({"body": b"<html>not json"}, "invalid JSON"),
+        ({"exception": httpx2.ReadTimeout("slow")}, "ReadTimeout"),
+        ({"status": 403}, "HTTP 403"),
+        ({"exception": httpx2.ConnectError("connection failed")}, "ConnectError"),
     ],
     ids=["bad-json", "read-timeout", "non-200", "connect-error"],
 )
-async def test_search_skips_repo_on_bad_response(
-    bad_response: dict[str, Any], mock_http: FakeHTTP, session: httpx2.AsyncClient
+async def test_search_reports_repo_on_bad_response(
+    bad_response: dict[str, Any], reason: str, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
     repos = [make_repo("alpha", "framework"), make_repo("beta", "toolkit")]
     mock_http.get(
@@ -48,7 +48,8 @@ async def test_search_skips_repo_on_bad_response(
 
     result = await search_code(session, repos, "test", token="fake")
 
-    assert result.searched_repos == 2  # the skipped repo still counts as searched
+    assert result.searched_repos == 1
+    assert result.failed_repos == {"alpha/framework": reason}
     assert [(hit.repo, hit.file_path) for hit in result.hits] == [(repos[1], "app.py")]
 
 
@@ -90,6 +91,7 @@ class TestSearchCode:
             )
         result = await search_code(session, repos, "test", token="fake", max_repos=2)
         assert result.searched_repos == 2
+        assert result.failed_repos == {}
 
     async def test_empty_repos_list(self, session: httpx2.AsyncClient) -> None:
         result = await search_code(session, [], "query", token="fake")

@@ -47,14 +47,17 @@ async def search_code(
         return CodeSearchResult(source="", query=query, hits=[], searched_repos=0)
 
     hits: list[CodeSearchHit] = []
+    failed: dict[str, str] = {}
     search_repos = repos[:max_repos]
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.text-match+json",
     }
 
+    # ponytail: no early stop on 401; add one if large --max-repos with a bad token proves painful.
     for repo in search_repos:
         await SEARCH_RATE_LIMITER.acquire()
+        full_name = f"{repo.owner}/{repo.name}"
 
         search_query = f"{query} repo:{repo.owner}/{repo.name}"
         url = f"{SEARCH_URL}?q={quote(search_query, safe='')}"
@@ -64,9 +67,14 @@ async def search_code(
                 url, headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT
             )
             if resp.status_code != 200:
+                failed[full_name] = f"HTTP {resp.status_code}"
                 continue
             data = resp.json()
-        except (httpx2.RequestError, ValueError):
+        except httpx2.RequestError as exc:
+            failed[full_name] = type(exc).__name__
+            continue
+        except ValueError:
+            failed[full_name] = "invalid JSON"
             continue
 
         for item in data.get("items", []):
@@ -84,7 +92,8 @@ async def search_code(
         source=repos[0].url,
         query=query,
         hits=hits,
-        searched_repos=len(search_repos),
+        searched_repos=len(search_repos) - len(failed),
+        failed_repos=failed,
     )
 
 
