@@ -13,6 +13,15 @@ uv run pytest tests/core/test_validation.py -v  # one file
 uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one class
 ```
 
+## MCP tests (`tests/mcp/`)
+
+- `test_server.py` exercises the FastMCP tool surface in-process with `fastmcp.Client`:
+  token gate, call lock, error mapping, and progress/warning reporting.
+- `test_stdio.py` spawns `dep-rank mcp` as a subprocess and lists its tools, proving stdout
+  carries only JSON-RPC. The subprocess does not see the in-process cache patch, so the test
+  passes an env that points the cache at `tmp_path`.
+- These tests need the `mcp` extra (`uv sync` installs it for development).
+
 ## Shared fixtures (`tests/conftest.py`)
 
 Request these by name as test parameters:

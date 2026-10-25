@@ -1,12 +1,14 @@
 # dep-rank
 
+<!-- mcp-name: io.github.j7an/dep-rank -->
+
 Rank GitHub dependents by stars or trust.
 
 [![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as a command-line tool.
+dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as a command-line tool and as an MCP server for AI agents (see [MCP server](#mcp-server)).
 
 ## Quick Start
 
@@ -68,6 +70,42 @@ A scrape result (`deps`, and the `search` pre-pass) reports whether it finished:
 dep-rank cache stats    # Show cache size
 dep-rank cache clear    # Clear all cached data
 ```
+
+## MCP server
+
+`dep-rank mcp` runs an [MCP](https://modelcontextprotocol.io) server over stdio so AI agents can call dep-rank directly. It needs the optional `mcp` extra:
+
+```bash
+pip install "dep-rank[mcp]"
+```
+
+Client configuration (the command works with any MCP client that launches stdio servers):
+
+```json
+{
+  "mcpServers": {
+    "dep-rank": {
+      "command": "uvx",
+      "args": ["--with", "dep-rank[mcp]", "dep-rank", "mcp"],
+      "env": { "DEP_RANK_TOKEN": "ghp_your_token_here" }
+    }
+  }
+}
+```
+
+`DEP_RANK_TOKEN` is required: both tools fail without it. The token is read from the server's environment only, never from a tool argument.
+
+Tools:
+
+- `get_dependents` — rank a repository's dependents by stars or trust (the `dep-rank deps` pipeline). Parameters mirror the CLI: `url`, `rows`, `min_stars`, `dependent_type`, `descriptions`, `rank_by`, `trust_check`, `downloads`, `max_pages`, `adaptive_stop`.
+- `search_dependents` — search code across the top dependents (the `dep-rank search` pipeline): `url`, `query`, `max_repos`, `min_stars`, `max_pages`.
+
+Caveats:
+
+- Results can be partial. Check `complete` and `reason` before treating counts as totals; see [Partial results](#partial-results).
+- Trust scores are pool-relative heuristics, not quality or fraud verdicts; see [Trust Ranking](#trust-ranking).
+- Calls run one at a time; a call that arrives while another is running waits for it.
+- Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
 
 ## Python API (provisional)
 

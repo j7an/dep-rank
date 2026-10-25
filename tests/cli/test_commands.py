@@ -8,6 +8,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -1484,3 +1485,29 @@ def test_requests_identify_installed_version(
         for requests in mock_http.requests.values()
         for request in requests
     )
+
+
+class TestMcpCommand:
+    def test_missing_extra_prints_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "fastmcp", None)
+        monkeypatch.delitem(sys.modules, "dep_rank.mcp.server", raising=False)
+        result = CliRunner().invoke(cli, ["mcp"])
+        assert result.exit_code == 1
+        assert 'pip install "dep-rank[mcp]"' in result.stderr
+
+    def test_runs_stdio_without_banner(self) -> None:
+        with patch("dep_rank.mcp.server.mcp.run") as run:
+            result = CliRunner().invoke(cli, ["mcp"])
+        assert result.exit_code == 0
+        run.assert_called_once_with(transport="stdio", show_banner=False)
+
+    def test_unrelated_import_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Broken(ModuleType):
+            def __getattr__(self, name: str) -> Any:
+                raise ImportError("boom", name="dep_rank.mcp.helper")
+
+        monkeypatch.setitem(sys.modules, "dep_rank.mcp.server", _Broken("dep_rank.mcp.server"))
+        result = CliRunner().invoke(cli, ["mcp"])
+        assert isinstance(result.exception, ImportError)
+        assert result.exception.name == "dep_rank.mcp.helper"
+        assert "dep-rank[mcp]" not in result.output

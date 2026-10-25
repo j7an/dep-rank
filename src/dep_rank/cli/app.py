@@ -544,3 +544,20 @@ def stats() -> None:
         click.echo(f"Size: {s['size_bytes']:,} bytes")
 
     asyncio.run(_stats())
+
+
+@cli.command()
+def mcp() -> None:
+    """Run the MCP server over stdio (requires the 'mcp' extra and DEP_RANK_TOKEN)."""
+    try:
+        from dep_rank.mcp.server import mcp as server
+    except ImportError as e:
+        missing = e.name or ""
+        if missing.split(".")[0] not in {"fastmcp", "mcp"}:
+            raise
+        click.echo(
+            "Error: dep-rank mcp requires the 'mcp' extra: pip install \"dep-rank[mcp]\"",
+            err=True,
+        )
+        sys.exit(1)
+    server.run(transport="stdio", show_banner=False)
