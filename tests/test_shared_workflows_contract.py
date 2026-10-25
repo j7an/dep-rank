@@ -252,3 +252,44 @@ def test_github_release_exposes_prerelease_output() -> None:
     job = _job_text(release, "github-release")
     assert "prerelease: ${{ steps." in job
     assert '>> "$GITHUB_OUTPUT"' in job
+
+
+EXPORT_RE = re.compile(r"^\s*(?:- run: |run: )?(uv export [^\n]+)$", re.MULTILINE)
+
+
+def test_dockerfile_python_matches_verify_python_and_is_digest_pinned() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    base = re.search(r"^FROM python:(\d+\.\d+)-slim@sha256:[0-9a-f]{64}$", dockerfile, re.M)
+    verify = re.search(r'^  VERIFY_PYTHON: "(\d+\.\d+)"$', release, re.M)
+    assert base is not None and verify is not None
+    assert base.group(1) == verify.group(1)
+
+
+def test_dockerignore_denies_everything_but_build_inputs() -> None:
+    lines = [
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert lines[0] == "*"
+    assert set(lines[1:]) == {"!dist/*.whl", "!dist/requirements.txt"}
+
+
+def test_docker_build_job_contract() -> None:
+    ci = (WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8")
+    job = _job_text(ci, "docker-build")
+    for needle in (
+        "needs: [update-lockfile]",
+        "contents: read",
+        "persist-credentials: false",
+        "fetch-depth: 0",
+        "uv build --wheel --out-dir dist",
+        "docker build",
+        "scripts/smoke-test-image.sh",
+    ):
+        assert needle in job
+    assert not re.search(r"^\s*push:|docker push|--push", job, re.MULTILINE)
+    assert "packages:" not in job
+    on_block = ci[: ci.index("\njobs:")]
+    assert "paths" not in on_block

@@ -1,0 +1,4 @@
+# Deny everything; the image is built only from the wheel and the locked requirements.
+*
+!dist/*.whl
+!dist/requirements.txt
