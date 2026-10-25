@@ -14,6 +14,7 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.logging import LogMessage
+from fastmcp.exceptions import ToolError
 from mcp.server.session import ServerSession
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import TextContent
@@ -596,3 +597,33 @@ async def test_cancelled_call_drains_refresh_before_releasing(
         await check.close()
     assert refreshed is not None
     assert refreshed["expired"] is False  # the refresh's write landed before teardown
+
+
+async def test_http_client_honors_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Docker MCP Toolkit enforces allowHosts (--block-network) via an L7 proxy reached
+    # through http_proxy/https_proxy; ignoring them makes every request fail.
+    for name in ("ALL_PROXY", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("https_proxy", "http://proxy.invalid:3128")
+    client = server._http_client()
+    try:
+        assert client.trust_env is True
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "extra_env",
+    [{}, {"HTTPS_PROXY": "http://proxy.invalid:3128"}],
+    ids=["socks-only", "socks-with-https-proxy"],
+)
+def test_http_client_rejects_socks_proxy(
+    monkeypatch: pytest.MonkeyPatch, extra_env: dict[str, str]
+) -> None:
+    # A SOCKS proxy needs socksio, which dep-rank does not install. Ignoring proxy env
+    # instead would silently bypass any HTTP(S) proxy set alongside it.
+    monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
+    for name, value in extra_env.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ToolError, match="SOCKS"):
+        server._http_client()

@@ -203,6 +203,43 @@ jobs:
           exclude-paths: |
             src/dep_rank/py.typed
 
+  # Builds the MCP server image the release publishes, so Dockerfile, uv.lock, and
+  # base-image changes (including Dependabot bumps) are proven before merge.
+  docker-build:
+    needs: [update-lockfile]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Block on lockfile repair failure
+        if: ${{ needs.update-lockfile.result == 'failure' }}
+        shell: bash
+        run: |
+          echo "::error::update-lockfile failed to repair uv.lock - run 'uv lock' locally and push." && exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.update-lockfile.outputs.committed == 'true' && github.head_ref || '' }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Build wheel
+        run: uv build --wheel --out-dir dist
+      - name: Export locked requirements
+        run: uv export --frozen --no-dev --extra mcp --no-emit-project -o dist/requirements.txt
+      - name: Build image
+        run: docker build -t dep-rank:ci .
+      - name: Smoke-test image
+        run: |
+          WHL=$(basename dist/*.whl)
+          V=${WHL#dep_rank-}
+          V=${V%%-*}
+          bash scripts/smoke-test-image.sh dep-rank:ci "$V"
+
   dependency-review:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'

@@ -106,6 +106,72 @@ Caveats:
 - Trust scores are pool-relative heuristics, not quality or fraud verdicts; see [Trust Ranking](#trust-ranking).
 - Calls run one at a time; a call that arrives while another is running waits for it.
 - Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
+- The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported: tool calls fail with an error until it is removed from the server's environment.
+
+### Docker MCP Toolkit
+
+The `ghcr.io/j7an/dep-rank` image runs the MCP server under [Docker MCP Toolkit](https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit/). You get container isolation (no host filesystem access, and network access limited to GitHub when the gateway runs with `--block-network`) and one profile shared by every agent harness you connect. It does not change prompt-injection risk: tool results still contain text from third-party repositories, and your agent reads it.
+
+Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWorkingSets` feature flag in Docker Desktop, or `docker mcp feature enable profiles`).
+
+1. Save this server definition as `~/.docker/mcp/catalogs/dep-rank.yaml`. The gateway only reads `file://` definitions from that directory.
+
+   ```yaml
+   name: dep-rank
+   title: dep-rank
+   type: server
+   image: ghcr.io/j7an/dep-rank:latest
+   description: Rank a GitHub repo's dependents by stars or trust heuristic, and search their code
+   secrets:
+     - name: dep-rank.token
+       env: DEP_RANK_TOKEN
+       example: ghp_your_token_here
+   volumes:
+     - dep-rank-cache:/cache
+   allowHosts:
+     - github.com:443
+     - api.github.com:443
+   ```
+
+   `get_dependents` with `downloads` also needs `packages.ecosyste.ms:443`, `api.npmjs.org:443`, and `api.deps.dev:443` in `allowHosts`; without them, download stats are reported as unavailable.
+
+   For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
+
+2. Create the profile. Keep `--id dep-rank`: without it the ID becomes `dep_rank`, which won't match the harness config below.
+
+   ```bash
+   docker mcp profile create --name dep-rank --id dep-rank \
+     --server "file://$HOME/.docker/mcp/catalogs/dep-rank.yaml"
+   ```
+
+3. Store your GitHub token:
+
+   ```bash
+   gh auth token | docker mcp secret set dep-rank.token
+   ```
+
+   If the secret is missing, the gateway passes the literal value `<UNKNOWN>` as `DEP_RANK_TOKEN`, so calls fail with GitHub errors rather than a "token missing" message.
+
+4. Point each harness at the gateway. Write the entry by hand so it includes `--block-network`, which is what enforces `allowHosts`:
+
+   ```json
+   {
+     "mcpServers": {
+       "dep-rank": {
+         "command": "docker",
+         "args": ["mcp", "gateway", "run", "--profile", "dep-rank", "--block-network"]
+       }
+     }
+   }
+   ```
+
+   `docker mcp client connect <client> -p dep-rank` also works, but the entry it writes omits `--block-network`; add it yourself.
+
+Notes:
+
+- Each tool call starts a fresh container. The `dep-rank-cache` volume keeps the cache warm between calls.
+- While network access is blocked, an empty code-search result can mean the requests were blocked rather than that nothing matched; see [#233](https://github.com/j7an/dep-rank/issues/233).
+- The gateway can leave its proxy containers behind. Remove them with `docker rm -f $(docker ps -aq --filter label=docker-mcp-proxy=true)`.
 
 ## Python API (provisional)
 
