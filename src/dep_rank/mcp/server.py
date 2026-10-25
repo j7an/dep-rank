@@ -99,7 +99,10 @@ class _ScrapeProgress:
             f"GitHub rate limit: retrying page {status.page} in {status.delay:g}s "
             f"(attempt {status.attempt}/{status.max_retries})"
         )
-        await self._ctx.report_progress(self._pages_scraped, self._max_pages, message)
+        # MCP requires progress to increase with every notification: step a fraction past
+        # the last page, staying below the next page's whole number.
+        progress = self._pages_scraped + status.attempt / (status.max_retries + 1)
+        await self._ctx.report_progress(progress, self._max_pages, message)
         await self._ctx.warning(message)
 
 

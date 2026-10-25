@@ -403,13 +403,38 @@ async def test_retry_reported_as_progress_and_warning(
     assert not result.is_error, _text(result)
     assert len(recorder.progress) == 2, recorder.progress
     progress, total, message = recorder.progress[1]
-    # The retry reports the last page count rather than resetting progress.
-    assert (progress, total) == (3, 200)
+    # Past the last page count, so progress keeps increasing as MCP requires.
+    assert progress == pytest.approx(3 + 1 / 6)
+    assert total == 200
     assert message is not None
     _assert_retry_facts(message)
     retry_warnings = [text for text in recorder.warnings() if "rate limit" in text]
     assert len(retry_warnings) == 1, recorder.logs
     _assert_retry_facts(retry_warnings[0])
+
+
+async def test_retry_progress_strictly_increases(
+    token: str, core_deps: AsyncMock, recorder: _Recorder
+) -> None:
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult:
+        await kwargs["on_page"](_snapshot(pages_scraped=3, estimated_total_pages=40))
+        for attempt in (1, 2):
+            await kwargs["on_retry"](
+                RetryStatus(page=4, attempt=attempt, max_retries=5, delay=30.0)
+            )
+        await kwargs["on_page"](_snapshot(pages_scraped=4, estimated_total_pages=40))
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    async with Client(mcp, progress_handler=recorder.on_progress) as client:
+        result = await client.call_tool("get_dependents", {"url": URL}, raise_on_error=False)
+
+    assert not result.is_error, _text(result)
+    values = [progress for progress, _, _ in recorder.progress]
+    assert len(values) == 4, recorder.progress
+    page_3, retry_1, retry_2, page_4 = values
+    assert page_3 < retry_1 < retry_2 < page_4
+    assert (page_3, page_4) == (3, 4)
 
 
 async def test_retry_warning_without_progress_token(
