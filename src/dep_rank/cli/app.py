@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import ctypes
 import logging
-import os
 import sys
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Literal, cast
 
 import click
@@ -20,7 +16,6 @@ from dep_rank.core.models import DependentsResult, DependentType
 from dep_rank.core.validation import validate_github_url
 
 if TYPE_CHECKING:
-    from dep_rank.core.cache import SqliteCache
     from dep_rank.core.models import ScrapeResult
 
 _stderr_console = Console(stderr=True)
@@ -38,38 +33,6 @@ def _renders_live(console: Console) -> bool:
     Redirected or dumb-terminal stderr shows no live view, so retry status must be logged.
     """
     return console.is_terminal and not console.is_dumb_terminal
-
-
-def _win_local_appdata() -> str:  # pragma: no cover
-    """Resolve the Windows shell's local application data folder."""
-    if sys.platform != "win32":
-        raise OSError("Windows only")
-    buf = ctypes.create_unicode_buffer(1024)
-    ctypes.windll.shell32.SHGetFolderPathW(None, 28, None, 0, buf)
-    return buf.value
-
-
-def _cache_dir() -> str:
-    """Resolve the platform cache directory using current environment settings."""
-    if sys.platform == "win32":
-        return os.path.join(_win_local_appdata(), "dep-rank", "dep-rank", "Cache")
-    if sys.platform == "darwin":
-        return os.path.join(os.path.expanduser("~"), "Library", "Caches", "dep-rank")
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "dep-rank")
-
-
-@contextlib.asynccontextmanager
-async def _open_cache() -> AsyncIterator[SqliteCache]:
-    """Initialize a cache and close it when its caller leaves the context."""
-    from dep_rank.core.cache import SqliteCache
-
-    cache = SqliteCache(_cache_dir())
-    await cache.initialize()
-    try:
-        yield cache
-    finally:
-        await cache.close()
 
 
 def _validate_url_or_exit(url: str) -> None:
@@ -145,11 +108,12 @@ async def run_deps(
     from rich.text import Text
 
     from dep_rank.cli.formatters import RetryCountdown, build_topk_table
+    from dep_rank.core.cache import open_cache
     from dep_rank.core.dependents import get_dependents
     from dep_rank.core.models import RetryStatus, ScrapeSnapshot
 
     console = _stderr_console
-    async with _open_cache() as cache:
+    async with open_cache() as cache:
         dep_type = DependentType.PACKAGE if packages else DependentType.REPOSITORY
         async with httpx2.AsyncClient(
             headers={"User-Agent": f"dep-rank/{__version__}"},
@@ -457,12 +421,13 @@ def search(
         import httpx2
 
         from dep_rank.cli.formatters import RetryCountdown, print_search_results
+        from dep_rank.core.cache import open_cache
         from dep_rank.core.models import RetryStatus, ScrapeSnapshot
         from dep_rank.core.scraper import scrape_dependents
         from dep_rank.core.search import search_code
 
         console = _stderr_console
-        async with _open_cache() as cache:
+        async with open_cache() as cache:
             async with httpx2.AsyncClient(
                 headers={"User-Agent": f"dep-rank/{__version__}"},
                 trust_env=False,
@@ -558,7 +523,9 @@ def clear() -> None:
     """Clear all cached data."""
 
     async def _clear() -> None:
-        async with _open_cache() as cache:
+        from dep_rank.core.cache import open_cache
+
+        async with open_cache() as cache:
             await cache.clear()
         click.echo("Cache cleared.")
 
@@ -570,7 +537,9 @@ def stats() -> None:
     """Show cache statistics."""
 
     async def _stats() -> None:
-        async with _open_cache() as cache:
+        from dep_rank.core.cache import open_cache
+
+        async with open_cache() as cache:
             s = await cache.stats()
         click.echo(f"Entries: {s['entries']}")
         click.echo(f"Size: {s['size_bytes']:,} bytes")

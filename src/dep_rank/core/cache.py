@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ctypes
 import os
 import sqlite3
+import sys
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
@@ -117,3 +120,33 @@ class SqliteCache:
             # Wait for the worker off the loop: a cancelled initialize() may still be
             # blocked on a database lock inside it.
             await asyncio.to_thread(executor.shutdown)
+
+
+def _win_local_appdata() -> str:  # pragma: no cover
+    """Resolve the Windows shell's local application data folder."""
+    if sys.platform != "win32":
+        raise OSError("Windows only")
+    buf = ctypes.create_unicode_buffer(1024)
+    ctypes.windll.shell32.SHGetFolderPathW(None, 28, None, 0, buf)
+    return buf.value
+
+
+def default_cache_dir() -> str:
+    """Resolve the platform cache directory using current environment settings."""
+    if sys.platform == "win32":
+        return os.path.join(_win_local_appdata(), "dep-rank", "dep-rank", "Cache")
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Caches", "dep-rank")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "dep-rank")
+
+
+@contextlib.asynccontextmanager
+async def open_cache() -> AsyncIterator[SqliteCache]:
+    """Initialize a cache and close it when its caller leaves the context."""
+    cache = SqliteCache(default_cache_dir())
+    await cache.initialize()
+    try:
+        yield cache
+    finally:
+        await cache.close()

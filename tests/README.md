@@ -21,6 +21,8 @@ Request these by name as test parameters:
   `httpx2.MockTransport`; **`session`** yields an `httpx2.AsyncClient` using it.
 - **`cache`** initializes a temporary `SqliteCache` and closes it after the test.
 - **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
+- **`_isolated_cache_dir`** (autouse) points `dep_rank.core.cache.default_cache_dir` at a
+  per-test temporary directory so no test touches the real user cache.
 
 ## Shared helpers (`tests/conftest.py`)
 
