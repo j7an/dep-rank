@@ -28,7 +28,7 @@ builds, and hatch-vcs for versions derived from Git tags.
 ## Architecture and Module Responsibilities
 
 - `src/dep_rank/cli/app.py` owns the Click command surface: `deps`, `search`,
-  `cache`, and `--version`.
+  `cache`, `mcp`, and `--version`.
 - `src/dep_rank/cli/formatters.py` owns Rich tables, JSON presentation, and
   scrape-summary formatting. Keep presentation concerns out of core modules.
 - `src/dep_rank/core/validation.py` parses and validates GitHub repository URLs.

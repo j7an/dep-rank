@@ -20,7 +20,8 @@ uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one cla
 - `test_stdio.py` spawns `dep-rank mcp` as a subprocess and lists its tools, proving stdout
   carries only JSON-RPC. The subprocess does not see the in-process cache patch, so the test
   passes an env that points the cache at `tmp_path`.
-- These tests need the `mcp` extra (`uv sync` installs it for development).
+- The test suite needs the `mcp` extra (`uv sync` installs it via the dev group), because the
+  `filterwarnings` setting in `pyproject.toml` imports `mcp.shared.exceptions`.
 
 ## Shared fixtures (`tests/conftest.py`)
 

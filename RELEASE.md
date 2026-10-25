@@ -123,9 +123,9 @@ Prerelease tags skip the MCP Registry job, because the registry would mark them
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs seven jobs in sequence (the last is skipped for prereleases). Its leading `test` job is
-a deliberate dep-rank-owned CI gate in addition to the shared-workflows
-caller-owned PyPI template:
+The `release.yml` workflow runs seven jobs in sequence (the last is skipped for
+prereleases). Its leading `test` job is a deliberate dep-rank-owned CI gate in addition
+to the shared-workflows caller-owned PyPI template:
 
 | Job | What it does |
 |-----|--------------|

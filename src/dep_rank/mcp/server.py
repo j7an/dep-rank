@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from typing import Annotated, Literal
 
@@ -96,7 +97,7 @@ class _ScrapeProgress:
 
     async def on_retry(self, status: RetryStatus) -> None:
         message = (
-            f"GitHub rate limit: retrying page {status.page} in {status.delay:g}s "
+            f"GitHub rate limit: retrying page {status.page} in {math.ceil(status.delay)}s "
             f"(attempt {status.attempt}/{status.max_retries})"
         )
         # MCP requires progress to increase with every notification: step a fraction past

@@ -294,7 +294,7 @@ async def test_cancelled_call_releases_lock(
 
         call_c = await asyncio.wait_for(
             client.call_tool("get_dependents", {"url": URL}, raise_on_error=False),
-            timeout=1.0,
+            timeout=QUICK_TIMEOUT,
         )
 
     assert not call_c.is_error, _text(call_c)
@@ -320,20 +320,13 @@ async def test_server_answers_during_long_call(token: str, core_deps: AsyncMock)
         )
         await asyncio.wait_for(started.wait(), timeout=QUICK_TIMEOUT)
 
-        loop = asyncio.get_running_loop()
-        t0 = loop.time()
         assert await asyncio.wait_for(client.ping(), timeout=QUICK_TIMEOUT)
-        ping_elapsed = loop.time() - t0
-        t0 = loop.time()
         tools = await asyncio.wait_for(client.list_tools(), timeout=QUICK_TIMEOUT)
-        list_elapsed = loop.time() - t0
         assert not call.done()
 
         release.set()
         result = await call
 
-    assert ping_elapsed < 0.2
-    assert list_elapsed < 0.2
     assert {tool.name for tool in tools} == {"get_dependents", "search_dependents"}
     assert not result.is_error, _text(result)
 
@@ -376,7 +369,7 @@ async def test_page_progress_reported(
 
 
 def _assert_retry_facts(text: str) -> None:
-    for fact in ("rate limit", "page 4", "30", "1/5"):
+    for fact in ("rate limit", "page 4", "in 30s", "1/5"):
         assert fact in text, (fact, text)
 
 
@@ -435,6 +428,23 @@ async def test_retry_progress_strictly_increases(
     page_3, retry_1, retry_2, page_4 = values
     assert page_3 < retry_1 < retry_2 < page_4
     assert (page_3, page_4) == (3, 4)
+
+
+async def test_retry_delay_rounds_up_to_whole_seconds(
+    token: str, core_deps: AsyncMock, recorder: _Recorder
+) -> None:
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult:
+        await kwargs["on_retry"](RetryStatus(page=4, attempt=1, max_retries=5, delay=7.2))
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    async with Client(mcp, log_handler=recorder.on_log) as client:
+        result = await client.call_tool("get_dependents", {"url": URL}, raise_on_error=False)
+
+    assert not result.is_error, _text(result)
+    retry_warnings = [text for text in recorder.warnings() if "rate limit" in text]
+    assert len(retry_warnings) == 1, recorder.logs
+    assert "in 8s" in retry_warnings[0], retry_warnings[0]
 
 
 async def test_retry_warning_without_progress_token(

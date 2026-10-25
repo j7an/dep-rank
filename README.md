@@ -192,6 +192,7 @@ A token is effectively required for non-trivial use: unauthenticated GitHub HTML
 - `--rank-by trust` — fetches engagement/recency metadata via GitHub GraphQL API
 - `--trust-check` — adds authenticated REST star-history requests to trust ranking
 - `dep-rank search` — code search across dependents
+- `dep-rank mcp` — both MCP tools require `DEP_RANK_TOKEN` in the server environment
 
 Create a token at [github.com/settings/tokens](https://github.com/settings/tokens) with `public_repo` scope.
 
