@@ -164,6 +164,13 @@ Monitor progress at:
   **Package settings → Change visibility**; GitHub does not allow making it private again.
 - [ ] Verify the image: `docker pull "ghcr.io/j7an/dep-rank:${VERSION}"` and
   `gh attestation verify "oci://ghcr.io/j7an/dep-rank:${VERSION}" --repo j7an/dep-rank`
+
+  Each release also adds three untagged versions on the package page: the amd64 and
+  arm64 images and the provenance bundle, referenced by the version tag's index and its
+  `sha256-<digest>` attestation tag. Never delete untagged versions (for example with
+  `actions/delete-package-versions`): that breaks `docker pull` and attestation
+  verification. Re-running `publish-ghcr` can leave the earlier push's versions truly
+  unreferenced; public image storage is free, so leave them too.
 - [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
 
 ---
