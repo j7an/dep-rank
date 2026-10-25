@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock
 
+import httpx2
 import pytest
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
@@ -16,6 +18,7 @@ from mcp.server.session import ServerSession
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import TextContent
 
+from dep_rank.core.cache import SqliteCache
 from dep_rank.core.models import (
     CodeSearchResult,
     DependentsResult,
@@ -25,7 +28,7 @@ from dep_rank.core.models import (
 )
 from dep_rank.mcp import server
 from dep_rank.mcp.server import mcp
-from tests.conftest import make_repo
+from tests.conftest import FakeHTTP, dependents_page, make_repo
 
 URL = "https://github.com/owner/repo"
 TOOL_ARGS: dict[str, dict[str, Any]] = {
@@ -522,3 +525,74 @@ async def test_lock_wait_reported(
         message is not None and "waiting for another dep-rank call" in message
         for _, _, message in recorder.progress
     ), recorder.progress
+
+
+@pytest.mark.parametrize("tool", list(TOOL_ARGS))
+async def test_cancelled_call_drains_refresh_before_releasing(
+    tool: str, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, tmp_path: Path
+) -> None:
+    """A cancelled call finishes its SWR drain and closes its cache before freeing the lock.
+
+    Uses the real scraper, SWR manager and cache. Page 1 is an expired cache entry, so it
+    schedules a background refresh, held open here; page 2's foreground fetch never
+    returns. Cancelling the MCP request must not cut the scraper's ``swr.drain()`` short:
+    the lock stays held until the refresh finishes, and the refresh's cache write lands
+    before the cache closes.
+    """
+    monkeypatch.setenv("DEP_RANK_TOKEN", "tok")
+    first = f"{URL}/network/dependents?dependent_type=REPOSITORY"
+    cache_dir = str(tmp_path / "cache")  # where the autouse fixture points open_cache
+    seed = SqliteCache(cache_dir)
+    await seed.initialize()
+    page_1 = dependents_page([("a", "one", 100)], next_page=2)
+    await seed.put(first, page_1.encode(), etag='"old"', ttl=-1)  # expired: served stale
+    await seed.close()
+
+    release_refresh = asyncio.Event()
+    foreground_started = asyncio.Event()
+    foreground_cancelled = asyncio.Event()
+
+    async def held_refresh(request: httpx2.Request) -> httpx2.Response:
+        await release_refresh.wait()
+        return httpx2.Response(304)
+
+    async def stuck_foreground(request: httpx2.Request) -> httpx2.Response:
+        foreground_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            foreground_cancelled.set()
+            raise
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    mock_http.get(first, callback=held_refresh)
+    mock_http.get(f"{URL}/network/dependents?page=2", callback=stuck_foreground)
+
+    async with Client(mcp) as client:
+        call = asyncio.create_task(client.call_tool(tool, TOOL_ARGS[tool]))
+        await asyncio.wait_for(foreground_started.wait(), QUICK_TIMEOUT)
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        await asyncio.wait_for(foreground_cancelled.wait(), QUICK_TIMEOUT)
+
+        lock = server._lock()
+
+        async def next_call_acquires() -> None:
+            async with lock:
+                pass
+
+        waiter = asyncio.create_task(next_call_acquires())
+        done, _ = await asyncio.wait({waiter}, timeout=0.2)
+        assert not done  # the cancelled call is still draining its refresh
+        release_refresh.set()
+        await asyncio.wait_for(waiter, QUICK_TIMEOUT)
+
+    check = SqliteCache(cache_dir)
+    await check.initialize()
+    try:
+        refreshed = await check.get(first)
+    finally:
+        await check.close()
+    assert refreshed is not None
+    assert refreshed["expired"] is False  # the refresh's write landed before teardown

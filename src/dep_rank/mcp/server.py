@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-from typing import Annotated, Literal
+from collections.abc import Coroutine
+from typing import Annotated, Any, Literal, TypeVar
 
+import anyio
 import httpx2
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
@@ -66,6 +68,28 @@ def _lock() -> asyncio.Lock:
         _LOCK = asyncio.Lock()
         _LOCK_LOOP = loop
     return _LOCK
+
+
+_T = TypeVar("_T")
+
+
+async def _run_with_full_teardown(work: Coroutine[Any, Any, _T]) -> _T:
+    """Await ``work`` so that cancelling the request cannot cut its cleanup short.
+
+    MCP cancels a tool call through an anyio cancel scope, which re-cancels every await in
+    the handler, including the scraper's ``finally: await swr.drain()`` and the cache and
+    HTTP client teardown. ``work`` runs in its own asyncio task instead: on cancellation it
+    is cancelled once, and the handler waits, shielded, until its drain, cache and session
+    close, and lock release have finished.
+    """
+    task = asyncio.create_task(work)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        task.cancel()
+        with anyio.CancelScope(shield=True):
+            await asyncio.wait({task})
+        raise
 
 
 async def _acquire_lock(ctx: Context) -> asyncio.Lock:
@@ -156,9 +180,10 @@ async def get_dependents_tool(
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
     lock = await _acquire_lock(ctx)
-    try:
+
+    async def work() -> DependentsResult:
         async with lock, open_cache() as cache, _http_client() as session:
-            result = await get_dependents(
+            return await get_dependents(
                 session,
                 url,
                 rows=rows,
@@ -175,6 +200,9 @@ async def get_dependents_tool(
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,
             )
+
+    try:
+        result = await _run_with_full_teardown(work())
     except ValueError as e:
         raise ToolError(str(e)) from e
     if result.ranked_by == "trust" and not result.trust_metadata_complete:
@@ -203,7 +231,8 @@ async def search_dependents_tool(
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
     lock = await _acquire_lock(ctx)
-    try:
+
+    async def work() -> CodeSearchResult:
         async with lock, open_cache() as cache, _http_client() as session:
             return await search_dependents(
                 session,
@@ -217,5 +246,8 @@ async def search_dependents_tool(
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,
             )
+
+    try:
+        return await _run_with_full_teardown(work())
     except ValueError as e:
         raise ToolError(str(e)) from e
