@@ -51,6 +51,11 @@ builds, and hatch-vcs for versions derived from Git tags.
   canary.
 - `scripts/derive-published-version.sh` and `scripts/classify-prerelease.sh`
   are release guards used by `.github/workflows/release.yml`.
+- `Dockerfile` builds the MCP server image: `uv.lock`-pinned, hash-verified
+  dependencies plus the built wheel, non-root, cache at `/cache`.
+- `scripts/smoke-test-image.sh` smoke-tests that image (version, MCP handshake,
+  writable cache volume) for the `ci.yml` `docker-build` and `release.yml`
+  `publish-ghcr` jobs.
 
 ## Setup and Commands
 
@@ -163,7 +168,9 @@ request, run the checks that cover every changed area and then the full suite.
 - `.github/workflows/ci.yml` owns Ruff, mypy, the pytest matrix
   (Linux on every supported Python plus macOS and Windows on the newest, run with
   `--no-cov`), the PR-only `coverage` job (total and changed-line
-  coverage), lockfile repair, and dependency review.
+  coverage), lockfile repair, dependency review, and the `docker-build` job
+  (PR-time image build and smoke test, no push; a required check with no path
+  filter so Dependabot base-image bumps cannot merge unbuilt).
 - `.github/workflows/security.yml` delegates CodeQL, secret scanning, OSV,
   Trivy, and workflow analysis to the shared security workflow.
 - `dependency-safety.yml` handles Dependabot analysis. The status-only
@@ -197,6 +204,7 @@ request, run the checks that cover every changed area and then the full suite.
   identity model.
 - Preserve the release chain: CI gate, build, TestPyPI publish, TestPyPI install
   verification, production PyPI approval/publish, then GitHub Release.
+  `publish-ghcr` runs after PyPI publish, independent of the GitHub Release.
 - Keep TestPyPI verification on an explicit Python version and an ephemeral
   `.verify/pyproject.toml` whose explicit TestPyPI source applies only to the
   package under test. Do not replace it with a broad extra-index fallback.

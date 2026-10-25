@@ -97,7 +97,7 @@ add the new key everywhere, verify, then remove the old one.
    does not hard-gate tag creation on that report; the `main` ruleset's
    signed-commit requirement is the upstream enforcement point.
 4. The `v*` tag push triggers `release.yml` (test → build → TestPyPI →
-   PyPI → GitHub Release → MCP Registry, stable only)
+   PyPI → GitHub Release → MCP Registry, stable only; GHCR image in parallel after PyPI)
 
 The "auto" bump analyzer reads commit subjects since the last tag, so
 **Conventional Commits** matter: every commit in a PR should match the PR's
@@ -123,8 +123,8 @@ Prerelease tags skip the MCP Registry job, because the registry would mark them
 
 ## What Happens Next (Automated)
 
-The `release.yml` workflow runs seven jobs in sequence (the last is skipped for
-prereleases). Its leading `test` job is a deliberate dep-rank-owned CI gate in addition
+The `release.yml` workflow runs eight jobs: seven in sequence (the MCP Registry job is
+skipped for prereleases), plus `publish-ghcr`, which runs in parallel after PyPI. Its leading `test` job is a deliberate dep-rank-owned CI gate in addition
 to the shared-workflows caller-owned PyPI template:
 
 | Job | What it does |
@@ -136,6 +136,7 @@ to the shared-workflows caller-owned PyPI template:
 | `publish-pypi` | **Waits for a required reviewer to approve** the `pypi` environment, then publishes |
 | `github-release` | Publishes the GitHub Release with auto-generated notes and attached artifacts |
 | `publish-mcp-registry` | **Stable releases only** (skipped when the release is a prerelease). Writes the tag version into `server.json`, installs a checksum-pinned `mcp-publisher`, and publishes to the MCP Registry via GitHub OIDC (no secrets) |
+| `publish-ghcr` | Runs after `publish-pypi`, independent of the GitHub Release. Builds the `ghcr.io/j7an/dep-rank` image for linux/amd64 and linux/arm64 from the released wheel and `uv.lock`-pinned dependencies, pushes the version tag, smoke-tests it, attests build provenance, then moves `latest` for **stable releases only**. Uses `GITHUB_TOKEN` (no secrets) |
 
 Monitor progress at:
 `https://github.com/j7an/dep-rank/actions`
@@ -151,6 +152,11 @@ Monitor progress at:
   at the released version
 - [ ] Stable releases only: smoke-test `uvx --with "dep-rank[mcp]" dep-rank@X mcp`
   (it should start and wait on stdin)
+- [ ] First release with an image only: in the repo's **Packages** settings, set the
+  `dep-rank` GHCR package visibility to **public** (new packages start private) and confirm
+  it is linked to `j7an/dep-rank`
+- [ ] Verify the image: `docker pull "ghcr.io/j7an/dep-rank:${VERSION}"` and
+  `gh attestation verify "oci://ghcr.io/j7an/dep-rank:${VERSION}" --repo j7an/dep-rank`
 - [ ] Review the published GitHub Release's auto-generated notes and edit them if needed
 
 ---
@@ -196,3 +202,10 @@ skipped, create the release manually:
 `publish-mcp-registry` runs after the GitHub Release and does not affect PyPI. Re-run
 the failed job alone from the Actions run page; it is safe to repeat until the registry
 accepts the version.
+
+### GHCR publish failed
+
+`publish-ghcr` runs after `publish-pypi` and does not affect PyPI, the GitHub Release, or
+the MCP Registry. For a transient failure, re-run the job from the Actions run page within
+7 days, while the `pypi-dist` artifact still exists. After that, or if the Dockerfile
+itself is broken at the tag, cut a patch release.
