@@ -63,6 +63,8 @@ exclude-newer = "1 week"
 fastmcp = "2026-10-21T00:00:00Z"
 fastmcp-slim = "2026-10-21T00:00:00Z"
 certifi = "2026-10-21T00:00:00Z"
+# virtualenv 21.14.13: GHSA-cx6f-vjhg-g3cc fix; remove after 2026-10-30
+virtualenv = "2026-10-23T00:00:00Z"
 
 [tool.hatch.version]
 source = "vcs"
