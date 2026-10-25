@@ -596,3 +596,13 @@ async def test_cancelled_call_drains_refresh_before_releasing(
         await check.close()
     assert refreshed is not None
     assert refreshed["expired"] is False  # the refresh's write landed before teardown
+
+
+async def test_http_client_honors_proxy_environment() -> None:
+    # Docker MCP Toolkit enforces allowHosts (--block-network) via an L7 proxy reached
+    # through http_proxy/https_proxy; ignoring them makes every request fail.
+    client = server._http_client()
+    try:
+        assert client.trust_env is True
+    finally:
+        await client.aclose()

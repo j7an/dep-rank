@@ -134,7 +134,9 @@ class _ScrapeProgress:
 def _http_client() -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
         headers={"User-Agent": f"dep-rank/{__version__}"},
-        trust_env=False,
+        # Docker MCP Toolkit's --block-network egress proxy is reached via proxy env vars;
+        # in httpx2 this covers proxy vars and SSL_CERT_FILE/SSL_CERT_DIR, not .netrc.
+        trust_env=True,
     )
 
 
