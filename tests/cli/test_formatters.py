@@ -292,6 +292,7 @@ class TestPrintSearchResults:
         out = _render(print_search_results, result)
         assert "No results found for 'import os'" in out
         assert "not searched" not in out
+        assert "may be incomplete" not in out
 
     def test_no_hits_warns_about_failed_repos(self) -> None:
         result = CodeSearchResult(
@@ -322,6 +323,36 @@ class TestPrintSearchResults:
         out = _flat(_render(print_search_results, result))
         assert "⚠ 1 repos not searched: HTTP 403 (1)" in out
 
+    def test_no_hits_warns_about_failed_and_incomplete_repos(self) -> None:
+        result = CodeSearchResult(
+            source="https://github.com/django/django",
+            query="q",
+            hits=[],
+            searched_repos=2,
+            failed_repos={"c/d": "HTTP 403"},
+            incomplete_repos=["a/b", "e/f"],
+        )
+        out = _flat(_render(print_search_results, result))
+        assert "⚠ 2 repos may be incomplete (GitHub search timed out): a/b, e/f" in out
+        assert out.index("not searched") < out.index("may be incomplete")
+
+    def test_hits_warn_about_incomplete_repos(self) -> None:
+        hit = CodeSearchHit(
+            repo=make_repo("alpha", "framework"),
+            file_url="https://github.com/alpha/framework/blob/main/app.py",
+            file_path="app.py",
+            matches=1,
+        )
+        result = CodeSearchResult(
+            source="https://github.com/django/django",
+            query="q",
+            hits=[hit],
+            searched_repos=1,
+            incomplete_repos=["alpha/framework"],
+        )
+        out = _flat(_render(print_search_results, result))
+        assert "⚠ 1 repos may be incomplete (GitHub search timed out): alpha/framework" in out
+
     def test_with_hits(self) -> None:
         repo = make_repo("alpha", "framework", stars=5000)
         result = CodeSearchResult(
@@ -342,6 +373,7 @@ class TestPrintSearchResults:
         assert "app.py" in row
         assert "3" in row  # match count rendered as text
         assert "not searched" not in out
+        assert "may be incomplete" not in out
 
     def test_brackets_render_literally(self) -> None:
         hit = CodeSearchHit(

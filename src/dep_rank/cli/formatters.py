@@ -215,11 +215,22 @@ def _print_failed_repos(result: CodeSearchResult) -> None:
     console.print(f"[yellow]⚠ {len(result.failed_repos)} repos not searched: {parts}[/yellow]")
 
 
+def _print_incomplete_repos(result: CodeSearchResult) -> None:
+    if not result.incomplete_repos:
+        return
+    names = ", ".join(escape(name) for name in result.incomplete_repos)
+    console.print(
+        f"[yellow]⚠ {len(result.incomplete_repos)} repos may be incomplete "
+        f"(GitHub search timed out): {names}[/yellow]"
+    )
+
+
 def print_search_results(result: CodeSearchResult) -> None:
     """Print code search results."""
     if not result.hits:
         console.print(f"[dim]No results found for '{escape(result.query)}'[/dim]")
         _print_failed_repos(result)
+        _print_incomplete_repos(result)
         return
 
     table = Table(title=f"Code search: '{escape(result.query)}'")
@@ -237,6 +248,7 @@ def print_search_results(result: CodeSearchResult) -> None:
     console.print(table)
     console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
     _print_failed_repos(result)
+    _print_incomplete_repos(result)
 
 
 def partial_warning(reason: ScrapeReason | None) -> str:
