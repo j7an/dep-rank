@@ -8,7 +8,7 @@ authors = [
     {name = "j7an"}
 ]
 readme = "README.md"
-keywords = ["github", "dependencies", "cli", "stars", "ranking", "dependents"]
+keywords = ["github", "dependencies", "cli", "stars", "ranking", "dependents", "mcp", "mcp-server"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -28,6 +28,9 @@ dependencies = [
     "httpx2>=2.13,<3",
 ]
 
+[project.optional-dependencies]
+mcp = ["fastmcp>=4.1.3,<4.2"]
+
 [project.scripts]
 dep-rank = "dep_rank.cli.app:cli"
 
@@ -45,6 +48,7 @@ dev = [
     "mypy>=1.10",
     "pre-commit>=3.0",
     "diff-cover>=10.2",
+    "dep-rank[mcp]",
 ]
 
 [build-system]
@@ -53,6 +57,12 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 exclude-newer = "1 week"
+
+[tool.uv.exclude-newer-package]
+# fastmcp 4.1.3 / certifi 2026.10.19: CA-incident security fix; remove after 2026-10-28
+fastmcp = "2026-10-21T00:00:00Z"
+fastmcp-slim = "2026-10-21T00:00:00Z"
+certifi = "2026-10-21T00:00:00Z"
 
 [tool.hatch.version]
 source = "vcs"
