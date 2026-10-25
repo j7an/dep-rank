@@ -106,7 +106,7 @@ Caveats:
 - Trust scores are pool-relative heuristics, not quality or fraud verdicts; see [Trust Ranking](#trust-ranking).
 - Calls run one at a time; a call that arrives while another is running waits for it.
 - Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
-- The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported; when one is set, the server ignores proxy settings.
+- The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported: tool calls fail with an error until it is removed from the server's environment.
 
 ### Docker MCP Toolkit
 

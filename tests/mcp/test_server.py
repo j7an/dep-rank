@@ -14,6 +14,7 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.logging import LogMessage
+from fastmcp.exceptions import ToolError
 from mcp.server.session import ServerSession
 from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import TextContent
@@ -611,12 +612,18 @@ async def test_http_client_honors_proxy_environment(monkeypatch: pytest.MonkeyPa
         await client.aclose()
 
 
-async def test_http_client_survives_socks_all_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A SOCKS ALL_PROXY needs socksio, which dep-rank does not install; the client must
-    # still build (ignoring proxy env, as before proxy support) instead of failing.
+@pytest.mark.parametrize(
+    "extra_env",
+    [{}, {"HTTPS_PROXY": "http://proxy.invalid:3128"}],
+    ids=["socks-only", "socks-with-https-proxy"],
+)
+def test_http_client_rejects_socks_proxy(
+    monkeypatch: pytest.MonkeyPatch, extra_env: dict[str, str]
+) -> None:
+    # A SOCKS proxy needs socksio, which dep-rank does not install. Ignoring proxy env
+    # instead would silently bypass any HTTP(S) proxy set alongside it.
     monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
-    client = server._http_client()
-    try:
-        assert client.trust_env is False
-    finally:
-        await client.aclose()
+    for name, value in extra_env.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ToolError, match="SOCKS"):
+        server._http_client()
