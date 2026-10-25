@@ -95,7 +95,10 @@ addopts = [
     "-v",
 ]
 asyncio_mode = "auto"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore:The logging capability is deprecated:mcp.shared.exceptions.MCPDeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

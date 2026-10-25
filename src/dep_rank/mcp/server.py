@@ -15,7 +15,13 @@ from pydantic import Field
 from dep_rank import __version__
 from dep_rank.core.cache import open_cache
 from dep_rank.core.dependents import get_dependents
-from dep_rank.core.models import CodeSearchResult, DependentsResult, DependentType
+from dep_rank.core.models import (
+    CodeSearchResult,
+    DependentsResult,
+    DependentType,
+    RetryStatus,
+    ScrapeSnapshot,
+)
 from dep_rank.core.scraper import DEFAULT_MAX_PAGES
 from dep_rank.core.search import search_dependents
 from dep_rank.core.validation import validate_github_url
@@ -59,6 +65,42 @@ def _lock() -> asyncio.Lock:
         _LOCK = asyncio.Lock()
         _LOCK_LOOP = loop
     return _LOCK
+
+
+async def _acquire_lock(ctx: Context) -> asyncio.Lock:
+    """Return the call lock, first telling the client if another call holds it."""
+    lock = _lock()
+    if lock.locked():
+        await ctx.report_progress(0, None, "waiting for another dep-rank call to finish")
+    return lock
+
+
+class _ScrapeProgress:
+    """Relays scrape pages and 429 retries to the client as progress notifications.
+
+    Retries are also sent as a warning, for clients that send no progress token.
+    """
+
+    def __init__(self, ctx: Context, max_pages: int) -> None:
+        self._ctx = ctx
+        self._max_pages = max_pages
+        self._pages_scraped = 0
+
+    async def on_page(self, snapshot: ScrapeSnapshot) -> None:
+        self._pages_scraped = snapshot.pages_scraped
+        await self._ctx.report_progress(
+            snapshot.pages_scraped,
+            self._max_pages,
+            f"{snapshot.pages_scraped} pages, ~{snapshot.estimated_total_pages} estimated",
+        )
+
+    async def on_retry(self, status: RetryStatus) -> None:
+        message = (
+            f"GitHub rate limit: retrying page {status.page} in {status.delay:g}s "
+            f"(attempt {status.attempt}/{status.max_retries})"
+        )
+        await self._ctx.report_progress(self._pages_scraped, self._max_pages, message)
+        await self._ctx.warning(message)
 
 
 def _http_client() -> httpx2.AsyncClient:
@@ -108,8 +150,10 @@ async def get_dependents_tool(
     why the scrape stopped. Trust scores are relative to the scraped pool, not verdicts.
     """
     token = _check_call(url)
+    progress = _ScrapeProgress(ctx, max_pages)
+    lock = await _acquire_lock(ctx)
     try:
-        async with _lock(), open_cache() as cache, _http_client() as session:
+        async with lock, open_cache() as cache, _http_client() as session:
             result = await get_dependents(
                 session,
                 url,
@@ -124,6 +168,8 @@ async def get_dependents_tool(
                 max_pages=max_pages,
                 adaptive_stop=adaptive_stop,
                 cache=cache,
+                on_page=progress.on_page,
+                on_retry=progress.on_retry,
             )
     except ValueError as e:
         raise ToolError(str(e)) from e
@@ -139,6 +185,7 @@ async def get_dependents_tool(
 async def search_dependents_tool(
     url: str,
     query: Annotated[str, Field(min_length=1)],
+    ctx: Context,
     max_repos: Annotated[int, Field(ge=1)] = 10,
     min_stars: Annotated[int, Field(ge=0)] = 50,
     max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
@@ -150,8 +197,10 @@ async def search_dependents_tool(
     is false, the dependent scrape stopped early and `reason` says why.
     """
     token = _check_call(url)
+    progress = _ScrapeProgress(ctx, max_pages)
+    lock = await _acquire_lock(ctx)
     try:
-        async with _lock(), open_cache() as cache, _http_client() as session:
+        async with lock, open_cache() as cache, _http_client() as session:
             return await search_dependents(
                 session,
                 url,
@@ -161,6 +210,8 @@ async def search_dependents_tool(
                 min_stars=min_stars,
                 max_pages=max_pages,
                 cache=cache,
+                on_page=progress.on_page,
+                on_retry=progress.on_retry,
             )
     except ValueError as e:
         raise ToolError(str(e)) from e

@@ -1,8 +1,9 @@
-"""Tests for the FastMCP server: tool surface, token gate, call lock, and errors."""
+"""Tests for the FastMCP server: tool surface, token gate, call lock, errors, and progress."""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock
@@ -11,9 +12,17 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.logging import LogMessage
+from mcp.server.session import ServerSession
+from mcp.types import CallToolResult as MCPCallToolResult
 from mcp.types import TextContent
 
-from dep_rank.core.models import CodeSearchResult, DependentsResult, DependentType
+from dep_rank.core.models import (
+    CodeSearchResult,
+    DependentsResult,
+    DependentType,
+    RetryStatus,
+    ScrapeSnapshot,
+)
 from dep_rank.mcp import server
 from dep_rank.mcp.server import mcp
 from tests.conftest import make_repo
@@ -44,6 +53,16 @@ def _search_result() -> CodeSearchResult:
     return CodeSearchResult(source=URL, query="needle", hits=[], searched_repos=0)
 
 
+def _snapshot(pages_scraped: int, estimated_total_pages: int) -> ScrapeSnapshot:
+    return ScrapeSnapshot(
+        top_k=[],
+        pages_scraped=pages_scraped,
+        estimated_total_pages=estimated_total_pages,
+        estimated_total_dependents=None,
+        matched_count=0,
+    )
+
+
 def _text(result: CallToolResult) -> str:
     return "\n".join(block.text for block in result.content if isinstance(block, TextContent))
 
@@ -66,6 +85,28 @@ def core_search(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     mock = AsyncMock(return_value=_search_result())
     monkeypatch.setattr("dep_rank.mcp.server.search_dependents", mock)
     return mock
+
+
+@dataclass
+class _Recorder:
+    """Collects the progress and log notifications a ``Client`` receives."""
+
+    progress: list[tuple[float, float | None, str | None]] = field(default_factory=list)
+    logs: list[LogMessage] = field(default_factory=list)
+
+    async def on_progress(self, progress: float, total: float | None, message: str | None) -> None:
+        self.progress.append((progress, total, message))
+
+    async def on_log(self, message: LogMessage) -> None:
+        self.logs.append(message)
+
+    def warnings(self) -> list[str]:
+        return [str(m.data) for m in self.logs if m.level == "warning"]
+
+
+@pytest.fixture
+def recorder() -> _Recorder:
+    return _Recorder()
 
 
 class _SignallingLock(asyncio.Lock):
@@ -297,8 +338,6 @@ async def test_server_answers_during_long_call(token: str, core_deps: AsyncMock)
     assert not result.is_error, _text(result)
 
 
-# ctx.warning is delivered, but mcp flags the logging capability deprecated (SEP-2577).
-@pytest.mark.filterwarnings("ignore::mcp.shared.exceptions.MCPDeprecationWarning")
 async def test_partial_trust_metadata_warns(token: str, core_deps: AsyncMock) -> None:
     core_deps.return_value = _dependents_result(ranked_by="trust", trust_metadata_complete=False)
     messages: list[LogMessage] = []
@@ -314,3 +353,137 @@ async def test_partial_trust_metadata_warns(token: str, core_deps: AsyncMock) ->
     assert not result.is_error, _text(result)
     warnings = [str(m.data) for m in messages if m.level == "warning"]
     assert any("partial" in text for text in warnings), messages
+
+
+async def test_page_progress_reported(
+    token: str, core_deps: AsyncMock, recorder: _Recorder
+) -> None:
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult:
+        await kwargs["on_page"](_snapshot(pages_scraped=3, estimated_total_pages=40))
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    async with Client(mcp, progress_handler=recorder.on_progress) as client:
+        result = await client.call_tool("get_dependents", {"url": URL}, raise_on_error=False)
+
+    assert not result.is_error, _text(result)
+    assert len(recorder.progress) == 1, recorder.progress
+    progress, total, message = recorder.progress[0]
+    assert (progress, total) == (3, 200)
+    assert message is not None
+    assert "3 pages" in message
+    assert "~40" in message
+
+
+def _assert_retry_facts(text: str) -> None:
+    for fact in ("rate limit", "page 4", "30", "1/5"):
+        assert fact in text, (fact, text)
+
+
+@pytest.mark.parametrize("tool", sorted(TOOL_ARGS))
+async def test_retry_reported_as_progress_and_warning(
+    tool: str,
+    token: str,
+    core_deps: AsyncMock,
+    core_search: AsyncMock,
+    recorder: _Recorder,
+) -> None:
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult | CodeSearchResult:
+        await kwargs["on_page"](_snapshot(pages_scraped=3, estimated_total_pages=40))
+        await kwargs["on_retry"](RetryStatus(page=4, attempt=1, max_retries=5, delay=30.0))
+        return _dependents_result() if tool == "get_dependents" else _search_result()
+
+    core_deps.side_effect = fake
+    core_search.side_effect = fake
+    async with Client(
+        mcp, progress_handler=recorder.on_progress, log_handler=recorder.on_log
+    ) as client:
+        result = await client.call_tool(tool, TOOL_ARGS[tool], raise_on_error=False)
+
+    assert not result.is_error, _text(result)
+    assert len(recorder.progress) == 2, recorder.progress
+    progress, total, message = recorder.progress[1]
+    # The retry reports the last page count rather than resetting progress.
+    assert (progress, total) == (3, 200)
+    assert message is not None
+    _assert_retry_facts(message)
+    retry_warnings = [text for text in recorder.warnings() if "rate limit" in text]
+    assert len(retry_warnings) == 1, recorder.logs
+    _assert_retry_facts(retry_warnings[0])
+
+
+async def test_retry_warning_without_progress_token(
+    token: str,
+    core_deps: AsyncMock,
+    recorder: _Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult:
+        await kwargs["on_retry"](RetryStatus(page=4, attempt=1, max_retries=5, delay=30.0))
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    # Context.report_progress calls this only when the request carried a progress token.
+    send_progress = AsyncMock()
+    monkeypatch.setattr(ServerSession, "send_progress_notification", send_progress)
+    async with Client(mcp, log_handler=recorder.on_log) as client:
+        # FastMCP's Client always attaches a progress token; the raw mcp session omits
+        # it when there is no progress callback.
+        result = await client.session.call_tool(
+            "get_dependents", {"url": URL}, progress_callback=None
+        )
+        send_progress.assert_not_awaited()
+        # Control: the spy does see progress once a token is sent, so the check above
+        # is not vacuous.
+        await client.call_tool("get_dependents", {"url": URL})
+        send_progress.assert_awaited()
+
+    assert isinstance(result, MCPCallToolResult)
+    assert not result.is_error, result
+    retry_warnings = [text for text in recorder.warnings() if "rate limit" in text]
+    assert len(retry_warnings) == 2, recorder.logs
+    _assert_retry_facts(retry_warnings[0])
+
+
+async def test_lock_wait_reported(
+    token: str,
+    core_deps: AsyncMock,
+    recorder: _Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = _SignallingLock()
+    monkeypatch.setattr(server, "_lock", lambda: lock)
+    a_started = asyncio.Event()
+    release_a = asyncio.Event()
+
+    async def fake(*_args: Any, **_kwargs: Any) -> DependentsResult:
+        if not a_started.is_set():
+            a_started.set()
+            # Held until call B has queued; the cap only keeps a broken server from hanging.
+            await asyncio.wait_for(release_a.wait(), timeout=2 * QUICK_TIMEOUT)
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    async with Client(mcp) as client:
+        call_a = asyncio.create_task(
+            client.call_tool("get_dependents", {"url": URL}, raise_on_error=False)
+        )
+        await asyncio.wait_for(a_started.wait(), timeout=QUICK_TIMEOUT)
+        call_b = asyncio.create_task(
+            client.call_tool(
+                "get_dependents",
+                {"url": URL},
+                progress_handler=recorder.on_progress,
+                raise_on_error=False,
+            )
+        )
+        await asyncio.wait_for(lock.contended.wait(), timeout=QUICK_TIMEOUT)
+        release_a.set()
+        result_a, result_b = await asyncio.gather(call_a, call_b)
+
+    assert not result_a.is_error, _text(result_a)
+    assert not result_b.is_error, _text(result_b)
+    assert any(
+        message is not None and "waiting for another dep-rank call" in message
+        for _, _, message in recorder.progress
+    ), recorder.progress
