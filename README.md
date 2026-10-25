@@ -170,7 +170,6 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
 Notes:
 
 - Each tool call starts a fresh container. The `dep-rank-cache` volume keeps the cache warm between calls.
-- While network access is blocked, an empty code-search result can mean the requests were blocked rather than that nothing matched; see [#233](https://github.com/j7an/dep-rank/issues/233).
 - The gateway can leave its proxy containers behind. Remove them with `docker rm -f $(docker ps -aq --filter label=docker-mcp-proxy=true)`.
 
 ## Python API (provisional)

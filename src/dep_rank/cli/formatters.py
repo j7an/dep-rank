@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -206,10 +207,19 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
     console.out(result.model_dump_json(indent=2, exclude=exclude or None), highlight=False)
 
 
+def _print_failed_repos(result: CodeSearchResult) -> None:
+    if not result.failed_repos:
+        return
+    counts = Counter(result.failed_repos.values()).most_common()
+    parts = ", ".join(f"{escape(reason)} ({n})" for reason, n in counts)
+    console.print(f"[yellow]⚠ {len(result.failed_repos)} repos not searched: {parts}[/yellow]")
+
+
 def print_search_results(result: CodeSearchResult) -> None:
     """Print code search results."""
     if not result.hits:
         console.print(f"[dim]No results found for '{escape(result.query)}'[/dim]")
+        _print_failed_repos(result)
         return
 
     table = Table(title=f"Code search: '{escape(result.query)}'")
@@ -226,6 +236,7 @@ def print_search_results(result: CodeSearchResult) -> None:
 
     console.print(table)
     console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
+    _print_failed_repos(result)
 
 
 def partial_warning(reason: ScrapeReason | None) -> str:
