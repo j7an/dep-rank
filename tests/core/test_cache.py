@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import os
 import sqlite3
+import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from dep_rank.core.cache import SqliteCache
+from dep_rank.core import cache as cache_mod
+from dep_rank.core.cache import SqliteCache, default_cache_dir, open_cache
 
 
 class TestSqliteCache:
@@ -106,3 +109,64 @@ async def test_close_after_cancelled_initialize_keeps_loop_responsive(tmp_path: 
     blocker.execute("ROLLBACK")
     blocker.close()
     await asyncio.wait_for(close, timeout=5)
+
+
+class TestDefaultCacheDir:
+    @pytest.mark.parametrize(
+        ("platform", "case"),
+        [
+            ("darwin", "darwin"),
+            ("linux", "xdg-set"),
+            ("linux", "xdg-empty"),
+            ("linux", "xdg-unset"),
+            ("win32", "win-shell"),
+        ],
+        ids=["darwin", "xdg-set", "xdg-empty", "xdg-unset", "win-shell"],
+    )
+    def test_paths(
+        self, platform: str, case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        assert default_cache_dir is not cache_mod.default_cache_dir
+
+        monkeypatch.setattr(sys, "platform", platform)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        home = os.path.expanduser("~")
+        if case == "darwin":
+            expected = os.path.join(home, "Library", "Caches", "dep-rank")
+        elif case == "xdg-set":
+            monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+            expected = os.path.join(str(tmp_path), "dep-rank")
+        elif case == "win-shell":
+            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "env"))
+            monkeypatch.setattr(
+                "dep_rank.core.cache._win_local_appdata", lambda: str(tmp_path / "shell")
+            )
+            expected = os.path.join(str(tmp_path / "shell"), "dep-rank", "dep-rank", "Cache")
+        else:
+            if case == "xdg-empty":
+                monkeypatch.setenv("XDG_CACHE_HOME", "")
+            expected = os.path.join(home, ".cache", "dep-rank")
+        assert default_cache_dir() == expected
+
+
+class TestOpenCache:
+    async def test_closes_on_error(self) -> None:
+        held: SqliteCache | None = None
+        with pytest.raises(RuntimeError, match="boom"):
+            async with open_cache() as cache:
+                held = cache
+                raise RuntimeError("boom")
+        assert held is not None
+        with pytest.raises(RuntimeError, match="not initialized"):
+            await held.get("x")
+
+
+async def test_open_cache_uses_default_dir_and_closes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("dep_rank.core.cache.default_cache_dir", lambda: str(tmp_path / "c"))
+    async with open_cache() as opened:
+        await opened.put("https://example.com/k", b"v", etag=None, ttl=60)
+    assert (tmp_path / "c").is_dir()
+    assert opened._db is None  # closed on exit

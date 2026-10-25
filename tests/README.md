@@ -13,6 +13,16 @@ uv run pytest tests/core/test_validation.py -v  # one file
 uv run pytest tests/core/test_validation.py::TestValidateGithubUrl -v  # one class
 ```
 
+## MCP tests (`tests/mcp/`)
+
+- `test_server.py` exercises the FastMCP tool surface in-process with `fastmcp.Client`:
+  token gate, call lock, error mapping, and progress/warning reporting.
+- `test_stdio.py` spawns `dep-rank mcp` as a subprocess and lists its tools, proving stdout
+  carries only JSON-RPC. The subprocess does not see the in-process cache patch, so the test
+  passes an env that points the cache at `tmp_path`.
+- The test suite needs the `mcp` extra (`uv sync` installs it via the dev group), because the
+  `filterwarnings` setting in `pyproject.toml` imports `mcp.shared.exceptions`.
+
 ## Shared fixtures (`tests/conftest.py`)
 
 Request these by name as test parameters:
@@ -21,6 +31,8 @@ Request these by name as test parameters:
   `httpx2.MockTransport`; **`session`** yields an `httpx2.AsyncClient` using it.
 - **`cache`** initializes a temporary `SqliteCache` and closes it after the test.
 - **`clean_env`** (autouse) removes `DEP_RANK_TOKEN` with `monkeypatch`.
+- **`_isolated_cache_dir`** (autouse) points `dep_rank.core.cache.default_cache_dir` at a
+  per-test temporary directory so no test touches the real user cache.
 
 ## Shared helpers (`tests/conftest.py`)
 

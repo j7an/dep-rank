@@ -106,7 +106,9 @@ class Repository(BaseModel):
     downloads: PackageDownloads | None = None
 
 
-def _check_complete_matches_reason(model: ScrapeResult | DependentsResult) -> None:
+def _check_complete_matches_reason(
+    model: ScrapeResult | DependentsResult | CodeSearchResult,
+) -> None:
     if model.complete != (model.reason is None):
         msg = f"{type(model).__name__} invariant violated: complete must equal (reason is None)"
         raise ValueError(msg)
@@ -217,6 +219,13 @@ class CodeSearchResult(BaseModel):
     query: str
     hits: list[CodeSearchHit]
     searched_repos: int
+    complete: bool = True
+    reason: ScrapeReason | None = None
+
+    @model_validator(mode="after")
+    def _check_complete_reason_invariant(self) -> CodeSearchResult:
+        _check_complete_matches_reason(self)
+        return self
 
 
 class TrustMetadataResult(BaseModel):

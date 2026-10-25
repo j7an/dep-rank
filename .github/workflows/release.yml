@@ -223,6 +223,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      prerelease: ${{ steps.create.outputs.prerelease }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -239,6 +241,7 @@ jobs:
           name: pypi-dist
           path: dist/
       - name: Create GitHub Release
+        id: create
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -247,6 +250,7 @@ jobs:
           VERSION="${VERSION_TAG##*/}"
           VERSION="${VERSION#v}"
           IS_PRERELEASE=$(bash scripts/classify-prerelease.sh "$VERSION")
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
           ARGS=( "$TAG" --generate-notes --title "$TAG" )
           if [ "$IS_PRERELEASE" = "true" ]; then
             ARGS+=( --prerelease )
@@ -258,3 +262,48 @@ jobs:
             ARGS+=( dist/*.whl dist/*.tar.gz )
           fi
           gh release create "${ARGS[@]}"
+
+  publish-mcp-registry:
+    name: Publish to MCP Registry
+    needs: github-release
+    # PEP 440 prerelease strings are not semver; the registry would mark them "latest".
+    if: needs.github-release.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Checkout at tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+      - name: Set server.json version from tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG##*/}"
+          VERSION="${VERSION#v}"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+          mv server.json.tmp server.json
+          cat server.json
+      - name: Install mcp-publisher
+        # Pinned version + hash from registry_<ver>_checksums.txt; Dependabot cannot
+        # bump this. Update both together when the registry requires a newer publisher.
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check --strict
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+      - name: Authenticate to MCP Registry
+        run: mcp-publisher login github-oidc
+      - name: Publish to MCP Registry
+        run: mcp-publisher publish

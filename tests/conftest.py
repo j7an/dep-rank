@@ -155,6 +155,12 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEP_RANK_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cache_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every test off the real user cache directory."""
+    monkeypatch.setattr("dep_rank.core.cache.default_cache_dir", lambda: str(tmp_path / "cache"))
+
+
 @pytest.fixture
 async def cache(tmp_path: Path) -> AsyncIterator[SqliteCache]:
     """Initialize an isolated cache and close it after each test."""

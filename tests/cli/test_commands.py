@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -21,9 +21,9 @@ from rich.spinner import Spinner
 
 from dep_rank import __version__
 from dep_rank.cli import app as cli_app
-from dep_rank.cli.app import _cache_dir, _open_cache, cli
+from dep_rank.cli.app import cli
 from dep_rank.cli.formatters import RetryCountdown
-from dep_rank.core.cache import SqliteCache
+from dep_rank.core.cache import open_cache
 from dep_rank.core.models import (
     CodeSearchHit,
     CodeSearchResult,
@@ -78,57 +78,6 @@ def mock_result() -> DependentsResult:
     )
 
 
-class TestCacheDir:
-    @pytest.mark.parametrize(
-        ("platform", "case"),
-        [
-            ("darwin", "darwin"),
-            ("linux", "xdg-set"),
-            ("linux", "xdg-empty"),
-            ("linux", "xdg-unset"),
-            ("win32", "win-shell"),
-        ],
-        ids=["darwin", "xdg-set", "xdg-empty", "xdg-unset", "win-shell"],
-    )
-    def test_paths(
-        self, platform: str, case: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        assert _cache_dir is not cli_app._cache_dir
-
-        monkeypatch.setattr(sys, "platform", platform)
-        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-        monkeypatch.delenv("LOCALAPPDATA", raising=False)
-        home = os.path.expanduser("~")
-        if case == "darwin":
-            expected = os.path.join(home, "Library", "Caches", "dep-rank")
-        elif case == "xdg-set":
-            monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-            expected = os.path.join(str(tmp_path), "dep-rank")
-        elif case == "win-shell":
-            monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "env"))
-            monkeypatch.setattr(
-                "dep_rank.cli.app._win_local_appdata", lambda: str(tmp_path / "shell")
-            )
-            expected = os.path.join(str(tmp_path / "shell"), "dep-rank", "dep-rank", "Cache")
-        else:
-            if case == "xdg-empty":
-                monkeypatch.setenv("XDG_CACHE_HOME", "")
-            expected = os.path.join(home, ".cache", "dep-rank")
-        assert _cache_dir() == expected
-
-
-class TestOpenCache:
-    async def test_closes_on_error(self) -> None:
-        held: SqliteCache | None = None
-        with pytest.raises(RuntimeError, match="boom"):
-            async with _open_cache() as cache:
-                held = cache
-                raise RuntimeError("boom")
-        assert held is not None
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await held.get("x")
-
-
 class TestImportCost:
     def test_cli_import_does_not_load_network_stack(self) -> None:
         code = (
@@ -171,7 +120,7 @@ async def scrape(*args, **kwargs):
                         estimated_total_pages=1, estimated_total_dependents=0)
 
 with TemporaryDirectory() as cache_dir:
-    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
+    with patch("dep_rank.core.cache.default_cache_dir", return_value=cache_dir), \
          patch("dep_rank.core.dependents.scrape_dependents", side_effect=scrape), \
          patch("rich.live.Live", CapturingLive):
         asyncio.run(run_deps("https://github.com/x/y", 2, 0, False, False, None))
@@ -207,7 +156,7 @@ payload = {
     "errors": [{"type": "NOT_FOUND", "message": "x"}],
 }
 with TemporaryDirectory() as cache_dir:
-    with patch("dep_rank.cli.app._cache_dir", return_value=cache_dir), \
+    with patch("dep_rank.core.cache.default_cache_dir", return_value=cache_dir), \
          patch("dep_rank.core.dependents.scrape_dependents", new_callable=AsyncMock) as scrape:
         scrape.return_value = ScrapeResult(
             repos=repos, pages_scraped=1, max_pages=1000,
@@ -483,13 +432,9 @@ class TestDepsCommandFull:
 
 
 async def _seed_cli_cache(*bodies: bytes) -> None:
-    cache = SqliteCache(cli_app._cache_dir())
-    await cache.initialize()
-    try:
+    async with open_cache() as cache:
         for index, body in enumerate(bodies):
             await cache.put(f"https://github.com/owner/repo/{index}", body, etag=None, ttl=3600)
-    finally:
-        await cache.close()
 
 
 class TestCacheCommandsFull:
@@ -683,7 +628,7 @@ class TestDepsHardeningFlags:
 
 class TestSearchHardening:
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_uses_bounded_non_adaptive_topk(
         self,
         mock_scrape: AsyncMock,
@@ -735,7 +680,7 @@ class TestSearchHardening:
         assert "a/b" in result.output  # search results are printed
 
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_max_pages_above_ceiling_warns_and_clamps(
         self,
         mock_scrape: AsyncMock,
@@ -768,7 +713,7 @@ class TestSearchHardening:
         assert kwargs["max_pages"] == 1000  # clamped before the scrape
 
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_summary_reports_matched_count_not_len_repos(
         self,
         mock_scrape: AsyncMock,
@@ -1081,7 +1026,7 @@ class TestRetryStatus:
 
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_shows_countdown_in_progress_then_clears(
         self,
         mock_scrape: AsyncMock,
@@ -1131,7 +1076,7 @@ class TestRetryLogWithoutLiveTerminal:
 class TestOnPageCallbacks:
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
-    @patch("dep_rank.core.scraper.scrape_dependents", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
     def test_search_on_page_updates_progress(
         self,
         mock_scrape: AsyncMock,
@@ -1540,3 +1485,29 @@ def test_requests_identify_installed_version(
         for requests in mock_http.requests.values()
         for request in requests
     )
+
+
+class TestMcpCommand:
+    def test_missing_extra_prints_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "fastmcp", None)
+        monkeypatch.delitem(sys.modules, "dep_rank.mcp.server", raising=False)
+        result = CliRunner().invoke(cli, ["mcp"])
+        assert result.exit_code == 1
+        assert 'pip install "dep-rank[mcp]"' in result.stderr
+
+    def test_runs_stdio_without_banner(self) -> None:
+        with patch("dep_rank.mcp.server.mcp.run") as run:
+            result = CliRunner().invoke(cli, ["mcp"])
+        assert result.exit_code == 0
+        run.assert_called_once_with(transport="stdio", show_banner=False)
+
+    def test_unrelated_import_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Broken(ModuleType):
+            def __getattr__(self, name: str) -> Any:
+                raise ImportError("boom", name="dep_rank.mcp.helper")
+
+        monkeypatch.setitem(sys.modules, "dep_rank.mcp.server", _Broken("dep_rank.mcp.server"))
+        result = CliRunner().invoke(cli, ["mcp"])
+        assert isinstance(result.exception, ImportError)
+        assert result.exception.name == "dep_rank.mcp.helper"
+        assert "dep-rank[mcp]" not in result.output

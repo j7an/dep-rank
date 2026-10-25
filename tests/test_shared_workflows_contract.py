@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = ROOT / "tests"
@@ -195,3 +197,58 @@ def test_testpypi_verifier_disables_setup_uv_cache() -> None:
     assert "with:" in setup_step
     assert "enable-cache: false" in setup_step
     assert "ignore-empty-workdir: true" in setup_step
+
+
+def _job_text(workflow: str, job: str) -> str:
+    start = workflow.index(f"\n  {job}:") + 1
+    match = re.search(r"^  [A-Za-z0-9_-]+:\s*$", workflow[start + 1 :], re.MULTILINE)
+    return workflow[start : start + 1 + match.start()] if match else workflow[start:]
+
+
+def _server_json() -> dict[str, Any]:
+    data: dict[str, Any] = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    return data
+
+
+def test_readme_declares_registry_name() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"<!-- mcp-name: {_server_json()['name']} -->" in readme
+
+
+def test_server_json_identifier_matches_release_package() -> None:
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    match = re.search(r"^  PACKAGE_NAME: (\S+)$", release, re.MULTILINE)
+    assert match is not None
+    server = _server_json()
+    assert server["packages"][0]["identifier"] == match.group(1)
+    env_var = server["packages"][0]["environmentVariables"][0]
+    assert env_var["name"] == "DEP_RANK_TOKEN"
+    assert env_var["isRequired"] is True
+    assert env_var["isSecret"] is True
+
+
+def test_registry_job_contract() -> None:
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    job = _job_text(release, "publish-mcp-registry")
+    for needle in (
+        "needs: github-release",
+        "needs.github-release.outputs.prerelease == 'false'",
+        ".version = $v",
+        ".packages[0].version = $v",
+        "releases/download/",
+        "sha256sum --check --strict",
+        "mcp-publisher login github-oidc",
+        "mcp-publisher publish",
+        "persist-credentials: false",
+        "id-token: write",
+        "contents: read",
+    ):
+        assert needle in job
+    assert "releases/latest" not in job
+
+
+def test_github_release_exposes_prerelease_output() -> None:
+    release = (WORKFLOWS_DIR / "release.yml").read_text(encoding="utf-8")
+    job = _job_text(release, "github-release")
+    assert "prerelease: ${{ steps." in job
+    assert '>> "$GITHUB_OUTPUT"' in job
