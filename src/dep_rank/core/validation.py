@@ -38,6 +38,7 @@ def validate_github_url(url: str) -> tuple[str, str]:
             msg = f"URL must be a github.com repository URL, got: {parsed.netloc}"
             raise ValueError(msg)
         path = parsed.path.strip("/")
+    path = path.removesuffix(".git")
 
     if not path:
         msg = "Invalid GitHub URL — missing repository path. Expected format: https://github.com/owner/repository"

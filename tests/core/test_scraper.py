@@ -442,6 +442,19 @@ async def test_transport_errors_exhaust_to_network_failure(
     assert result.pages_scraped == 0
 
 
+async def test_git_suffix_url_scrapes_the_repo(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    # A regression requests the .git URL and retries; keep that failure fast.
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo.git", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
+
+
 async def test_transport_error_then_success_completes(
     monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:
