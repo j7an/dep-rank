@@ -201,7 +201,7 @@ HIT = {"total_count": 1, "items": [{"html_url": "https://github.com/x/blob/a.py"
 
 
 @pytest.mark.parametrize(
-    ("status", "headers", "min_wait"),
+    ("status", "headers", "expected_wait"),
     [
         (429, {"retry-after": "5"}, 5),
         (403, {"retry-after": "5"}, 5),
@@ -209,6 +209,7 @@ HIT = {"total_count": 1, "items": [{"html_url": "https://github.com/x/blob/a.py"
         (429, {}, 60),
         (429, {"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, 60),
         (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "soon"}, 60),
+        (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "990"}, 1),
     ],
     ids=[
         "429-retry-after",
@@ -217,12 +218,13 @@ HIT = {"total_count": 1, "items": [{"html_url": "https://github.com/x/blob/a.py"
         "429-no-headers",
         "http-date",
         "bad-reset",
+        "reset-passed",
     ],
 )
 async def test_rate_limited_search_retries_then_succeeds(
     status: int,
     headers: dict[str, str],
-    min_wait: float,
+    expected_wait: float,
     monkeypatch: pytest.MonkeyPatch,
     mock_http: FakeHTTP,
     session: httpx2.AsyncClient,
@@ -238,7 +240,7 @@ async def test_rate_limited_search_retries_then_succeeds(
     assert len(result.hits) == 1
     assert sleep.await_count == 1
     assert sleep.await_args is not None
-    assert sleep.await_args.args[0] >= min_wait
+    assert sleep.await_args.args[0] == expected_wait  # exactly what GitHub asked
 
 
 async def test_repeated_limits_back_off_exponentially(

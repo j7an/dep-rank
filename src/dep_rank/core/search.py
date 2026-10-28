@@ -31,6 +31,7 @@ SEARCH_URL = "https://api.github.com/search/code"
 SEARCH_RATE_LIMITER = RateLimiter(rate=10, period=60.0)
 SEARCH_MAX_RETRIES = 2  # per repo; after that the repo and all later ones are "rate limited"
 SEARCH_DEFAULT_WAIT = 60.0  # GitHub: wait at least a minute when no header says how long
+SEARCH_MIN_WAIT = 1.0  # floor, so a zero wait (clock skew, retry-after: 0) still backs off
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def search_code(
                 wait = _rate_limit_wait(resp, time.time())
                 if wait is None:
                     break
-                delay = wait * 2**retry
+                delay = max(wait, SEARCH_MIN_WAIT) * 2**retry
                 if retry == SEARCH_MAX_RETRIES or delay > RETRY_MAX_SECONDS:
                     rate_limited = True
                     break
