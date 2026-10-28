@@ -51,6 +51,8 @@ DEFAULT_MAX_PAGES = 200
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 
+RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})  # retried like transport errors
+
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
 SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
 #                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
@@ -203,9 +205,10 @@ async def _fetch_page(
 ) -> str:
     """Fetch one page with rate limiting, retries, and caching.
 
-    Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
-    retry budget is exhausted or an unexpected status is returned. Each 429 retry is
-    reported to ``on_retry(attempt, delay)`` before its wait.
+    Returns the HTML body. Transport errors and 5xx responses are retried with backoff.
+    Raises RateLimitedError or NetworkFailureError when the retry budget is exhausted or
+    an unexpected status is returned. Each 429 retry is reported to
+    ``on_retry(attempt, delay)`` before its wait.
     """
     rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
@@ -223,6 +226,19 @@ async def _fetch_page(
             continue
         if result.body is not None:
             return result.body.decode("utf-8")
+        if result.status in RETRYABLE_STATUSES:
+            if attempt == MAX_RETRIES:
+                break
+            delay = backoff_delay(attempt)
+            logger.warning(
+                "HTTP %d — retrying in %.1fs (%d/%d)",
+                result.status,
+                delay,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            await asyncio.sleep(delay)
+            continue
         if result.status == 429:
             rate_limited = True
             if attempt == MAX_RETRIES:
