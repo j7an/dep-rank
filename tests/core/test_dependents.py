@@ -154,3 +154,23 @@ async def test_result_carries_scraped_packages(
     mock_http.get(FIRST, body=dependents_page([("a", "one", 100)], menu=menu))
     result = await get_dependents(session, URL, token="t")
     assert (result.package, result.packages) == ("p", ["p", "q"])
+
+
+async def test_package_name_is_passed_to_the_scrape(
+    session: httpx2.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def scrape(*args: object, **kwargs: Any) -> ScrapeResult:
+        calls.append(kwargs)
+        return ScrapeResult(
+            repos=[],
+            pages_scraped=1,
+            max_pages=1,
+            estimated_total_pages=1,
+            estimated_total_dependents=1,
+        )
+
+    monkeypatch.setattr("dep_rank.core.dependents.scrape_dependents", scrape)
+    await get_dependents(session, URL, token="t", package_name="x")
+    assert calls[0]["package_name"] == "x"

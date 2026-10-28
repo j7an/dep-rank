@@ -11,7 +11,7 @@ import re
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 import httpx2
 from selectolax.parser import HTMLParser
@@ -157,6 +157,15 @@ def format_names(names: list[str]) -> str:
     shown = ", ".join(names[:NAMES_SHOWN])
     hidden = len(names) - NAMES_SHOWN
     return f"{shown}, … and {hidden} more" if hidden > 0 else shown
+
+
+def _unknown_package(name: str | None, options: list[PackageOption]) -> str:
+    names = [o.name for o in options]
+    msg = f"no package named '{name}'; available: {format_names(names)}"
+    if len(names) >= PACKAGE_MENU_CAP:
+        msg += f" (GitHub lists only the first {PACKAGE_MENU_CAP} packages, so it may exist"
+        msg += " but can't be selected)"
+    return msg
 
 
 def parse_dependent_counts(html: str) -> dict[str, int]:
@@ -453,8 +462,12 @@ async def scrape_dependents(
     rate_limiter: RateLimiter | None = None,
     on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
     on_retry: Callable[[RetryStatus], Awaitable[None]] | None = None,
+    package_name: str | None = None,
 ) -> ScrapeResult:
     """Walk the dependents pages, keeping the top-``rows`` repos by stars.
+
+    ``package_name`` selects one package from the page's dropdown; without it GitHub's
+    default package is walked. An unknown name raises ``NotFoundError``.
 
     ``on_page`` is awaited after each consumed page with the running top-K. ``on_retry``
     is awaited before each rate-limit wait, replacing the warning log line. Exceptions
@@ -484,6 +497,7 @@ async def scrape_dependents(
     reason: ScrapeReason | None = None
     package: str | None = None
     packages: list[str] = []
+    package_resolved = package_name is None
 
     async def report_retry(attempt: int, delay: float) -> None:
         status = RetryStatus(page=page + 1, attempt=attempt, max_retries=MAX_RETRIES, delay=delay)
@@ -523,6 +537,19 @@ async def scrape_dependents(
             except NetworkFailureError:
                 reason = ScrapeReason.NETWORK_FAILURE
                 break
+            if not package_resolved:
+                package_resolved = True
+                options = parse_packages(html)
+                selected = next((o.name for o in options if o.selected), None)
+                if package_name != selected:
+                    # ponytail: duplicate names resolve to the first match; accept a raw
+                    # package_id if real duplicates appear.
+                    match = next((o for o in options if o.name == package_name), None)
+                    if match is None:
+                        raise NotFoundError(_unknown_package(package_name, options))
+                    query = {"dependent_type": dependent_type.value, "package_id": match.package_id}
+                    current_url = f"{base_url}?{urlencode(query)}"
+                    continue  # lookup page: not counted, rows not collected
             page += 1  # increment only after a page is actually consumed (spec §2)
             stale_pages += stale
 

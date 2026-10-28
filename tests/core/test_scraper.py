@@ -622,3 +622,89 @@ async def test_scrape_records_packages(mock_http: FakeHTTP, session: httpx2.Asyn
     )
     assert result.package == "pkg/default"
     assert result.packages == ["pkg/default", "pkg/other", "pkg/third"]
+
+
+OTHER_URL = (
+    "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY&package_id=ID1"
+)
+
+
+async def test_package_name_switches_package(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("skip", "me", 999)], menu=MENU))
+    switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+    mock_http.get(OTHER_URL, body=dependents_page([("delta", "app", 80)], menu=switched_menu))
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        max_pages=1,
+        package_name="pkg/other",
+        rate_limiter=fast_limiter(),
+    )
+    assert [r.owner for r in result.repos] == ["delta"]  # lookup page rows not collected
+    assert result.pages_scraped == 1  # lookup page not counted
+    assert result.package == "pkg/other"
+    assert len(mock_http.requests[("GET", OTHER_URL)]) == 1
+
+
+async def test_package_name_already_selected_makes_no_extra_request(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("delta", "app", 80)], menu=MENU))
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        package_name="pkg/default",
+        rate_limiter=fast_limiter(),
+    )
+    assert mock_http.request_count == 1
+    assert result.package == "pkg/default"
+
+
+async def test_package_name_with_package_dependents(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    base = "https://github.com/owner/repo/network/dependents?dependent_type=PACKAGE"
+    mock_http.get(base, body=dependents_page([], menu=MENU))
+    mock_http.get(base + "&package_id=ID1", body=DEPENDENTS_HTML_LAST_PAGE)
+    await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        dependent_type=DependentType.PACKAGE,
+        package_name="pkg/other",
+        rate_limiter=fast_limiter(),
+    )
+    assert len(mock_http.requests[("GET", base + "&package_id=ID1")]) == 1
+
+
+@pytest.mark.parametrize(
+    ("menu", "message"),
+    [
+        ([], r"^no package named 'nope'; available: none$"),
+        (MENU, r"^no package named 'nope'; available: pkg/default, pkg/other, pkg/third$"),
+        (
+            [(f"p{i:03}", f"ID{i}", i == 0) for i in range(100)],
+            r"available: p000, .*, … and 90 more \(GitHub lists only the first 100 packages",
+        ),
+    ],
+    ids=["no-dropdown", "three", "capped"],
+)
+async def test_unknown_package_name_raises(
+    menu: list[tuple[str, str, bool]],
+    message: str,
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([], menu=menu))
+    with pytest.raises(NotFoundError, match=message):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            package_name="nope",
+            rate_limiter=fast_limiter(),
+        )

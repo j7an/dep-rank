@@ -46,6 +46,7 @@ async def get_dependents(
     on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
     on_scraped: Callable[[ScrapeResult], Awaitable[None]] | None = None,
     on_retry: Callable[[RetryStatus], Awaitable[None]] | None = None,
+    package_name: str | None = None,
 ) -> DependentsResult:
     """Scrape and optionally enrich dependents using caller-owned session and cache.
 
@@ -85,6 +86,7 @@ async def get_dependents(
         adaptive_stop=adaptive_stop,
         on_page=on_page,
         on_retry=on_retry,
+        package_name=package_name,
     )
     if on_scraped is not None:
         await on_scraped(scrape_result)

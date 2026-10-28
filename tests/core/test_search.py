@@ -212,5 +212,7 @@ async def test_search_dependents_carries_scraped_packages(session: httpx2.AsyncC
     ):
         scrape_mock.return_value = scraped
         search_mock.return_value = searched
-        result = await search_dependents(session, SOURCE_URL, "q", token="t")
+        result = await search_dependents(session, SOURCE_URL, "q", token="t", package_name="p")
     assert (result.package, result.packages) == ("p", ["p", "q"])
+    assert scrape_mock.await_args is not None
+    assert scrape_mock.await_args.kwargs["package_name"] == "p"
