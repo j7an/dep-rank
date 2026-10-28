@@ -110,9 +110,11 @@ class _ScrapeProgress:
         self._ctx = ctx
         self._max_pages = max_pages
         self._pages_scraped = 0
+        self._retries_since_page = 0
 
     async def on_page(self, snapshot: ScrapeSnapshot) -> None:
         self._pages_scraped = snapshot.pages_scraped
+        self._retries_since_page = 0
         await self._ctx.report_progress(
             snapshot.pages_scraped,
             self._max_pages,
@@ -125,8 +127,11 @@ class _ScrapeProgress:
             f"(attempt {status.attempt}/{status.max_retries})"
         )
         # MCP requires progress to increase with every notification: step a fraction past
-        # the last page, staying below the next page's whole number.
-        progress = self._pages_scraped + status.attempt / (status.max_retries + 1)
+        # the last page, staying below the next page's whole number. Count retries here, not
+        # by status.attempt, which restarts per fetch (a package switch makes two fetches
+        # before page 1 is counted).
+        self._retries_since_page += 1
+        progress = self._pages_scraped + 1 - 0.5**self._retries_since_page
         await self._ctx.report_progress(progress, self._max_pages, message)
         await self._ctx.warning(message)
 
