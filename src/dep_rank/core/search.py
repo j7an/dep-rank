@@ -142,5 +142,11 @@ async def search_dependents(
             session, scrape_result.repos, query, token=token, max_repos=max_repos
         )
     return result.model_copy(
-        update={"source": url, "complete": scrape_result.complete, "reason": scrape_result.reason}
+        update={
+            "source": url,
+            "complete": scrape_result.complete,
+            "reason": scrape_result.reason,
+            "package": scrape_result.package,
+            "packages": scrape_result.packages,
+        }
     )

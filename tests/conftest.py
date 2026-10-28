@@ -75,8 +75,12 @@ def dependents_page(
     next_page: int | None = None,
     repos: int = 90,
     packages: int | None = None,
+    menu: Sequence[tuple[str, str, bool]] = (),
 ) -> str:
-    """Build a valid dependents page with counts, repository rows, and pagination."""
+    """Build a valid dependents page with counts, repository rows, and pagination.
+
+    ``menu`` renders GitHub's package dropdown as ``(name, package_id, selected)`` entries.
+    """
     package_link = (
         f'<a class="btn-link" href="/owner/repo/network/dependents?dependent_type=PACKAGE">'
         f"{packages} Packages</a>"
@@ -94,8 +98,15 @@ def dependents_page(
         if next_page is not None
         else '<a href="/owner/repo/network/dependents?page=1">Previous</a>'
     )
+    menu_items = "".join(
+        f'<a class="select-menu-item" href="/owner/repo/network/dependents?package_id={pid}"'
+        f' aria-checked="{"true" if selected else "false"}">'
+        f'<span class="select-menu-item-text">{name}</span></a>'
+        for name, pid, selected in menu
+    )
     return f"""
     <html><body>
+    <div class="select-menu-list">{menu_items}</div>
     <div class="table-list-header-toggle states flex-auto pl-0">
         <a class="btn-link selected"
            href="/owner/repo/network/dependents?dependent_type=REPOSITORY">{repos} Repositories</a>

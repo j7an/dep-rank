@@ -29,8 +29,11 @@ from dep_rank.core.scraper import (
     DEFAULT_MAX_PAGES,
     MAX_RETRIES,
     NotFoundError,
+    PackageOption,
+    format_names,
     parse_dependent_counts,
     parse_dependents_page,
+    parse_packages,
     scrape_dependents,
 )
 from tests.conftest import (
@@ -590,3 +593,32 @@ class TestRetryReporting:
         )
         assert "Rate limited on page 1" in caplog.text
         assert f"(1/{MAX_RETRIES})" in caplog.text
+
+
+MENU = [("pkg/default", "ID0", True), ("pkg/other", "ID1", False), ("pkg/third", "ID2", False)]
+
+
+def test_parse_packages() -> None:
+    html = dependents_page([], menu=MENU)
+    assert parse_packages(html) == [
+        PackageOption("pkg/default", "ID0", True),
+        PackageOption("pkg/other", "ID1", False),
+        PackageOption("pkg/third", "ID2", False),
+    ]
+    assert parse_packages(DEPENDENTS_HTML_LAST_PAGE) == []
+
+
+@pytest.mark.parametrize(
+    ("count", "expected_tail"), [(0, "none"), (3, "n2"), (12, "n9, … and 2 more")]
+)
+def test_format_names(count: int, expected_tail: str) -> None:
+    assert format_names([f"n{i}" for i in range(count)]).endswith(expected_tail)
+
+
+async def test_scrape_records_packages(mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("delta", "app", 80)], menu=MENU))
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.package == "pkg/default"
+    assert result.packages == ["pkg/default", "pkg/other", "pkg/third"]

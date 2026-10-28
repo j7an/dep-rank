@@ -145,3 +145,12 @@ async def test_downloads_off_skips_lookup(
     monkeypatch.setattr("dep_rank.core.dependents.fetch_downloads", fail, raising=False)
     result = await get_dependents(session, URL)
     assert result.downloads_check is None
+
+
+async def test_result_carries_scraped_packages(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP
+) -> None:
+    menu = [("p", "ID0", True), ("q", "ID1", False)]
+    mock_http.get(FIRST, body=dependents_page([("a", "one", 100)], menu=menu))
+    result = await get_dependents(session, URL, token="t")
+    assert (result.package, result.packages) == ("p", ["p", "q"])

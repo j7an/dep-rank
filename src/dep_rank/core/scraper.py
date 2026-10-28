@@ -11,7 +11,7 @@ import re
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx2
 from selectolax.parser import HTMLParser
@@ -125,6 +125,38 @@ def parse_dependents_page(html: str) -> tuple[list[Repository], str | None]:
     if target.scheme != "https" or target.netloc != "github.com":
         return repos, None
     return repos, next_url
+
+
+PACKAGE_MENU_CAP = 100  # GitHub's package dropdown lists at most this many entries
+NAMES_SHOWN = 10  # package names shown in hints and errors before "… and N more"
+
+
+class PackageOption(NamedTuple):
+    """One entry of the dependents page's package dropdown."""
+
+    name: str
+    package_id: str
+    selected: bool
+
+
+def parse_packages(html: str) -> list[PackageOption]:
+    """Parse the package dropdown; empty when the page lists no packages."""
+    options: list[PackageOption] = []
+    for item in HTMLParser(html).css(".select-menu-item"):
+        ids = parse_qs(urlsplit(item.attributes.get("href") or "").query).get("package_id")
+        if ids:
+            selected = item.attributes.get("aria-checked") == "true"
+            options.append(PackageOption(item.text(strip=True), ids[0], selected))
+    return options
+
+
+def format_names(names: list[str]) -> str:
+    """Join the first ``NAMES_SHOWN`` names, noting how many more there are."""
+    if not names:
+        return "none"
+    shown = ", ".join(names[:NAMES_SHOWN])
+    hidden = len(names) - NAMES_SHOWN
+    return f"{shown}, … and {hidden} more" if hidden > 0 else shown
 
 
 def parse_dependent_counts(html: str) -> dict[str, int]:
@@ -450,6 +482,8 @@ async def scrape_dependents(
     page = 0
     stale_pages = 0
     reason: ScrapeReason | None = None
+    package: str | None = None
+    packages: list[str] = []
 
     async def report_retry(attempt: int, delay: float) -> None:
         status = RetryStatus(page=page + 1, attempt=attempt, max_retries=MAX_RETRIES, delay=delay)
@@ -493,6 +527,9 @@ async def scrape_dependents(
             stale_pages += stale
 
             if page == 1:
+                options = parse_packages(html)
+                packages = [o.name for o in options]
+                package = next((o.name for o in options if o.selected), None)
                 counts = parse_dependent_counts(html)
                 est_deps = counts.get(dependent_type.value)
                 est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps else 0
@@ -543,4 +580,6 @@ async def scrape_dependents(
         reason=reason,
         matched_count=matched,
         stale_pages=stale_pages,
+        package=package,
+        packages=packages,
     )

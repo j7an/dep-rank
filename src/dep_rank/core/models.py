@@ -126,6 +126,8 @@ class ScrapeResult(BaseModel):
     reason: ScrapeReason | None = None
     matched_count: int = 0
     stale_pages: int = 0  # pages served from expired cache entries during this scrape
+    package: str | None = None  # package scraped, when the page lists packages
+    packages: list[str] = []  # every package name the page lists (GitHub shows at most 100)
 
     @model_validator(mode="after")
     def _check_complete_reason_invariant(self) -> ScrapeResult:
@@ -188,6 +190,8 @@ class DependentsResult(BaseModel):
     ranked_by: Literal["stars", "trust"] = "stars"
     trust_check: TrustCheckResult | None = None
     downloads_check: DownloadsCheckResult | None = None
+    package: str | None = None  # package scraped, when the page lists packages
+    packages: list[str] = []  # every package name the page lists (GitHub shows at most 100)
     # pages served from expired cache entries; excluded from JSON
     stale_pages: int = Field(default=0, exclude=True)
     # False when trust scores used partial metadata; excluded from JSON
@@ -221,6 +225,8 @@ class CodeSearchResult(BaseModel):
     searched_repos: int
     failed_repos: dict[str, str] = {}  # "owner/name" -> reason; these repos were not searched
     incomplete_repos: list[str] = []  # "owner/name"; search timed out, hits may be partial
+    package: str | None = None  # package scraped, when the page lists packages
+    packages: list[str] = []  # every package name the page lists (GitHub shows at most 100)
     complete: bool = True
     reason: ScrapeReason | None = None
 

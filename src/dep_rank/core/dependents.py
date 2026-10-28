@@ -146,4 +146,6 @@ async def get_dependents(
         trust_metadata_complete=trust_metadata_complete,
         trust_pool_size=trust_pool_size,
         estimated_total_dependents=scrape_result.estimated_total_dependents,
+        package=scrape_result.package,
+        packages=scrape_result.packages,
     )
