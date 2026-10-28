@@ -225,7 +225,9 @@ failures from repositories with no matching package.
 `get_dependents` raises `ValueError` for an invalid GitHub repository URL,
 `rank_by` other than `"stars"` or `"trust"`, `descriptions=True` without a token,
 `rank_by="trust"` without a token, or `trust_check=True` without
-`rank_by="trust"`. Trust scores are pool-relative heuristics, not quality or fraud
+`rank_by="trust"`. It raises `NotFoundError` (a `ValueError` subclass, from
+`dep_rank.core.scraper`) when GitHub returns 404 for the repository's dependents
+page — the repository does not exist or the token cannot see it. Trust scores are pool-relative heuristics, not quality or fraud
 verdicts.
 
 Check `result.complete` and `result.reason` for partial results; counts are lower
