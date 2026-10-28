@@ -669,7 +669,8 @@ async def test_package_name_with_package_dependents(
 ) -> None:
     base = "https://github.com/owner/repo/network/dependents?dependent_type=PACKAGE"
     mock_http.get(base, body=dependents_page([], menu=MENU))
-    mock_http.get(base + "&package_id=ID1", body=DEPENDENTS_HTML_LAST_PAGE)
+    switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+    mock_http.get(base + "&package_id=ID1", body=dependents_page([], menu=switched_menu))
     await scrape_dependents(
         session,
         "https://github.com/owner/repo",
@@ -706,5 +707,37 @@ async def test_unknown_package_name_raises(
             "https://github.com/owner/repo",
             rows=10,
             package_name="nope",
+            rate_limiter=fast_limiter(),
+        )
+
+
+async def test_package_switch_not_honoured_raises(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    # GitHub answers an unknown package_id with 200 and nothing selected, not 404.
+    mock_http.get(FIRST_URL, body=dependents_page([], menu=MENU))
+    unselected = [("pkg/default", "ID0", False), ("pkg/other", "ID1", False)]
+    mock_http.get(OTHER_URL, body=dependents_page([], menu=unselected))
+    with pytest.raises(NotFoundError, match=r"^GitHub did not select package 'pkg/other'"):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            package_name="pkg/other",
+            rate_limiter=fast_limiter(),
+        )
+
+
+async def test_unknown_package_on_expired_cache_page_suggests_clearing(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient, cache: SqliteCache
+) -> None:
+    await cache.put(FIRST_URL, dependents_page([], menu=MENU).encode(), etag=None, ttl=-1)
+    with pytest.raises(NotFoundError, match=r"expired cache.*dep-rank cache clear"):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            cache=cache,
+            package_name="new-pkg",
             rate_limiter=fast_limiter(),
         )

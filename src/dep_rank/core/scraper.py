@@ -498,6 +498,7 @@ async def scrape_dependents(
     package: str | None = None
     packages: list[str] = []
     package_resolved = package_name is None
+    switched = False
 
     async def report_retry(attempt: int, delay: float) -> None:
         status = RetryStatus(page=page + 1, attempt=attempt, max_retries=MAX_RETRIES, delay=delay)
@@ -546,9 +547,14 @@ async def scrape_dependents(
                     # package_id if real duplicates appear.
                     match = next((o for o in options if o.name == package_name), None)
                     if match is None:
-                        raise NotFoundError(_unknown_package(package_name, options))
+                        msg = _unknown_package(package_name, options)
+                        if stale:
+                            msg += "; this list came from an expired cache entry, so run"
+                            msg += " `dep-rank cache clear` and retry"
+                        raise NotFoundError(msg)
                     query = {"dependent_type": dependent_type.value, "package_id": match.package_id}
                     current_url = f"{base_url}?{urlencode(query)}"
+                    switched = True
                     continue  # lookup page: not counted, rows not collected
             page += 1  # increment only after a page is actually consumed (spec §2)
             stale_pages += stale
@@ -557,6 +563,11 @@ async def scrape_dependents(
                 options = parse_packages(html)
                 packages = [o.name for o in options]
                 package = next((o.name for o in options if o.selected), None)
+                if switched and package != package_name:
+                    # GitHub answers an unknown package_id with 200 and nothing selected.
+                    msg = f"GitHub did not select package '{package_name}' for its package_id;"
+                    msg += " the listing may have changed, so run `dep-rank cache clear` and retry"
+                    raise NotFoundError(msg)
                 counts = parse_dependent_counts(html)
                 est_deps = counts.get(dependent_type.value)
                 est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps else 0

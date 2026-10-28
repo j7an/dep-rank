@@ -1520,7 +1520,9 @@ class TestEmptyDependents:
         self, runner: CliRunner, mock_http: FakeHTTP
     ) -> None:
         mock_http.get(self.BASE + "REPOSITORY", body=dependents_page([], repos=0, menu=self.MENU))
-        mock_http.get(self.BASE + "REPOSITORY&package_id=ID1", body=DEPENDENTS_HTML_EMPTY)
+        switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+        switched = dependents_page([], repos=0, menu=switched_menu)
+        mock_http.get(self.BASE + "REPOSITORY&package_id=ID1", body=switched)
         result = runner.invoke(
             cli,
             ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
