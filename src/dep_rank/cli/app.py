@@ -58,17 +58,23 @@ def _print_scrape_outcome(
     min_stars: int,
     url: str,
     dependent_type: DependentType,
+    package_name: str | None,
 ) -> None:
-    """Print the scrape summary and any partial-result warning."""
+    """Print the scrape summary, any partial-result warning, and any package hint."""
     from dep_rank.cli.formatters import (
         format_scrape_summary,
         no_dependents_message,
+        package_hint,
         partial_warning,
     )
 
+    show_hint = package_name is None and len(scrape_result.packages) > 1
     # Only a parsed 0 qualifies: an unparseable header (None) may be scraper drift.
     if scrape_result.estimated_total_dependents == 0:
-        console.print(no_dependents_message(url, dependent_type), highlight=False)
+        message = no_dependents_message(url, dependent_type, graph_note=not show_hint)
+        console.print(message, highlight=False)
+        if show_hint:
+            console.print(package_hint(scrape_result), highlight=False)
         return
     summary = format_scrape_summary(
         pages_scraped=scrape_result.pages_scraped,
@@ -81,6 +87,8 @@ def _print_scrape_outcome(
     console.print(f"[green]{summary}")
     if not scrape_result.complete:
         console.print(partial_warning(scrape_result.reason))
+    if show_hint:
+        console.print(package_hint(scrape_result), highlight=False)
 
 
 async def run_deps(
@@ -98,6 +106,7 @@ async def run_deps(
     trust_check: bool = False,
     *,
     downloads: bool = False,
+    package_name: str | None = None,
 ) -> DependentsResult:
     """Run the deps pipeline: scrape → enrich → return."""
     import httpx2
@@ -177,7 +186,9 @@ async def run_deps(
                 else:
                     stop_live()
                 if not quiet:
-                    _print_scrape_outcome(console, scrape_result, min_stars, url, dep_type)
+                    _print_scrape_outcome(
+                        console, scrape_result, min_stars, url, dep_type, package_name
+                    )
                 if scrape_result.stale_pages and not token:
                     # Without a token nothing refreshes expired pages, so say so even in JSON
                     # mode (stderr only; stdout stays parseable).
@@ -201,6 +212,7 @@ async def run_deps(
                     rank_by=cast(Literal["stars", "trust"], rank_by),
                     trust_check=trust_check,
                     downloads=downloads,
+                    package_name=package_name,
                     max_pages=max_pages,
                     adaptive_stop=adaptive_stop,
                     cache=cache,
@@ -308,6 +320,11 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     help="Show each dependent's most-downloaded registry package (third-party lookup "
     "via ecosyste.ms, deps.dev, and npm; display only, not used for ranking).",
 )
+@click.option(
+    "--package-name",
+    default=None,
+    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
+)
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -323,6 +340,7 @@ def deps(
     rank_by: str,
     trust_check: bool,
     downloads: bool,
+    package_name: str | None,
 ) -> None:
     """List top dependents of a GitHub repository, ranked by stars (default) or trust."""
     _validate_url_or_exit(url)
@@ -374,6 +392,7 @@ def deps(
                 rank_by=rank_by,
                 trust_check=trust_check,
                 downloads=downloads,
+                package_name=package_name,
             )
         )
     except NotFoundError as e:
@@ -406,6 +425,11 @@ def deps(
     expose_value=False,
     deprecated="has no effect; dependents pages are fetched serially",
 )
+@click.option(
+    "--package-name",
+    default=None,
+    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
+)
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -415,6 +439,7 @@ def search(
     min_stars: int,
     token: str,
     max_pages: int,
+    package_name: str | None,
 ) -> None:
     """Search code patterns across dependents of a GitHub repository."""
     _validate_url_or_exit(url)
@@ -483,7 +508,12 @@ def search(
                     if progress_ctx is not None:
                         progress_ctx.stop()
                     _print_scrape_outcome(
-                        console, scrape_result, min_stars, url, DependentType.REPOSITORY
+                        console,
+                        scrape_result,
+                        min_stars,
+                        url,
+                        DependentType.REPOSITORY,
+                        package_name,
                     )
                     no_dependents = scrape_result.estimated_total_dependents == 0
 
@@ -498,6 +528,7 @@ def search(
                         max_repos=max_repos,
                         min_stars=min_stars,
                         max_pages=max_pages,
+                        package_name=package_name,
                         cache=cache,
                         on_page=on_page,
                         on_scraped=on_scraped,
