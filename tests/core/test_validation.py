@@ -22,6 +22,11 @@ class TestValidateGithubUrl:
             ),
             pytest.param("django/django", ("django", "django"), id="owner-repo-shorthand"),
             pytest.param("  django/django  ", ("django", "django"), id="surrounding-whitespace"),
+            pytest.param("https://github.com/owner/repo.git", ("owner", "repo"), id="git-suffix"),
+            pytest.param(
+                "https://github.com/owner/repo.git/", ("owner", "repo"), id="git-suffix-slash"
+            ),
+            pytest.param("owner/repo.git", ("owner", "repo"), id="shorthand-git-suffix"),
         ],
     )
     def test_valid_urls(self, url: str, expected: tuple[str, str]) -> None:
@@ -43,6 +48,7 @@ class TestValidateGithubUrl:
             pytest.param("ow ner/repo", "Invalid owner name", id="space-in-owner"),
             pytest.param("owner/re po", "Invalid repository name", id="space-in-repo"),
             pytest.param("https://github.com", "missing repository path", id="bare-host"),
+            pytest.param("owner/.git", "Invalid repository name", id="git-suffix-only"),
         ],
     )
     def test_invalid_urls(self, url: str, message: str) -> None:
