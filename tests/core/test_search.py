@@ -289,3 +289,26 @@ async def test_wait_above_cap_gives_up_without_sleeping(
     }
     sleep.assert_not_awaited()
     assert mock_http.requests[("GET", BETA)] == []
+
+
+async def test_search_dependents_carries_scraped_packages(session: httpx2.AsyncClient) -> None:
+    scraped = ScrapeResult(
+        repos=[make_repo("a", "b")],
+        pages_scraped=1,
+        max_pages=1,
+        estimated_total_pages=1,
+        estimated_total_dependents=1,
+        package="p",
+        packages=["p", "q"],
+    )
+    searched = CodeSearchResult(source="x", query="q", hits=[], searched_repos=1)
+    with (
+        patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock) as scrape_mock,
+        patch("dep_rank.core.search.search_code", new_callable=AsyncMock) as search_mock,
+    ):
+        scrape_mock.return_value = scraped
+        search_mock.return_value = searched
+        result = await search_dependents(session, SOURCE_URL, "q", token="t", package_name="p")
+    assert (result.package, result.packages) == ("p", ["p", "q"])
+    assert scrape_mock.await_args is not None
+    assert scrape_mock.await_args.kwargs["package_name"] == "p"

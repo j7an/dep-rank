@@ -110,9 +110,11 @@ class _ScrapeProgress:
         self._ctx = ctx
         self._max_pages = max_pages
         self._pages_scraped = 0
+        self._retries_since_page = 0
 
     async def on_page(self, snapshot: ScrapeSnapshot) -> None:
         self._pages_scraped = snapshot.pages_scraped
+        self._retries_since_page = 0
         await self._ctx.report_progress(
             snapshot.pages_scraped,
             self._max_pages,
@@ -125,8 +127,11 @@ class _ScrapeProgress:
             f"(attempt {status.attempt}/{status.max_retries})"
         )
         # MCP requires progress to increase with every notification: step a fraction past
-        # the last page, staying below the next page's whole number.
-        progress = self._pages_scraped + status.attempt / (status.max_retries + 1)
+        # the last page, staying below the next page's whole number. Count retries here, not
+        # by status.attempt, which restarts per fetch (a package switch makes two fetches
+        # before page 1 is counted).
+        self._retries_since_page += 1
+        progress = self._pages_scraped + 1 - 0.5**self._retries_since_page
         await self._ctx.report_progress(progress, self._max_pages, message)
         await self._ctx.warning(message)
 
@@ -180,12 +185,15 @@ async def get_dependents_tool(
     downloads: bool = False,
     max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
+    package_name: str | None = None,
 ) -> DependentsResult:
     """List a GitHub repository's dependents, ranked by stars or a pool-relative trust score.
 
     `url` is a github.com repository URL or `owner/repo`. `rows` caps the returned
     repositories. When `complete` is false, counts are lower bounds and `reason` says
     why the scrape stopped. Trust scores are relative to the scraped pool, not verdicts.
+    When the repository lists several packages, `package` is the one scraped and `packages`
+    lists all names (GitHub shows at most 100); pass `package_name` to scrape another.
     """
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
@@ -206,6 +214,7 @@ async def get_dependents_tool(
                 downloads=downloads,
                 max_pages=max_pages,
                 adaptive_stop=adaptive_stop,
+                package_name=package_name,
                 cache=cache,
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,
@@ -231,6 +240,7 @@ async def search_dependents_tool(
     max_repos: Annotated[int, Field(ge=1)] = 10,
     min_stars: Annotated[int, Field(ge=0)] = 50,
     max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
+    package_name: str | None = None,
 ) -> CodeSearchResult:
     """Search code across the top-starred dependents of a GitHub repository.
 
@@ -240,6 +250,8 @@ async def search_dependents_tool(
     `failed_repos` were not searched; each value says why (for example `HTTP 401`,
     `ConnectError`, or `rate limited`). Repos in `incomplete_repos` were searched, but
     GitHub timed out, so their hits may be partial.
+    When the repository lists several packages, `package` is the one scraped and `packages`
+    lists all names (GitHub shows at most 100); pass `package_name` to scrape another.
     """
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
@@ -255,6 +267,7 @@ async def search_dependents_tool(
                 max_repos=max_repos,
                 min_stars=min_stars,
                 max_pages=max_pages,
+                package_name=package_name,
                 cache=cache,
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,

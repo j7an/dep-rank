@@ -29,8 +29,11 @@ from dep_rank.core.scraper import (
     DEFAULT_MAX_PAGES,
     MAX_RETRIES,
     NotFoundError,
+    PackageOption,
+    format_names,
     parse_dependent_counts,
     parse_dependents_page,
+    parse_packages,
     scrape_dependents,
 )
 from tests.conftest import (
@@ -637,3 +640,151 @@ class TestRetryReporting:
         )
         assert "Rate limited on page 1" in caplog.text
         assert f"(1/{MAX_RETRIES})" in caplog.text
+
+
+MENU = [("pkg/default", "ID0", True), ("pkg/other", "ID1", False), ("pkg/third", "ID2", False)]
+
+
+def test_parse_packages() -> None:
+    html = dependents_page([], menu=MENU)
+    assert parse_packages(html) == [
+        PackageOption("pkg/default", "ID0", True),
+        PackageOption("pkg/other", "ID1", False),
+        PackageOption("pkg/third", "ID2", False),
+    ]
+    assert parse_packages(DEPENDENTS_HTML_LAST_PAGE) == []
+
+
+@pytest.mark.parametrize(
+    ("count", "expected_tail"), [(0, "none"), (3, "n2"), (12, "n9, … and 2 more")]
+)
+def test_format_names(count: int, expected_tail: str) -> None:
+    assert format_names([f"n{i}" for i in range(count)]).endswith(expected_tail)
+
+
+async def test_scrape_records_packages(mock_http: FakeHTTP, session: httpx2.AsyncClient) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("delta", "app", 80)], menu=MENU))
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.package == "pkg/default"
+    assert result.packages == ["pkg/default", "pkg/other", "pkg/third"]
+
+
+OTHER_URL = (
+    "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY&package_id=ID1"
+)
+
+
+async def test_package_name_switches_package(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("skip", "me", 999)], menu=MENU))
+    switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+    mock_http.get(OTHER_URL, body=dependents_page([("delta", "app", 80)], menu=switched_menu))
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        max_pages=1,
+        package_name="pkg/other",
+        rate_limiter=fast_limiter(),
+    )
+    assert [r.owner for r in result.repos] == ["delta"]  # lookup page rows not collected
+    assert result.pages_scraped == 1  # lookup page not counted
+    assert result.package == "pkg/other"
+    assert len(mock_http.requests[("GET", OTHER_URL)]) == 1
+
+
+async def test_package_name_already_selected_makes_no_extra_request(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([("delta", "app", 80)], menu=MENU))
+    result = await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        package_name="pkg/default",
+        rate_limiter=fast_limiter(),
+    )
+    assert mock_http.request_count == 1
+    assert result.package == "pkg/default"
+
+
+async def test_package_name_with_package_dependents(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    base = "https://github.com/owner/repo/network/dependents?dependent_type=PACKAGE"
+    mock_http.get(base, body=dependents_page([], menu=MENU))
+    switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+    mock_http.get(base + "&package_id=ID1", body=dependents_page([], menu=switched_menu))
+    await scrape_dependents(
+        session,
+        "https://github.com/owner/repo",
+        rows=10,
+        dependent_type=DependentType.PACKAGE,
+        package_name="pkg/other",
+        rate_limiter=fast_limiter(),
+    )
+    assert len(mock_http.requests[("GET", base + "&package_id=ID1")]) == 1
+
+
+@pytest.mark.parametrize(
+    ("menu", "message"),
+    [
+        ([], r"^no package named 'nope'; available: none$"),
+        (MENU, r"^no package named 'nope'; available: pkg/default, pkg/other, pkg/third$"),
+        (
+            [(f"p{i:03}", f"ID{i}", i == 0) for i in range(100)],
+            r"available: p000, .*, … and 90 more \(GitHub lists only the first 100 packages",
+        ),
+    ],
+    ids=["no-dropdown", "three", "capped"],
+)
+async def test_unknown_package_name_raises(
+    menu: list[tuple[str, str, bool]],
+    message: str,
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
+) -> None:
+    mock_http.get(FIRST_URL, body=dependents_page([], menu=menu))
+    with pytest.raises(NotFoundError, match=message):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            package_name="nope",
+            rate_limiter=fast_limiter(),
+        )
+
+
+async def test_package_switch_not_honoured_raises(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    # GitHub answers an unknown package_id with 200 and nothing selected, not 404.
+    mock_http.get(FIRST_URL, body=dependents_page([], menu=MENU))
+    unselected = [("pkg/default", "ID0", False), ("pkg/other", "ID1", False)]
+    mock_http.get(OTHER_URL, body=dependents_page([], menu=unselected))
+    with pytest.raises(NotFoundError, match=r"^GitHub did not select package 'pkg/other'"):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            package_name="pkg/other",
+            rate_limiter=fast_limiter(),
+        )
+
+
+async def test_unknown_package_on_expired_cache_page_suggests_clearing(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient, cache: SqliteCache
+) -> None:
+    await cache.put(FIRST_URL, dependents_page([], menu=MENU).encode(), etag=None, ttl=-1)
+    with pytest.raises(NotFoundError, match=r"expired cache.*dep-rank cache clear"):
+        await scrape_dependents(
+            session,
+            "https://github.com/owner/repo",
+            rows=10,
+            cache=cache,
+            package_name="new-pkg",
+            rate_limiter=fast_limiter(),
+        )

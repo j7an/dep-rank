@@ -22,8 +22,10 @@ from dep_rank.core.models import (
     Repository,
     RetryStatus,
     ScrapeReason,
+    ScrapeResult,
     ScrapeSnapshot,
 )
+from dep_rank.core.scraper import PACKAGE_MENU_CAP, format_names
 from dep_rank.core.validation import validate_github_url
 
 console = Console()
@@ -202,6 +204,8 @@ def print_dependents_json(result: DependentsResult, *, include_rank_metadata: bo
     if result.downloads_check is None:
         exclude["downloads_check"] = True
         repo_exclude.add("downloads")
+    if not result.packages:
+        exclude.update(package=True, packages=True)
     if repo_exclude:
         exclude["repos"] = {"__all__": repo_exclude}
     console.out(result.model_dump_json(indent=2, exclude=exclude or None), highlight=False)
@@ -271,14 +275,38 @@ def partial_warning(reason: ScrapeReason | None) -> str:
     return f"[yellow]⚠ {text}[/yellow]"
 
 
-def no_dependents_message(url: str, dependent_type: DependentType) -> str:
-    """Render the outcome when GitHub's dependents header reports 0 for the requested type."""
+def no_dependents_message(
+    url: str, dependent_type: DependentType, *, graph_note: bool = True
+) -> str:
+    """Render the outcome when GitHub's dependents header reports 0 for the requested type.
+
+    ``graph_note=False`` drops the dependency-graph explanation, for when a package hint
+    follows and gives the likelier cause.
+    """
     owner, repo = validate_github_url(url)
     noun = "packages" if dependent_type == DependentType.PACKAGE else "repositories"
+    message = f"GitHub reports 0 dependent {noun} for {owner}/{repo}."
+    if graph_note:
+        message += (
+            "\nGitHub's dependency graph may not have linked a published package to this repo; "
+            f"see https://github.com/{owner}/{repo}/network/dependents."
+        )
+    return message
+
+
+def package_hint(result: ScrapeResult) -> str:
+    """Name the scraped package and the others the dependents page lists."""
+    count = len(result.packages)
+    shown = f"{PACKAGE_MENU_CAP}+" if count >= PACKAGE_MENU_CAP else str(count)
+    scraped = (
+        f"Only package '{escape(result.package)}' was scraped"
+        if result.package
+        else "Only the package GitHub selected was scraped"
+    )
     return (
-        f"GitHub reports 0 dependent {noun} for {owner}/{repo}.\n"
-        "GitHub's dependency graph may not have linked a published package to this repo; "
-        f"see https://github.com/{owner}/{repo}/network/dependents."
+        f"{scraped}; this repository lists {shown} packages: "
+        f"{escape(format_names(result.packages))}. "
+        "Use --package-name NAME to scrape another."
     )
 
 

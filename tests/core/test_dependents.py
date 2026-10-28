@@ -145,3 +145,32 @@ async def test_downloads_off_skips_lookup(
     monkeypatch.setattr("dep_rank.core.dependents.fetch_downloads", fail, raising=False)
     result = await get_dependents(session, URL)
     assert result.downloads_check is None
+
+
+async def test_result_carries_scraped_packages(
+    session: httpx2.AsyncClient, mock_http: FakeHTTP
+) -> None:
+    menu = [("p", "ID0", True), ("q", "ID1", False)]
+    mock_http.get(FIRST, body=dependents_page([("a", "one", 100)], menu=menu))
+    result = await get_dependents(session, URL, token="t")
+    assert (result.package, result.packages) == ("p", ["p", "q"])
+
+
+async def test_package_name_is_passed_to_the_scrape(
+    session: httpx2.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def scrape(*args: object, **kwargs: Any) -> ScrapeResult:
+        calls.append(kwargs)
+        return ScrapeResult(
+            repos=[],
+            pages_scraped=1,
+            max_pages=1,
+            estimated_total_pages=1,
+            estimated_total_dependents=1,
+        )
+
+    monkeypatch.setattr("dep_rank.core.dependents.scrape_dependents", scrape)
+    await get_dependents(session, URL, token="t", package_name="x")
+    assert calls[0]["package_name"] == "x"

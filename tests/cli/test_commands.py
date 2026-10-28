@@ -44,6 +44,7 @@ from tests.conftest import (
     DEPENDENTS_HTML_NO_HEADER,
     DEPENDENTS_HTML_PAGE_1,
     FakeHTTP,
+    dependents_page,
     make_repo,
 )
 
@@ -1453,6 +1454,109 @@ class TestEmptyDependents:
         assert "Error: repository not found (or private): owner/repo" in result.stderr
         assert result.stdout == ""
         assert isinstance(result.exception, SystemExit)  # no traceback
+
+    MENU = [("pkg/default", "ID0", True), ("pkg/other", "ID1", False), ("pkg/third", "ID2", False)]
+
+    @staticmethod
+    def _flat(text: str) -> str:
+        return " ".join(text.split())
+
+    def test_deps_hints_at_other_packages(self, runner: CliRunner, mock_http: FakeHTTP) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=dependents_page([], repos=0, menu=self.MENU))
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "ghp_x"])
+        assert result.exit_code == 0
+        flat = self._flat(result.stderr)
+        assert "Only package 'pkg/default' was scraped; this repository lists 3 packages" in flat
+        assert "pkg/default, pkg/other, pkg/third" in flat
+        assert "--package-name NAME" in flat
+        assert "may not have linked" not in flat
+
+    def test_deps_hint_follows_non_empty_results(
+        self, runner: CliRunner, mock_http: FakeHTTP
+    ) -> None:
+        page = dependents_page([("delta", "app", 80)], menu=self.MENU)
+        mock_http.get(self.BASE + "REPOSITORY", body=page)
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "ghp_x"])
+        assert result.exit_code == 0
+        assert "delta/app" in result.stdout
+        assert "Only package 'pkg/default' was scraped" in self._flat(result.stderr)
+
+    @pytest.mark.parametrize(
+        ("menu", "extra"),
+        [
+            (
+                [("pkg/default", "ID0", True), ("pkg/other", "ID1", False)],
+                ["--package-name", "pkg/default"],
+            ),
+            ([("pkg/default", "ID0", True)], []),
+        ],
+        ids=["named", "single-package"],
+    )
+    def test_no_hint_with_package_name_or_single_package(
+        self,
+        runner: CliRunner,
+        mock_http: FakeHTTP,
+        menu: list[tuple[str, str, bool]],
+        extra: list[str],
+    ) -> None:
+        mock_http.get(
+            self.BASE + "REPOSITORY", body=dependents_page([("delta", "app", 80)], menu=menu)
+        )
+        result = runner.invoke(
+            cli, ["deps", "https://github.com/owner/repo", "--token", "ghp_x", *extra]
+        )
+        assert result.exit_code == 0
+        assert "Only package" not in self._flat(result.stderr)
+
+    def test_search_hints_at_other_packages(self, runner: CliRunner, mock_http: FakeHTTP) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=dependents_page([], repos=0, menu=self.MENU))
+        result = runner.invoke(
+            cli, ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
+        )
+        assert result.exit_code == 0
+        assert "Only package 'pkg/default' was scraped" in self._flat(result.stderr)
+
+    def test_search_package_name_scrapes_that_package(
+        self, runner: CliRunner, mock_http: FakeHTTP
+    ) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=dependents_page([], repos=0, menu=self.MENU))
+        switched_menu = [("pkg/default", "ID0", False), ("pkg/other", "ID1", True)]
+        switched = dependents_page([], repos=0, menu=switched_menu)
+        mock_http.get(self.BASE + "REPOSITORY&package_id=ID1", body=switched)
+        result = runner.invoke(
+            cli,
+            ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"]
+            + ["--package-name", "pkg/other"],
+        )
+        assert result.exit_code == 0
+        assert len(mock_http.requests[("GET", self.BASE + "REPOSITORY&package_id=ID1")]) == 1
+
+    @pytest.mark.parametrize("with_menu", [True, False], ids=["dropdown", "no-dropdown"])
+    def test_deps_json_has_package_fields_only_with_dropdown(
+        self, runner: CliRunner, mock_http: FakeHTTP, with_menu: bool
+    ) -> None:
+        menu = self.MENU if with_menu else []
+        page = dependents_page([("delta", "app", 80)], menu=menu)
+        mock_http.get(self.BASE + "REPOSITORY", body=page)
+        args = ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--format", "json"]
+        result = runner.invoke(cli, args)
+        payload = json.loads(result.stdout)
+        if with_menu:
+            assert payload["package"] == "pkg/default"
+            assert payload["packages"] == ["pkg/default", "pkg/other", "pkg/third"]
+        else:
+            assert "package" not in payload
+            assert "packages" not in payload
+        assert "Only package" not in result.stderr  # JSON mode prints no scrape outcome
+
+    def test_unknown_package_name_exits_1(self, runner: CliRunner, mock_http: FakeHTTP) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", body=dependents_page([], menu=self.MENU))
+        result = runner.invoke(
+            cli,
+            ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--package-name", "nope"],
+        )
+        assert result.exit_code == 1
+        assert "Error: no package named 'nope'; available: pkg/default" in self._flat(result.stderr)
 
     def test_search_complete_scrape_has_no_max_pages_percentage(
         self, runner: CliRunner, mock_http: FakeHTTP

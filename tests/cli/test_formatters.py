@@ -19,6 +19,7 @@ from dep_rank.cli.formatters import (
     downloads_cell,
     format_scrape_summary,
     humanize,
+    package_hint,
     partial_warning,
     print_dependents_json,
     print_dependents_table,
@@ -36,6 +37,7 @@ from dep_rank.core.models import (
     Repository,
     RetryStatus,
     ScrapeReason,
+    ScrapeResult,
     ScrapeSnapshot,
     TrustCheckResult,
     TrustComponents,
@@ -662,14 +664,18 @@ class TestTrustTableAndJson:
         assert payload["repos"][1]["downloads"] is None
         assert payload["downloads_check"] == {"complete": False, "unavailable": ["beta/toolkit"]}
 
+    @pytest.mark.parametrize("packages", [False, True])
     @pytest.mark.parametrize("downloads_check", [False, True])
     @pytest.mark.parametrize(
         ("rank_metadata", "trust_check"), [(False, False), (True, False), (True, True)]
     )
     def test_json_key_sets_per_mode(
-        self, rank_metadata: bool, trust_check: bool, downloads_check: bool
+        self, rank_metadata: bool, trust_check: bool, downloads_check: bool, packages: bool
     ) -> None:
         result = _result(ranked_by="trust" if rank_metadata else "stars", repos=[_trust_repo()])
+        if packages:
+            result.package = "p"
+            result.packages = ["p", "q"]
         if trust_check:
             result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
         if downloads_check:
@@ -698,6 +704,8 @@ class TestTrustTableAndJson:
         if downloads_check:
             top.add("downloads_check")
             repo.add("downloads")
+        if packages:
+            top |= {"package", "packages"}
         assert set(payload) == top
         assert set(payload["repos"][0]) == repo
 
@@ -838,3 +846,32 @@ class TestRetryCountdown:
         test_console = Console(width=120, record=True)
         test_console.print(RetryCountdown(status))
         assert "(page 2, retry 3/5)" in test_console.export_text()
+
+
+@pytest.mark.parametrize(
+    ("package", "count", "expected"),
+    [
+        ("p0", 3, "Only package 'p0' was scraped; this repository lists 3 packages: p0, p1, p2."),
+        (None, 3, "Only the package GitHub selected was scraped; this repository lists 3 packages"),
+        (
+            "p0",
+            100,
+            "this repository lists 100+ packages: p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, "
+            "… and 90 more.",
+        ),
+    ],
+    ids=["named", "unnamed", "capped"],
+)
+def test_package_hint(package: str | None, count: int, expected: str) -> None:
+    result = ScrapeResult(
+        repos=[],
+        pages_scraped=1,
+        max_pages=1,
+        estimated_total_pages=1,
+        estimated_total_dependents=1,
+        package=package,
+        packages=[f"p{i}" for i in range(count)],
+    )
+    hint = package_hint(result)
+    assert expected in hint
+    assert hint.endswith("Use --package-name NAME to scrape another.")

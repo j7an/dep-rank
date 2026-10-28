@@ -41,6 +41,7 @@ dep-rank deps https://github.com/django/django --packages
 | `--rank-by` | stars | Ranking strategy: `stars` or `trust` (heuristic, requires token) |
 | `--trust-check` | off | Check sampled star history for up to 25 top results (requires `--rank-by trust` and token) |
 | `--downloads` | off | Show each dependent's most-downloaded registry package (ecosyste.ms / deps.dev / npm; display only) |
+| `--package-name` | GitHub's default | Scrape only this package (exact name from the dependents page dropdown). Without it, GitHub's default package is scraped and any other listed packages are named in a hint |
 
 In table output (`deps`, `search`, and the live progress table), repository names are clickable links to their GitHub pages in terminals that support OSC 8 hyperlinks; piped or redirected output stays plain text.
 
@@ -57,6 +58,7 @@ dep-rank search https://github.com/django/django "middleware" --max-repos 20
 | `--min-stars` | 50 | Only search repos with this many stars |
 | `--token` | `DEP_RANK_TOKEN` | GitHub token (required) |
 | `--max-pages` | 200 | Maximum pages to scrape (ceiling 1000) |
+| `--package-name` | GitHub's default | Scrape only this package (exact name from the dependents page dropdown). Without it, GitHub's default package is scraped and any other listed packages are named in a hint |
 
 `search` always runs a bounded non-adaptive top-K scrape (`--no-adaptive-stop` is not exposed; adaptive early-stop is permanently disabled for this command).
 
@@ -65,6 +67,8 @@ Rate-limited code searches are retried up to twice, honoring GitHub's wait heade
 ### Partial results
 
 A scrape result (`deps`, and the `search` pre-pass) reports whether it finished: results include a `complete` flag and a `reason`. `complete: false` means the scrape stopped early — `max_pages_reached` (raise `--max-pages`), `trend_converged` (the adaptive heuristic judged the top-K stable; use `--no-adaptive-stop` to scrape until exhaustion or `--max-pages`), `network_failure`, or `rate_limited`. `total_count`/`filtered_count` are then lower bounds across the pages actually scraped, not population totals.
+
+Some repositories publish several packages, and GitHub's dependents page lists them in a dropdown (at most 100). Without `--package-name`, GitHub picks the package, and dep-rank names it and the others in a hint. JSON output then also carries `package` (the one scraped) and `packages` (every listed name).
 
 ### `dep-rank cache` — Manage cache
 
@@ -99,8 +103,8 @@ Client configuration (the command works with any MCP client that launches stdio 
 
 Tools:
 
-- `get_dependents` — rank a repository's dependents by stars or trust (the `dep-rank deps` pipeline). Parameters mirror the CLI: `url`, `rows`, `min_stars`, `dependent_type`, `descriptions`, `rank_by`, `trust_check`, `downloads`, `max_pages`, `adaptive_stop`.
-- `search_dependents` — search code across the top dependents (the `dep-rank search` pipeline): `url`, `query`, `max_repos`, `min_stars`, `max_pages`.
+- `get_dependents` — rank a repository's dependents by stars or trust (the `dep-rank deps` pipeline). Parameters mirror the CLI: `url`, `rows`, `min_stars`, `dependent_type`, `descriptions`, `rank_by`, `trust_check`, `downloads`, `max_pages`, `adaptive_stop`, `package_name`.
+- `search_dependents` — search code across the top dependents (the `dep-rank search` pipeline): `url`, `query`, `max_repos`, `min_stars`, `max_pages`, `package_name`.
 
 Caveats:
 
@@ -229,7 +233,8 @@ failures from repositories with no matching package.
 `rank_by="trust"` without a token, or `trust_check=True` without
 `rank_by="trust"`. It raises `NotFoundError` (a `ValueError` subclass, from
 `dep_rank.core.scraper`) when GitHub returns 404 for the repository's dependents
-page — the repository does not exist or is private. Trust scores are pool-relative heuristics, not quality or fraud
+page — the repository does not exist or is private — and when `package_name` names
+no listed package. Trust scores are pool-relative heuristics, not quality or fraud
 verdicts.
 
 Check `result.complete` and `result.reason` for partial results; counts are lower

@@ -171,6 +171,7 @@ async def search_dependents(
     on_page: Callable[[ScrapeSnapshot], Awaitable[None]] | None = None,
     on_scraped: Callable[[ScrapeResult], Awaitable[None]] | None = None,
     on_retry: Callable[[RetryStatus], Awaitable[None]] | None = None,
+    package_name: str | None = None,
 ) -> CodeSearchResult:
     """Scrape the top dependents of ``url`` (bounded, non-adaptive) and search their code.
 
@@ -188,6 +189,7 @@ async def search_dependents(
         rows=max_repos,
         adaptive_stop=False,
         on_retry=on_retry,
+        package_name=package_name,
     )
     if on_scraped is not None:
         await on_scraped(scrape_result)
@@ -199,5 +201,11 @@ async def search_dependents(
             session, scrape_result.repos, query, token=token, max_repos=max_repos
         )
     return result.model_copy(
-        update={"source": url, "complete": scrape_result.complete, "reason": scrape_result.reason}
+        update={
+            "source": url,
+            "complete": scrape_result.complete,
+            "reason": scrape_result.reason,
+            "package": scrape_result.package,
+            "packages": scrape_result.packages,
+        }
     )

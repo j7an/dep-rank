@@ -156,7 +156,7 @@ async def test_get_dependents_round_trip(token: str, core_deps: AsyncMock) -> No
     async with Client(mcp) as client:
         result = await client.call_tool(
             "get_dependents",
-            {"url": URL, "downloads": True, "rank_by": "trust"},
+            {"url": URL, "downloads": True, "rank_by": "trust", "package_name": "pkg/other"},
             raise_on_error=False,
         )
 
@@ -167,6 +167,7 @@ async def test_get_dependents_round_trip(token: str, core_deps: AsyncMock) -> No
     kwargs = core_deps.await_args.kwargs
     assert kwargs["downloads"] is True
     assert kwargs["rank_by"] == "trust"
+    assert kwargs["package_name"] == "pkg/other"
     assert kwargs["token"] == token
 
 
@@ -174,7 +175,14 @@ async def test_search_dependents_round_trip(token: str, core_search: AsyncMock) 
     async with Client(mcp) as client:
         result = await client.call_tool(
             "search_dependents",
-            {"url": URL, "query": "needle", "max_repos": 3, "min_stars": 7, "max_pages": 9},
+            {
+                "url": URL,
+                "query": "needle",
+                "max_repos": 3,
+                "min_stars": 7,
+                "max_pages": 9,
+                "package_name": "pkg/other",
+            },
             raise_on_error=False,
         )
 
@@ -185,6 +193,7 @@ async def test_search_dependents_round_trip(token: str, core_search: AsyncMock) 
     assert core_search.await_args.args[1:] == (URL, "needle")
     kwargs = core_search.await_args.kwargs
     assert (kwargs["max_repos"], kwargs["min_stars"], kwargs["max_pages"]) == (3, 7, 9)
+    assert kwargs["package_name"] == "pkg/other"
     assert kwargs["token"] == token
 
 
@@ -402,7 +411,7 @@ async def test_retry_reported_as_progress_and_warning(
     assert len(recorder.progress) == 2, recorder.progress
     progress, total, message = recorder.progress[1]
     # Past the last page count, so progress keeps increasing as MCP requires.
-    assert progress == pytest.approx(3 + 1 / 6)
+    assert 3 < progress < 4
     assert total == 200
     assert message is not None
     _assert_retry_facts(message)
@@ -433,6 +442,28 @@ async def test_retry_progress_strictly_increases(
     page_3, retry_1, retry_2, page_4 = values
     assert page_3 < retry_1 < retry_2 < page_4
     assert (page_3, page_4) == (3, 4)
+
+
+async def test_retry_progress_increases_when_attempts_repeat_on_one_page(
+    token: str, core_deps: AsyncMock, recorder: _Recorder
+) -> None:
+    # A package switch fetches a lookup page and then the selected package's first page,
+    # both before page 1 is counted, so each can report a retry of page 1, attempt 1.
+    async def fake(*_args: Any, **kwargs: Any) -> DependentsResult:
+        for _ in range(2):
+            await kwargs["on_retry"](RetryStatus(page=1, attempt=1, max_retries=5, delay=1.0))
+        await kwargs["on_page"](_snapshot(pages_scraped=1, estimated_total_pages=40))
+        return _dependents_result()
+
+    core_deps.side_effect = fake
+    async with Client(mcp, progress_handler=recorder.on_progress) as client:
+        result = await client.call_tool("get_dependents", {"url": URL}, raise_on_error=False)
+
+    assert not result.is_error, _text(result)
+    values = [progress for progress, _, _ in recorder.progress]
+    assert len(values) == 3, recorder.progress
+    retry_lookup, retry_selected, page_1 = values
+    assert 0 < retry_lookup < retry_selected < page_1 == 1
 
 
 async def test_retry_delay_rounds_up_to_whole_seconds(
