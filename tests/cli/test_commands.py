@@ -1471,6 +1471,16 @@ class TestEmptyDependents:
         assert "--package-name NAME" in flat
         assert "may not have linked" not in flat
 
+    def test_deps_hint_follows_non_empty_results(
+        self, runner: CliRunner, mock_http: FakeHTTP
+    ) -> None:
+        page = dependents_page([("delta", "app", 80)], menu=self.MENU)
+        mock_http.get(self.BASE + "REPOSITORY", body=page)
+        result = runner.invoke(cli, ["deps", "https://github.com/owner/repo", "--token", "ghp_x"])
+        assert result.exit_code == 0
+        assert "delta/app" in result.stdout
+        assert "Only package 'pkg/default' was scraped" in self._flat(result.stderr)
+
     @pytest.mark.parametrize(
         ("menu", "extra"),
         [
