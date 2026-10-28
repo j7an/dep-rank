@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import math
+import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from urllib.parse import quote
@@ -16,7 +20,7 @@ from dep_rank.core.models import (
     ScrapeResult,
     ScrapeSnapshot,
 )
-from dep_rank.core.rate_limiter import RateLimiter
+from dep_rank.core.rate_limiter import RETRY_MAX_SECONDS, RateLimiter
 from dep_rank.core.scraper import DEFAULT_MAX_PAGES, REQUEST_TIMEOUT, scrape_dependents
 
 if TYPE_CHECKING:
@@ -25,6 +29,36 @@ if TYPE_CHECKING:
 SEARCH_URL = "https://api.github.com/search/code"
 # GitHub code search: 10 requests/minute authenticated
 SEARCH_RATE_LIMITER = RateLimiter(rate=10, period=60.0)
+SEARCH_MAX_RETRIES = 2  # per repo; after that the repo and all later ones are "rate limited"
+SEARCH_DEFAULT_WAIT = 60.0  # GitHub: wait at least a minute when no header says how long
+SEARCH_MIN_WAIT = 1.0  # floor, so a zero wait (clock skew, retry-after: 0) still backs off
+
+logger = logging.getLogger(__name__)
+
+
+def _rate_limit_wait(resp: httpx2.Response, now: float) -> float | None:
+    """Seconds GitHub asks us to wait, or None if ``resp`` is not a rate-limit response.
+
+    A 403 counts only with a rate-limit header; a bare 403 is usually a permission error.
+    """
+    retry_after = resp.headers.get("retry-after")
+    exhausted = resp.headers.get("x-ratelimit-remaining") == "0"
+    if resp.status_code != 429 and not (
+        resp.status_code == 403 and (retry_after is not None or exhausted)
+    ):
+        return None
+    try:
+        seconds = float(retry_after) if retry_after is not None else math.nan
+    except ValueError:  # the HTTP-date form
+        seconds = math.nan
+    if math.isfinite(seconds):
+        return max(seconds, 0.0)
+    if exhausted:
+        try:
+            return max(float(resp.headers.get("x-ratelimit-reset", "")) - now, 0.0)
+        except ValueError:
+            pass
+    return SEARCH_DEFAULT_WAIT
 
 
 async def search_code(
@@ -56,17 +90,40 @@ async def search_code(
     }
 
     # ponytail: no early stop on 401; add one if large --max-repos with a bad token proves painful.
+    rate_limited = False
     for repo in search_repos:
-        await SEARCH_RATE_LIMITER.acquire()
         full_name = f"{repo.owner}/{repo.name}"
+        if rate_limited:
+            failed[full_name] = "rate limited"
+            continue
 
         search_query = f"{query} repo:{repo.owner}/{repo.name}"
         url = f"{SEARCH_URL}?q={quote(search_query, safe='')}"
 
         try:
-            resp = await session.get(
-                url, headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT
-            )
+            for retry in range(SEARCH_MAX_RETRIES + 1):
+                await SEARCH_RATE_LIMITER.acquire()
+                resp = await session.get(
+                    url, headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT
+                )
+                wait = _rate_limit_wait(resp, time.time())
+                if wait is None:
+                    break
+                delay = max(wait, SEARCH_MIN_WAIT) * 2**retry
+                if retry == SEARCH_MAX_RETRIES or delay > RETRY_MAX_SECONDS:
+                    rate_limited = True
+                    break
+                logger.warning(
+                    "Code search rate limited on %s — retrying in %.0fs (%d/%d)",
+                    full_name,
+                    delay,
+                    retry + 1,
+                    SEARCH_MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
+            if rate_limited:
+                failed[full_name] = "rate limited"
+                continue
             if resp.status_code != 200:
                 failed[full_name] = f"HTTP {resp.status_code}"
                 continue

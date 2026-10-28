@@ -237,9 +237,9 @@ async def search_dependents_tool(
     `url` is a github.com repository URL or `owner/repo`. The top `max_repos` dependents
     with at least `min_stars` stars are searched with GitHub code search. When `complete`
     is false, the dependent scrape stopped early and `reason` says why. Repos in
-    `failed_repos` were not searched; each value says why (for example `HTTP 401` or
-    `ConnectError`). Repos in `incomplete_repos` were searched, but GitHub timed out, so
-    their hits may be partial.
+    `failed_repos` were not searched; each value says why (for example `HTTP 401`,
+    `ConnectError`, or `rate limited`). Repos in `incomplete_repos` were searched, but
+    GitHub timed out, so their hits may be partial.
     """
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
