@@ -195,6 +195,102 @@ async def test_search_dependents_zero_dependents_skips_search(
     assert (result.complete, result.reason) == (True, None)
 
 
+ALPHA = "https://api.github.com/search/code?q=test%20repo%3Aalpha%2Fframework"
+BETA = "https://api.github.com/search/code?q=test%20repo%3Abeta%2Ftoolkit"
+HIT = {"total_count": 1, "items": [{"html_url": "https://github.com/x/blob/a.py", "path": "a.py"}]}
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "expected_wait"),
+    [
+        (429, {"retry-after": "5"}, 5),
+        (403, {"retry-after": "5"}, 5),
+        (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030"}, 30),
+        (429, {}, 60),
+        (429, {"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"}, 60),
+        (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "soon"}, 60),
+        (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "990"}, 1),
+    ],
+    ids=[
+        "429-retry-after",
+        "403-retry-after",
+        "403-reset",
+        "429-no-headers",
+        "http-date",
+        "bad-reset",
+        "reset-passed",
+    ],
+)
+async def test_rate_limited_search_retries_then_succeeds(
+    status: int,
+    headers: dict[str, str],
+    expected_wait: float,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.search.asyncio.sleep", sleep)
+    monkeypatch.setattr("dep_rank.core.search.time.time", lambda: 1000.0)
+    mock_http.get(ALPHA, status=status, headers=headers)
+    mock_http.get(ALPHA, payload=HIT)
+    result = await search_code(session, [make_repo("alpha", "framework")], "test", token="t")
+    assert result.failed_repos == {}
+    assert result.searched_repos == 1
+    assert len(result.hits) == 1
+    assert sleep.await_count == 1
+    assert sleep.await_args is not None
+    assert sleep.await_args.args[0] == expected_wait  # exactly what GitHub asked
+
+
+async def test_repeated_limits_back_off_exponentially(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.search.asyncio.sleep", sleep)
+    mock_http.get(ALPHA, status=429)
+    mock_http.get(ALPHA, status=429)
+    mock_http.get(ALPHA, payload=HIT)
+    result = await search_code(session, [make_repo("alpha", "framework")], "test", token="t")
+    assert result.failed_repos == {}
+    assert [c.args[0] for c in sleep.await_args_list] == [60, 120]
+
+
+async def test_exhausted_retries_fail_fast(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.search.asyncio.sleep", sleep)
+    for _ in range(3):
+        mock_http.get(ALPHA, status=429, headers={"retry-after": "1"})
+    repos = [make_repo("alpha", "framework"), make_repo("beta", "toolkit")]
+    result = await search_code(session, repos, "test", token="t")
+    assert result.failed_repos == {
+        "alpha/framework": "rate limited",
+        "beta/toolkit": "rate limited",
+    }
+    assert result.searched_repos == 0
+    assert sleep.await_count == 2
+    assert len(mock_http.requests[("GET", ALPHA)]) == 3
+    assert mock_http.requests[("GET", BETA)] == []
+
+
+async def test_wait_above_cap_gives_up_without_sleeping(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.search.asyncio.sleep", sleep)
+    mock_http.get(ALPHA, status=429, headers={"retry-after": "3600"})
+    repos = [make_repo("alpha", "framework"), make_repo("beta", "toolkit")]
+    result = await search_code(session, repos, "test", token="t")
+    assert result.failed_repos == {
+        "alpha/framework": "rate limited",
+        "beta/toolkit": "rate limited",
+    }
+    sleep.assert_not_awaited()
+    assert mock_http.requests[("GET", BETA)] == []
+
+
 async def test_search_dependents_carries_scraped_packages(session: httpx2.AsyncClient) -> None:
     scraped = ScrapeResult(
         repos=[make_repo("a", "b")],

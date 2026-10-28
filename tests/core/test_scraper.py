@@ -204,11 +204,11 @@ class TestScrapeDependentsEdgeCases:
     async def test_error_response_sets_network_failure(
         self, mock_http: FakeHTTP, session: httpx2.AsyncClient
     ) -> None:
-        """A non-200/304/429 response terminates with reason=network_failure."""
+        """A non-retried status (not 200/304/404/429/5xx) terminates with reason=network_failure."""
 
         mock_http.get(
             "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-            status=500,
+            status=403,
         )
         result = await scrape_dependents(session, "https://github.com/owner/repo", rows=100)
         assert result.repos == []
@@ -469,6 +469,53 @@ async def test_later_page_404_stays_network_failure(
     assert result.pages_scraped == 1
     assert [r.owner for r in result.repos] == ["alpha", "beta", "gamma"]
     assert "HTTP 404 on page 2" in caplog.text  # the cause stays visible on stderr
+
+
+async def test_git_suffix_url_scrapes_the_repo(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    # A regression requests the .git URL and retries; keep that failure fast.
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo.git", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
+
+
+async def test_5xx_then_success_completes(
+    monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    mock_http.get(FIRST_URL, status=503)
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+    limiter = fast_limiter()
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=limiter
+    )
+    assert result.complete is True
+    assert [r.owner for r in result.repos] == ["delta"]
+    assert limiter.background_paused() is False
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+async def test_5xx_exhausts_to_network_failure(
+    status: int, monkeypatch: pytest.MonkeyPatch, mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", sleep)
+    for _ in range(MAX_RETRIES + 1):
+        mock_http.get(FIRST_URL, status=status)
+    # fast_limiter: the default unauthenticated limiter's token waits use the same mocked sleep
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.reason == ScrapeReason.NETWORK_FAILURE
+    assert result.pages_scraped == 0
+    assert mock_http.request_count == MAX_RETRIES + 1
+    assert sleep.await_count == MAX_RETRIES
+    assert all(0 <= c.args[0] <= RETRY_MAX_SECONDS for c in sleep.await_args_list)
 
 
 async def test_transport_error_then_success_completes(

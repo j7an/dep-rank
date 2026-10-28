@@ -62,6 +62,8 @@ dep-rank search https://github.com/django/django "middleware" --max-repos 20
 
 `search` always runs a bounded non-adaptive top-K scrape (`--no-adaptive-stop` is not exposed; adaptive early-stop is permanently disabled for this command).
 
+Rate-limited code searches are retried up to twice, honoring GitHub's wait headers; if GitHub keeps limiting, the remaining repositories are reported as not searched (`rate limited`).
+
 ### Partial results
 
 A scrape result (`deps`, and the `search` pre-pass) reports whether it finished: results include a `complete` flag and a `reason`. `complete: false` means the scrape stopped early — `max_pages_reached` (raise `--max-pages`), `trend_converged` (the adaptive heuristic judged the top-K stable; use `--no-adaptive-stop` to scrape until exhaustion or `--max-pages`), `network_failure`, or `rate_limited`. `total_count`/`filtered_count` are then lower bounds across the pages actually scraped, not population totals.
