@@ -51,6 +51,8 @@ DEFAULT_MAX_PAGES = 200
 ADAPTIVE_WINDOW = 20  # trailing pages examined for the trend
 ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 
+RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})  # retried like transport errors
+
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
 SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
 #                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
@@ -58,6 +60,10 @@ SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= th
 
 class NetworkFailureError(Exception):
     """A page could not be fetched after the retry budget (or an unexpected status)."""
+
+
+class NotFoundError(ValueError):
+    """The repository, or a named package, does not exist or is not visible to the token."""
 
 
 class RateLimitedError(Exception):
@@ -203,9 +209,10 @@ async def _fetch_page(
 ) -> str:
     """Fetch one page with rate limiting, retries, and caching.
 
-    Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
-    retry budget is exhausted or an unexpected status is returned. Each 429 retry is
-    reported to ``on_retry(attempt, delay)`` before its wait.
+    Returns the HTML body. Transport errors and 5xx responses are retried with backoff.
+    Raises RateLimitedError or NetworkFailureError when the retry budget is exhausted or
+    an unexpected status is returned, and NotFoundError on a 404 (never retried). Each
+    429 retry is reported to ``on_retry(attempt, delay)`` before its wait.
     """
     rate_limited = False
     for attempt in range(MAX_RETRIES + 1):
@@ -223,6 +230,19 @@ async def _fetch_page(
             continue
         if result.body is not None:
             return result.body.decode("utf-8")
+        if result.status in RETRYABLE_STATUSES:
+            if attempt == MAX_RETRIES:
+                break
+            delay = backoff_delay(attempt)
+            logger.warning(
+                "HTTP %d — retrying in %.1fs (%d/%d)",
+                result.status,
+                delay,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            await asyncio.sleep(delay)
+            continue
         if result.status == 429:
             rate_limited = True
             if attempt == MAX_RETRIES:
@@ -230,6 +250,8 @@ async def _fetch_page(
             await on_retry(attempt + 1, result.retry_delay)
             await asyncio.sleep(result.retry_delay)
             continue
+        if result.status == 404:
+            raise NotFoundError(url)
         logger.warning("Unexpected HTTP %d — stopping", result.status)
         raise NetworkFailureError(f"HTTP {result.status} for {url}")
     logger.warning("Exhausted retries for %s", url)
@@ -471,6 +493,13 @@ async def scrape_dependents(
                 )
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
+                break
+            except NotFoundError:
+                if page == 0:
+                    msg = f"repository not found (or private): {owner}/{repo}"
+                    raise NotFoundError(msg) from None
+                logger.warning("HTTP 404 on page %d — stopping", page + 1)
+                reason = ScrapeReason.NETWORK_FAILURE
                 break
             except NetworkFailureError:
                 reason = ScrapeReason.NETWORK_FAILURE

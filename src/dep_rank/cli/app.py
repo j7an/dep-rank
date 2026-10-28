@@ -355,24 +355,30 @@ def deps(
             err=True,
         )
 
+    from dep_rank.core.scraper import NotFoundError
+
     verbose = ctx.obj.get("verbose", False)
-    result = asyncio.run(
-        run_deps(
-            url,
-            rows,
-            min_stars,
-            descriptions,
-            packages,
-            token,
-            verbose,
-            max_pages=max_pages,
-            adaptive_stop=adaptive_stop,
-            quiet=(output_format == "json"),
-            rank_by=rank_by,
-            trust_check=trust_check,
-            downloads=downloads,
+    try:
+        result = asyncio.run(
+            run_deps(
+                url,
+                rows,
+                min_stars,
+                descriptions,
+                packages,
+                token,
+                verbose,
+                max_pages=max_pages,
+                adaptive_stop=adaptive_stop,
+                quiet=(output_format == "json"),
+                rank_by=rank_by,
+                trust_check=trust_check,
+                downloads=downloads,
+            )
         )
-    )
+    except NotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     from dep_rank.cli.formatters import print_dependents_json, print_dependents_table
 
@@ -509,7 +515,13 @@ def search(
                     return  # the outcome message is the whole answer; nothing to search
                 print_search_results(result)
 
-    asyncio.run(_run())
+    from dep_rank.core.scraper import NotFoundError
+
+    try:
+        asyncio.run(_run())
+    except NotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @cli.group()
