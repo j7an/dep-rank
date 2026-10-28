@@ -156,7 +156,7 @@ async def test_get_dependents_round_trip(token: str, core_deps: AsyncMock) -> No
     async with Client(mcp) as client:
         result = await client.call_tool(
             "get_dependents",
-            {"url": URL, "downloads": True, "rank_by": "trust"},
+            {"url": URL, "downloads": True, "rank_by": "trust", "package_name": "pkg/other"},
             raise_on_error=False,
         )
 
@@ -167,6 +167,7 @@ async def test_get_dependents_round_trip(token: str, core_deps: AsyncMock) -> No
     kwargs = core_deps.await_args.kwargs
     assert kwargs["downloads"] is True
     assert kwargs["rank_by"] == "trust"
+    assert kwargs["package_name"] == "pkg/other"
     assert kwargs["token"] == token
 
 
@@ -174,7 +175,14 @@ async def test_search_dependents_round_trip(token: str, core_search: AsyncMock) 
     async with Client(mcp) as client:
         result = await client.call_tool(
             "search_dependents",
-            {"url": URL, "query": "needle", "max_repos": 3, "min_stars": 7, "max_pages": 9},
+            {
+                "url": URL,
+                "query": "needle",
+                "max_repos": 3,
+                "min_stars": 7,
+                "max_pages": 9,
+                "package_name": "pkg/other",
+            },
             raise_on_error=False,
         )
 
@@ -185,6 +193,7 @@ async def test_search_dependents_round_trip(token: str, core_search: AsyncMock) 
     assert core_search.await_args.args[1:] == (URL, "needle")
     kwargs = core_search.await_args.kwargs
     assert (kwargs["max_repos"], kwargs["min_stars"], kwargs["max_pages"]) == (3, 7, 9)
+    assert kwargs["package_name"] == "pkg/other"
     assert kwargs["token"] == token
 
 

@@ -180,12 +180,15 @@ async def get_dependents_tool(
     downloads: bool = False,
     max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
+    package_name: str | None = None,
 ) -> DependentsResult:
     """List a GitHub repository's dependents, ranked by stars or a pool-relative trust score.
 
     `url` is a github.com repository URL or `owner/repo`. `rows` caps the returned
     repositories. When `complete` is false, counts are lower bounds and `reason` says
     why the scrape stopped. Trust scores are relative to the scraped pool, not verdicts.
+    When the repository lists several packages, `package` is the one scraped and `packages`
+    lists all names (GitHub shows at most 100); pass `package_name` to scrape another.
     """
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
@@ -206,6 +209,7 @@ async def get_dependents_tool(
                 downloads=downloads,
                 max_pages=max_pages,
                 adaptive_stop=adaptive_stop,
+                package_name=package_name,
                 cache=cache,
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,
@@ -231,6 +235,7 @@ async def search_dependents_tool(
     max_repos: Annotated[int, Field(ge=1)] = 10,
     min_stars: Annotated[int, Field(ge=0)] = 50,
     max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
+    package_name: str | None = None,
 ) -> CodeSearchResult:
     """Search code across the top-starred dependents of a GitHub repository.
 
@@ -240,6 +245,8 @@ async def search_dependents_tool(
     `failed_repos` were not searched; each value says why (for example `HTTP 401` or
     `ConnectError`). Repos in `incomplete_repos` were searched, but GitHub timed out, so
     their hits may be partial.
+    When the repository lists several packages, `package` is the one scraped and `packages`
+    lists all names (GitHub shows at most 100); pass `package_name` to scrape another.
     """
     token = _check_call(url)
     progress = _ScrapeProgress(ctx, max_pages)
@@ -255,6 +262,7 @@ async def search_dependents_tool(
                 max_repos=max_repos,
                 min_stars=min_stars,
                 max_pages=max_pages,
+                package_name=package_name,
                 cache=cache,
                 on_page=progress.on_page,
                 on_retry=progress.on_retry,
