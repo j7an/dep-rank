@@ -60,6 +60,10 @@ class NetworkFailureError(Exception):
     """A page could not be fetched after the retry budget (or an unexpected status)."""
 
 
+class NotFoundError(ValueError):
+    """The repository, or a named package, does not exist or is not visible to the token."""
+
+
 class RateLimitedError(Exception):
     """The retry budget was exhausted on 429 responses."""
 
@@ -204,7 +208,8 @@ async def _fetch_page(
     """Fetch one page with rate limiting, retries, and caching.
 
     Returns the HTML body. Raises RateLimitedError or NetworkFailureError when the
-    retry budget is exhausted or an unexpected status is returned. Each 429 retry is
+    retry budget is exhausted or an unexpected status is returned, and NotFoundError on
+    a 404 (never retried). Each 429 retry is
     reported to ``on_retry(attempt, delay)`` before its wait.
     """
     rate_limited = False
@@ -230,6 +235,8 @@ async def _fetch_page(
             await on_retry(attempt + 1, result.retry_delay)
             await asyncio.sleep(result.retry_delay)
             continue
+        if result.status == 404:
+            raise NotFoundError(url)
         logger.warning("Unexpected HTTP %d — stopping", result.status)
         raise NetworkFailureError(f"HTTP {result.status} for {url}")
     logger.warning("Exhausted retries for %s", url)
@@ -471,6 +478,13 @@ async def scrape_dependents(
                 )
             except RateLimitedError:
                 reason = ScrapeReason.RATE_LIMITED
+                break
+            except NotFoundError:
+                if page == 0:
+                    msg = f"repository not found (or private): {owner}/{repo}"
+                    raise NotFoundError(msg) from None
+                logger.warning("HTTP 404 on page %d — stopping", page + 1)
+                reason = ScrapeReason.NETWORK_FAILURE
                 break
             except NetworkFailureError:
                 reason = ScrapeReason.NETWORK_FAILURE

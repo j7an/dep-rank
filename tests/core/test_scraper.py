@@ -28,6 +28,7 @@ from dep_rank.core.rate_limiter import (
 from dep_rank.core.scraper import (
     DEFAULT_MAX_PAGES,
     MAX_RETRIES,
+    NotFoundError,
     parse_dependent_counts,
     parse_dependents_page,
     scrape_dependents,
@@ -440,6 +441,31 @@ async def test_transport_errors_exhaust_to_network_failure(
     assert result.complete is False
     assert result.reason == ScrapeReason.NETWORK_FAILURE
     assert result.pages_scraped == 0
+
+
+async def test_missing_repository_raises_not_found(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    mock_http.get(FIRST_URL, status=404)
+    with pytest.raises(NotFoundError, match=r"^repository not found \(or private\): owner/repo$"):
+        await scrape_dependents(
+            session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+        )
+    assert mock_http.request_count == 1  # 404 is not retried
+
+
+async def test_later_page_404_stays_network_failure(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_PAGE_1)
+    mock_http.get("https://github.com/owner/repo/network/dependents?page=2", status=404)
+    result = await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+    )
+    assert result.reason == ScrapeReason.NETWORK_FAILURE
+    assert result.pages_scraped == 1
+    assert [r.owner for r in result.repos] == ["alpha", "beta", "gamma"]
+    assert "HTTP 404 on page 2" in caplog.text  # the cause stays visible on stderr
 
 
 async def test_git_suffix_url_scrapes_the_repo(

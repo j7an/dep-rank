@@ -1435,6 +1435,25 @@ class TestEmptyDependents:
         assert "No results found" not in result.output
         assert result.stdout == ""
 
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["deps", "https://github.com/owner/repo", "--token", "ghp_x"],
+            ["deps", "https://github.com/owner/repo", "--token", "ghp_x", "--format", "json"],
+            ["search", "https://github.com/owner/repo", "import os", "--token", "ghp_x"],
+        ],
+        ids=["deps", "deps-json", "search"],
+    )
+    def test_missing_repository_exits_1(
+        self, runner: CliRunner, mock_http: FakeHTTP, args: list[str]
+    ) -> None:
+        mock_http.get(self.BASE + "REPOSITORY", status=404)
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 1
+        assert "Error: repository not found (or private): owner/repo" in result.stderr
+        assert result.stdout == ""
+        assert isinstance(result.exception, SystemExit)  # no traceback
+
     def test_search_complete_scrape_has_no_max_pages_percentage(
         self, runner: CliRunner, mock_http: FakeHTTP
     ) -> None:
