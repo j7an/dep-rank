@@ -483,6 +483,7 @@ async def scrape_dependents(
                 if page == 0:
                     msg = f"repository not found (or private): {owner}/{repo}"
                     raise NotFoundError(msg) from None
+                logger.warning("HTTP 404 on page %d — stopping", page + 1)
                 reason = ScrapeReason.NETWORK_FAILURE
                 break
             except NetworkFailureError:

@@ -227,7 +227,7 @@ failures from repositories with no matching package.
 `rank_by="trust"` without a token, or `trust_check=True` without
 `rank_by="trust"`. It raises `NotFoundError` (a `ValueError` subclass, from
 `dep_rank.core.scraper`) when GitHub returns 404 for the repository's dependents
-page — the repository does not exist or the token cannot see it. Trust scores are pool-relative heuristics, not quality or fraud
+page — the repository does not exist or is private. Trust scores are pool-relative heuristics, not quality or fraud
 verdicts.
 
 Check `result.complete` and `result.reason` for partial results; counts are lower

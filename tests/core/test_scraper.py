@@ -455,7 +455,7 @@ async def test_missing_repository_raises_not_found(
 
 
 async def test_later_page_404_stays_network_failure(
-    mock_http: FakeHTTP, session: httpx2.AsyncClient
+    mock_http: FakeHTTP, session: httpx2.AsyncClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_PAGE_1)
     mock_http.get("https://github.com/owner/repo/network/dependents?page=2", status=404)
@@ -465,6 +465,7 @@ async def test_later_page_404_stays_network_failure(
     assert result.reason == ScrapeReason.NETWORK_FAILURE
     assert result.pages_scraped == 1
     assert [r.owner for r in result.repos] == ["alpha", "beta", "gamma"]
+    assert "HTTP 404 on page 2" in caplog.text  # the cause stays visible on stderr
 
 
 async def test_transport_error_then_success_completes(
