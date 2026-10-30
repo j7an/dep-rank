@@ -73,20 +73,18 @@ def _print_scrape_outcome(
     if scrape_result.estimated_total_dependents == 0:
         message = no_dependents_message(url, dependent_type, graph_note=not show_hint)
         console.print(message, highlight=False)
-        if show_hint:
-            console.print(package_hint(scrape_result), highlight=False)
-        return
-    summary = format_scrape_summary(
-        pages_scraped=scrape_result.pages_scraped,
-        max_pages=scrape_result.max_pages,
-        estimated_total_pages=scrape_result.estimated_total_pages,
-        found_count=scrape_result.matched_count,
-        min_stars=min_stars,
-        complete=scrape_result.complete,
-    )
-    console.print(f"[green]{summary}")
-    if not scrape_result.complete:
-        console.print(partial_warning(scrape_result.reason))
+    else:
+        summary = format_scrape_summary(
+            pages_scraped=scrape_result.pages_scraped,
+            max_pages=scrape_result.max_pages,
+            estimated_total_pages=scrape_result.estimated_total_pages,
+            found_count=scrape_result.matched_count,
+            min_stars=min_stars,
+            complete=scrape_result.complete,
+        )
+        console.print(f"[green]{summary}")
+        if not scrape_result.complete:
+            console.print(partial_warning(scrape_result.reason))
     if show_hint:
         console.print(package_hint(scrape_result), highlight=False)
 
@@ -116,7 +114,7 @@ async def run_deps(
     from rich.table import Table
     from rich.text import Text
 
-    from dep_rank.cli.formatters import RetryCountdown, build_topk_table
+    from dep_rank.cli.formatters import RetryCountdown, build_topk_table, stale_cache_notice
     from dep_rank.core.cache import open_cache
     from dep_rank.core.dependents import get_dependents
     from dep_rank.core.models import RetryStatus, ScrapeSnapshot
@@ -192,8 +190,6 @@ async def run_deps(
                 if scrape_result.stale_pages and not token:
                     # Without a token nothing refreshes expired pages, so say so even in JSON
                     # mode (stderr only; stdout stays parseable).
-                    from dep_rank.cli.formatters import stale_cache_notice
-
                     console.print(
                         stale_cache_notice(scrape_result.stale_pages, scrape_result.pages_scraped)
                     )
@@ -255,6 +251,23 @@ async def run_deps(
             return result
 
 
+_max_pages_option = click.option(
+    "--max-pages", default=200, help="Maximum pages to scrape (default: 200, ceiling 1000)."
+)
+_concurrency_option = click.option(
+    "--concurrency",
+    type=int,
+    hidden=True,
+    expose_value=False,
+    deprecated="has no effect; dependents pages are fetched serially",
+)
+_package_name_option = click.option(
+    "--package-name",
+    default=None,
+    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
+)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="dep-rank")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose/debug logging.")
@@ -285,16 +298,8 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     "--packages/--repositories", default=False, help="Search packages instead of repositories."
 )
 @click.option("--token", envvar="DEP_RANK_TOKEN", default=None, help="GitHub token.")
-@click.option(
-    "--max-pages", default=200, help="Maximum pages to scrape (default: 200, ceiling 1000)."
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    hidden=True,
-    expose_value=False,
-    deprecated="has no effect; dependents pages are fetched serially",
-)
+@_max_pages_option
+@_concurrency_option
 @click.option(
     "--adaptive-stop/--no-adaptive-stop",
     default=True,
@@ -320,11 +325,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     help="Show each dependent's most-downloaded registry package (third-party lookup "
     "via ecosyste.ms, deps.dev, and npm; display only, not used for ranking).",
 )
-@click.option(
-    "--package-name",
-    default=None,
-    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
-)
+@_package_name_option
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -413,23 +414,9 @@ def deps(
 @click.option("--max-repos", default=10, help="Maximum repos to search.")
 @click.option("--min-stars", default=50, help="Only search repos with this many stars.")
 @click.option("--token", envvar="DEP_RANK_TOKEN", required=True, help="GitHub token (required).")
-@click.option(
-    "--max-pages",
-    default=200,
-    help="Maximum pages to scrape (default: 200, ceiling 1000).",
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    hidden=True,
-    expose_value=False,
-    deprecated="has no effect; dependents pages are fetched serially",
-)
-@click.option(
-    "--package-name",
-    default=None,
-    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
-)
+@_max_pages_option
+@_concurrency_option
+@_package_name_option
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -451,7 +438,11 @@ def search(
     async def _run() -> None:
         import httpx2
 
-        from dep_rank.cli.formatters import RetryCountdown, print_search_results
+        from dep_rank.cli.formatters import (
+            RetryCountdown,
+            estimated_pages_text,
+            print_search_results,
+        )
         from dep_rank.core.cache import open_cache
         from dep_rank.core.models import RetryStatus, ScrapeSnapshot
         from dep_rank.core.search import search_dependents
@@ -464,49 +455,41 @@ def search(
             ) as session:
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-                progress_ctx = None
-                task_id = None
-                if not verbose:
-                    progress_ctx = Progress(
-                        TextColumn("[bold green]Scraping dependents..."),
-                        BarColumn(),
-                        TextColumn(
-                            "{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"
-                        ),
-                        TextColumn("·"),
-                        TextColumn("{task.fields[est_text]}"),
-                        TimeElapsedColumn(),
-                        TextColumn("{task.fields[retry]}", style="yellow"),
-                        console=console,
-                        # The scrape outcome replaces the bar; a leftover bar would show a
-                        # misleading share of --max-pages for a complete scrape.
-                        transient=True,
-                    )
-                    task_id = progress_ctx.add_task(
-                        "scraping", total=max_pages, est_text="estimating...", retry=""
-                    )
+                progress = Progress(
+                    TextColumn("[bold green]Scraping dependents..."),
+                    BarColumn(),
+                    TextColumn("{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"),
+                    TextColumn("·"),
+                    TextColumn("{task.fields[est_text]}"),
+                    TimeElapsedColumn(),
+                    TextColumn("{task.fields[retry]}", style="yellow"),
+                    console=console,
+                    # The scrape outcome replaces the bar; a leftover bar would show a
+                    # misleading share of --max-pages for a complete scrape.
+                    transient=True,
+                    disable=verbose,
+                )
+                task_id = progress.add_task(
+                    "scraping", total=max_pages, est_text="estimating...", retry=""
+                )
 
                 async def on_page(snapshot: ScrapeSnapshot) -> None:
                     page = snapshot.pages_scraped
                     est_total = snapshot.estimated_total_pages
-                    if progress_ctx is not None and task_id is not None:
-                        est_text = (
-                            f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
-                            if est_total > 0
-                            else "estimating..."
-                        )
-                        progress_ctx.update(task_id, completed=page, est_text=est_text, retry="")
+                    est_text = (
+                        estimated_pages_text(page, est_total) if est_total > 0 else "estimating..."
+                    )
+                    progress.update(task_id, completed=page, est_text=est_text, retry="")
 
                 async def on_retry(status: RetryStatus) -> None:
-                    if progress_ctx is not None and task_id is not None:
-                        progress_ctx.update(task_id, retry=RetryCountdown(status))
+                    progress.update(task_id, retry=RetryCountdown(status))
 
                 no_dependents = False
 
                 async def on_scraped(scrape_result: ScrapeResult) -> None:
                     nonlocal no_dependents
-                    if progress_ctx is not None:
-                        progress_ctx.stop()
+                    if not verbose:  # Rich < 14.3 prints a newline from a disabled stop()
+                        progress.stop()
                     _print_scrape_outcome(
                         console,
                         scrape_result,
@@ -517,8 +500,7 @@ def search(
                     )
                     no_dependents = scrape_result.estimated_total_dependents == 0
 
-                if progress_ctx is not None:
-                    progress_ctx.start()
+                progress.start()
                 try:
                     result = await search_dependents(
                         session,
@@ -532,15 +514,11 @@ def search(
                         cache=cache,
                         on_page=on_page,
                         on_scraped=on_scraped,
-                        on_retry=(
-                            on_retry
-                            if progress_ctx is not None and _renders_live(console)
-                            else None
-                        ),
+                        on_retry=on_retry if not verbose and _renders_live(console) else None,
                     )
                 finally:
-                    if progress_ctx is not None:
-                        progress_ctx.stop()  # idempotent; covers a scrape that raised
+                    if not verbose:
+                        progress.stop()  # idempotent; covers a scrape that raised
 
                 if no_dependents:
                     return  # the outcome message is the whole answer; nothing to search

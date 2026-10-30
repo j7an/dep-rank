@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 import time
 from collections.abc import Callable
@@ -19,6 +20,15 @@ BACKGROUND_PAUSE_SECONDS = 60.0
 def backoff_delay(attempt: int) -> float:
     """Return full-jitter exponential backoff capped at the retry maximum."""
     return random.uniform(0, min(RETRY_BASE_SECONDS * 2**attempt, RETRY_MAX_SECONDS))  # noqa: S311
+
+
+def retry_after_seconds(value: str | None) -> float | None:
+    """Parse a Retry-After header in its delta-seconds form; anything else is None."""
+    try:
+        seconds = float(value) if value is not None else math.nan
+    except ValueError:  # the HTTP-date form
+        return None
+    return seconds if math.isfinite(seconds) else None  # "inf" would sleep forever
 
 
 class RateLimiter:

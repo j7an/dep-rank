@@ -47,6 +47,16 @@ async def test_ties_keep_earlier_seen(mock_http: FakeHTTP, session: httpx2.Async
     assert [r.name for r in result.repos] == ["first"]
 
 
+async def test_ties_listed_earlier_seen_first(
+    mock_http: FakeHTTP, session: httpx2.AsyncClient
+) -> None:
+    """Equal stars in the final top-K are ordered by arrival, earliest first."""
+    p1 = dependents_page([("a", "first", 500), ("b", "second", 500)], next_page=None, repos=300)
+    mock_http.get(FIRST, body=p1)
+    result = await scrape_dependents(session, BASE, rows=10)
+    assert [r.name for r in result.repos] == ["first", "second"]
+
+
 async def test_ties_evict_later_seen_when_displaced(
     mock_http: FakeHTTP, session: httpx2.AsyncClient
 ) -> None:

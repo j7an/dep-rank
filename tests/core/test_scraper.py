@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx2
@@ -509,6 +510,31 @@ async def test_5xx_exhausts_to_network_failure(
     assert mock_http.request_count == MAX_RETRIES + 1
     assert sleep.await_count == MAX_RETRIES
     assert all(0 <= c.args[0] <= RETRY_MAX_SECONDS for c in sleep.await_args_list)
+
+
+@pytest.mark.parametrize(
+    ("spec", "prefix"),
+    [
+        ({"exception": httpx2.ConnectError("refused")}, "Request failed — retrying in "),
+        ({"status": 503}, "HTTP 503 — retrying in "),
+    ],
+)
+async def test_retry_is_logged(
+    spec: dict[str, Any],
+    prefix: str,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_http: FakeHTTP,
+    session: httpx2.AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("dep_rank.core.scraper.asyncio.sleep", AsyncMock())
+    mock_http.get(FIRST_URL, **spec)
+    mock_http.get(FIRST_URL, body=DEPENDENTS_HTML_LAST_PAGE)
+    await scrape_dependents(
+        session, "https://github.com/owner/repo", rows=10, rate_limiter=fast_limiter()
+    )
+    assert prefix in caplog.text
+    assert f"(1/{MAX_RETRIES})" in caplog.text
 
 
 async def test_transport_error_then_success_completes(

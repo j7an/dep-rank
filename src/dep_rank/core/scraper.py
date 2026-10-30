@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
-import itertools
 import logging
-import math
 import re
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -31,6 +29,7 @@ from dep_rank.core.rate_limiter import (
     UNAUTH_RATE,
     RateLimiter,
     backoff_delay,
+    retry_after_seconds,
 )
 from dep_rank.core.validation import validate_github_url
 
@@ -54,8 +53,7 @@ ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})  # retried like transport errors
 
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
-SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
-#                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
+SWR_RESERVE_TOKENS = 1  # tokens a background refresh always leaves for the foreground
 
 
 class NetworkFailureError(Exception):
@@ -221,16 +219,11 @@ async def _get_once(
         if resp.status_code == 200:
             body: bytes = await resp.aread()
             etag = resp.headers.get("ETag")
-        elif resp.status_code == 304 and cached and cached["body"] is not None:
+        elif resp.status_code == 304 and cached:
             body = cached["body"]
             etag = cached["etag"]
         elif resp.status_code == 429:
-            try:
-                retry_after: float | None = float(resp.headers.get("Retry-After", ""))
-            except ValueError:  # absent, or the HTTP-date form
-                retry_after = None
-            if retry_after is not None and not math.isfinite(retry_after):
-                retry_after = None  # "inf" would sleep forever
+            retry_after = retry_after_seconds(resp.headers.get("Retry-After"))
             return _Attempt(429, None, limiter.note_429(retry_after))
         else:
             return _Attempt(resp.status_code, None)
@@ -259,29 +252,19 @@ async def _fetch_page(
     for attempt in range(MAX_RETRIES + 1):
         await limiter.acquire()
         try:
-            result = await _get_once(session, url, limiter, auth_headers, cache, cached=None)
+            result: _Attempt | None = await _get_once(
+                session, url, limiter, auth_headers, cache, cached=None
+            )
         except httpx2.RequestError:
-            if attempt == MAX_RETRIES:
-                break
-            delay = backoff_delay(attempt)
-            logger.warning(
-                "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
-            )
-            await asyncio.sleep(delay)
-            continue
-        if result.body is not None:
+            result = None
+        if result is not None and result.body is not None:
             return result.body.decode("utf-8")
-        if result.status in RETRYABLE_STATUSES:
+        if result is None or result.status in RETRYABLE_STATUSES:
             if attempt == MAX_RETRIES:
                 break
             delay = backoff_delay(attempt)
-            logger.warning(
-                "HTTP %d — retrying in %.1fs (%d/%d)",
-                result.status,
-                delay,
-                attempt + 1,
-                MAX_RETRIES,
-            )
+            label = "Request failed" if result is None else f"HTTP {result.status}"
+            logger.warning("%s — retrying in %.1fs (%d/%d)", label, delay, attempt + 1, MAX_RETRIES)
             await asyncio.sleep(delay)
             continue
         if result.status == 429:
@@ -318,9 +301,9 @@ async def _read_page(
     """
     if cache:
         cached = await cache.get(url)
-        if cached and cached["body"] is not None:
+        if cached:
             body: bytes = cached["body"]
-            stale = bool(cached.get("expired"))
+            stale = cached["expired"]
             if stale:
                 swr.schedule(url)
             return body.decode("utf-8"), stale
@@ -365,7 +348,7 @@ class SWRManager:
         availability read is lock-unaware and races the foreground walk
         (tokens read here can be gone by the time the refresh runs). Instead the
         token decision is made atomically at refresh time via
-        ``try_acquire(reserve=SWR_HEADROOM_TOKENS - 1)``, which both reserves
+        ``try_acquire(reserve=SWR_RESERVE_TOKENS)``, which both reserves
         headroom for the foreground and consumes in one lock-aware step.
         """
         if not self._enabled or url in self._inflight:
@@ -385,7 +368,7 @@ class SWRManager:
                     return
                 # Atomically consume a token only if foreground headroom remains;
                 # if not (foreground drained the bucket), abort without making a request.
-                if not self._limiter.try_acquire(reserve=SWR_HEADROOM_TOKENS - 1):
+                if not self._limiter.try_acquire(reserve=SWR_RESERVE_TOKENS):
                     return
                 cached = await self._cache.get(url) if self._cache else None
                 # Re-check here, not in `_get_once` (shared with the foreground): a
@@ -436,12 +419,8 @@ def _heap_push(
 
 
 def _top_k(heap: list[tuple[int, int, Repository]]) -> list[Repository]:
-    """Return the heap's repos sorted by stars descending (ties: earlier-seen first).
-
-    Heap entries store the arrival index negated (``-count``), so to order ties
-    earliest-first we sort ascending on the *original* index ``-e[1]``.
-    """
-    return [r for _, _, r in sorted(heap, key=lambda e: (-e[0], -e[1]))]
+    """Return the heap's repos sorted by stars descending (ties: earlier-seen first)."""
+    return [r for _, _, r in sorted(heap, reverse=True)]
 
 
 def _should_stop(
@@ -450,17 +429,18 @@ def _should_stop(
     recent_max: deque[int],
     page: int,
 ) -> bool:
-    """True when the trailing window can no longer plausibly change the saturated top-K."""
-    if rows <= 0:
-        return False
-    if len(heap) < rows:  # heap not saturated -> kth_best undefined
-        return False
-    if page < ADAPTIVE_W_MIN:
-        return False
-    if len(recent_max) < ADAPTIVE_WINDOW:
-        return False
-    kth_best = heap[0][0]  # min of the size-rows heap == K-th best stars
-    return max(recent_max) < kth_best
+    """True when the trailing window can no longer plausibly change the saturated top-K.
+
+    ``heap[0][0]`` is the K-th best stars once the heap is saturated (an empty heap means
+    ``rows <= 0``, so there is no top-K to protect).
+    """
+    return (
+        bool(heap)
+        and len(heap) >= rows
+        and page >= ADAPTIVE_W_MIN
+        and len(recent_max) >= ADAPTIVE_WINDOW
+        and max(recent_max) < heap[0][0]
+    )
 
 
 async def scrape_dependents(
@@ -501,7 +481,6 @@ async def scrape_dependents(
     swr = SWRManager(session, limiter, auth_headers, cache, enabled=bool(token))
 
     heap: list[tuple[int, int, Repository]] = []
-    counter = itertools.count()
     seen: set[str] = set()
     matched = 0
     est_pages = 0
@@ -512,7 +491,6 @@ async def scrape_dependents(
     reason: ScrapeReason | None = None
     package: str | None = None
     packages: list[str] = []
-    package_resolved = package_name is None
     switched = False
 
     async def report_retry(attempt: int, delay: float) -> None:
@@ -553,11 +531,16 @@ async def scrape_dependents(
             except NetworkFailureError:
                 reason = ScrapeReason.NETWORK_FAILURE
                 break
-            if not package_resolved:
-                package_resolved = True
+            if page == 0:
                 options = parse_packages(html)
                 selected = next((o.name for o in options if o.selected), None)
-                if package_name != selected:
+                if package_name is not None and package_name != selected:
+                    if switched:
+                        # GitHub answers an unknown package_id with 200 and nothing selected.
+                        msg = f"GitHub did not select package '{package_name}' for its package_id;"
+                        msg += " the listing may have changed, so run `dep-rank cache clear` and"
+                        msg += " retry"
+                        raise NotFoundError(msg)
                     # ponytail: duplicate names resolve to the first match; accept a raw
                     # package_id if real duplicates appear.
                     match = next((o for o in options if o.name == package_name), None)
@@ -571,18 +554,12 @@ async def scrape_dependents(
                     current_url = f"{base_url}?{urlencode(query)}"
                     switched = True
                     continue  # lookup page: not counted, rows not collected
+                packages = [o.name for o in options]
+                package = selected
             page += 1  # increment only after a page is actually consumed (spec §2)
             stale_pages += stale
 
             if page == 1:
-                options = parse_packages(html)
-                packages = [o.name for o in options]
-                package = next((o.name for o in options if o.selected), None)
-                if switched and package != package_name:
-                    # GitHub answers an unknown package_id with 200 and nothing selected.
-                    msg = f"GitHub did not select package '{package_name}' for its package_id;"
-                    msg += " the listing may have changed, so run `dep-rank cache clear` and retry"
-                    raise NotFoundError(msg)
                 counts = parse_dependent_counts(html)
                 est_deps = counts.get(dependent_type.value)
                 est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps else 0
@@ -596,7 +573,7 @@ async def scrape_dependents(
                     seen.add(repo_obj.url)
                     matched += 1
                     page_max = max(page_max, repo_obj.stars)
-                    _heap_push(heap, repo_obj, next(counter), rows)
+                    _heap_push(heap, repo_obj, matched, rows)
             recent_max.append(page_max)
 
             if on_page:
