@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import heapq
-import itertools
 import logging
 import re
 from collections import deque
@@ -421,12 +420,8 @@ def _heap_push(
 
 
 def _top_k(heap: list[tuple[int, int, Repository]]) -> list[Repository]:
-    """Return the heap's repos sorted by stars descending (ties: earlier-seen first).
-
-    Heap entries store the arrival index negated (``-count``), so to order ties
-    earliest-first we sort ascending on the *original* index ``-e[1]``.
-    """
-    return [r for _, _, r in sorted(heap, key=lambda e: (-e[0], -e[1]))]
+    """Return the heap's repos sorted by stars descending (ties: earlier-seen first)."""
+    return [r for _, _, r in sorted(heap, reverse=True)]
 
 
 def _should_stop(
@@ -435,17 +430,18 @@ def _should_stop(
     recent_max: deque[int],
     page: int,
 ) -> bool:
-    """True when the trailing window can no longer plausibly change the saturated top-K."""
-    if rows <= 0:
-        return False
-    if len(heap) < rows:  # heap not saturated -> kth_best undefined
-        return False
-    if page < ADAPTIVE_W_MIN:
-        return False
-    if len(recent_max) < ADAPTIVE_WINDOW:
-        return False
-    kth_best = heap[0][0]  # min of the size-rows heap == K-th best stars
-    return max(recent_max) < kth_best
+    """True when the trailing window can no longer plausibly change the saturated top-K.
+
+    ``heap[0][0]`` is the K-th best stars once the heap is saturated (an empty heap means
+    ``rows <= 0``, so there is no top-K to protect).
+    """
+    return (
+        bool(heap)
+        and len(heap) >= rows
+        and page >= ADAPTIVE_W_MIN
+        and len(recent_max) >= ADAPTIVE_WINDOW
+        and max(recent_max) < heap[0][0]
+    )
 
 
 async def scrape_dependents(
@@ -486,7 +482,6 @@ async def scrape_dependents(
     swr = SWRManager(session, limiter, auth_headers, cache, enabled=bool(token))
 
     heap: list[tuple[int, int, Repository]] = []
-    counter = itertools.count()
     seen: set[str] = set()
     matched = 0
     est_pages = 0
@@ -581,7 +576,7 @@ async def scrape_dependents(
                     seen.add(repo_obj.url)
                     matched += 1
                     page_max = max(page_max, repo_obj.stars)
-                    _heap_push(heap, repo_obj, next(counter), rows)
+                    _heap_push(heap, repo_obj, matched, rows)
             recent_max.append(page_max)
 
             if on_page:
