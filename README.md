@@ -7,14 +7,41 @@ Rank GitHub dependents by stars or trust.
 [![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![GHCR](https://img.shields.io/badge/ghcr.io-j7an%2Fdep--rank-blue?logo=docker)](https://github.com/j7an/dep-rank/pkgs/container/dep-rank)
 
 dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as a command-line tool and as an MCP server for AI agents (see [MCP server](#mcp-server)).
+
+- **[Rank dependents by stars](#dep-rank-deps--list-top-dependents)** — find the most popular projects that use a repository.
+- **[Trust ranking](#trust-ranking)** — a heuristic, pool-relative re-rank that weighs forks, issues and pull requests, and recent activity alongside stars. Not a fraud verdict.
+- **[Search code across dependents](#dep-rank-search--search-code-in-dependents)** — see how real projects use an API.
+- **[MCP server](#mcp-server)** — the same ranking and search as tools for AI agents, via `uvx` or the [`ghcr.io/j7an/dep-rank` Docker image](#run-the-mcp-server-in-docker-mcp-toolkit).
+
+Also: [JSON output](#dep-rank-deps--list-top-dependents), [package download stats](#package-downloads), [choosing among multiple packages](#repositories-with-several-packages), [local cache](#how-it-works), [Docker image](#run-the-mcp-server-in-docker-mcp-toolkit), [Python API](#python-api-provisional).
 
 ## Quick Start
 
 ```bash
 pip install dep-rank
-dep-rank deps https://github.com/django/django
+export DEP_RANK_TOKEN=ghp_your_token_here   # see Authentication below
+dep-rank deps https://github.com/django/django --rows 5
+```
+
+A token is effectively required; see [Authentication](#authentication). Example output (numbers change over time):
+
+```
+       Top dependents of
+https://github.com/django/django
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Repository           ┃ Stars ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ makeplane/plane      │   61K │
+│ scalar/scalar        │   16K │
+│ jetify-com/devbox    │   12K │
+│ shiaho777/web-to-app │  7.1K │
+│ WeblateOrg/weblate   │  6.1K │
+└──────────────────────┴───────┘
+
+178 dependents at or above the star threshold
 ```
 
 ## CLI Reference
