@@ -254,29 +254,19 @@ async def _fetch_page(
     for attempt in range(MAX_RETRIES + 1):
         await limiter.acquire()
         try:
-            result = await _get_once(session, url, limiter, auth_headers, cache, cached=None)
+            result: _Attempt | None = await _get_once(
+                session, url, limiter, auth_headers, cache, cached=None
+            )
         except httpx2.RequestError:
-            if attempt == MAX_RETRIES:
-                break
-            delay = backoff_delay(attempt)
-            logger.warning(
-                "Request failed — retrying in %.1fs (%d/%d)", delay, attempt + 1, MAX_RETRIES
-            )
-            await asyncio.sleep(delay)
-            continue
-        if result.body is not None:
+            result = None
+        if result is not None and result.body is not None:
             return result.body.decode("utf-8")
-        if result.status in RETRYABLE_STATUSES:
+        if result is None or result.status in RETRYABLE_STATUSES:
             if attempt == MAX_RETRIES:
                 break
             delay = backoff_delay(attempt)
-            logger.warning(
-                "HTTP %d — retrying in %.1fs (%d/%d)",
-                result.status,
-                delay,
-                attempt + 1,
-                MAX_RETRIES,
-            )
+            label = "Request failed" if result is None else f"HTTP {result.status}"
+            logger.warning("%s — retrying in %.1fs (%d/%d)", label, delay, attempt + 1, MAX_RETRIES)
             await asyncio.sleep(delay)
             continue
         if result.status == 429:
