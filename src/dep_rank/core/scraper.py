@@ -492,7 +492,6 @@ async def scrape_dependents(
     reason: ScrapeReason | None = None
     package: str | None = None
     packages: list[str] = []
-    package_resolved = package_name is None
     switched = False
 
     async def report_retry(attempt: int, delay: float) -> None:
@@ -533,11 +532,16 @@ async def scrape_dependents(
             except NetworkFailureError:
                 reason = ScrapeReason.NETWORK_FAILURE
                 break
-            if not package_resolved:
-                package_resolved = True
+            if page == 0:
                 options = parse_packages(html)
                 selected = next((o.name for o in options if o.selected), None)
-                if package_name != selected:
+                if package_name is not None and package_name != selected:
+                    if switched:
+                        # GitHub answers an unknown package_id with 200 and nothing selected.
+                        msg = f"GitHub did not select package '{package_name}' for its package_id;"
+                        msg += " the listing may have changed, so run `dep-rank cache clear` and"
+                        msg += " retry"
+                        raise NotFoundError(msg)
                     # ponytail: duplicate names resolve to the first match; accept a raw
                     # package_id if real duplicates appear.
                     match = next((o for o in options if o.name == package_name), None)
@@ -551,18 +555,12 @@ async def scrape_dependents(
                     current_url = f"{base_url}?{urlencode(query)}"
                     switched = True
                     continue  # lookup page: not counted, rows not collected
+                packages = [o.name for o in options]
+                package = selected
             page += 1  # increment only after a page is actually consumed (spec §2)
             stale_pages += stale
 
             if page == 1:
-                options = parse_packages(html)
-                packages = [o.name for o in options]
-                package = next((o.name for o in options if o.selected), None)
-                if switched and package != package_name:
-                    # GitHub answers an unknown package_id with 200 and nothing selected.
-                    msg = f"GitHub did not select package '{package_name}' for its package_id;"
-                    msg += " the listing may have changed, so run `dep-rank cache clear` and retry"
-                    raise NotFoundError(msg)
                 counts = parse_dependent_counts(html)
                 est_deps = counts.get(dependent_type.value)
                 est_pages = est_deps // DEPENDENTS_PER_PAGE if est_deps else 0
