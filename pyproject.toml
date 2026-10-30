@@ -10,17 +10,22 @@ authors = [
 readme = "README.md"
 keywords = [
     "github",
+    "github-api",
+    "github-stars",
     "dependents",
     "reverse-dependencies",
     "dependency-graph",
+    "dependency-analysis",
+    "supply-chain",
     "ranking",
-    "stars",
-    "trust",
     "code-search",
+    "developer-tools",
     "cli",
+    "docker",
     "mcp",
     "mcp-server",
     "model-context-protocol",
+    "python",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
