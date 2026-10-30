@@ -1047,6 +1047,26 @@ class TestRetryStatus:
         assert mock_scrape.call_args.kwargs["on_retry"] is None  # scraper logs instead
         mock_live_start.assert_not_called()  # no progress bar
 
+    @patch("rich.progress.Progress.stop")
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
+    def test_search_verbose_never_stops_a_progress(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        mock_progress_stop: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        # Rich < 14.3 prints a newline from a disabled Progress.stop() on non-TTY stderr.
+        mock_scrape.return_value = _scrape_result([])
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/o/r", query="q", hits=[], searched_repos=0
+        )
+        args = ["-v", "search", "https://github.com/o/r", "q", "--token", "t"]
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        mock_progress_stop.assert_not_called()
+
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)

@@ -488,7 +488,8 @@ def search(
 
                 async def on_scraped(scrape_result: ScrapeResult) -> None:
                     nonlocal no_dependents
-                    progress.stop()
+                    if not verbose:  # Rich < 14.3 prints a newline from a disabled stop()
+                        progress.stop()
                     _print_scrape_outcome(
                         console,
                         scrape_result,
@@ -516,7 +517,8 @@ def search(
                         on_retry=on_retry if not verbose and _renders_live(console) else None,
                     )
                 finally:
-                    progress.stop()  # idempotent; covers a scrape that raised
+                    if not verbose:
+                        progress.stop()  # idempotent; covers a scrape that raised
 
                 if no_dependents:
                     return  # the outcome message is the whole answer; nothing to search
