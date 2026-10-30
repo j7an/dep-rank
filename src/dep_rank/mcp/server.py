@@ -25,7 +25,7 @@ from dep_rank.core.models import (
     RetryStatus,
     ScrapeSnapshot,
 )
-from dep_rank.core.scraper import DEFAULT_MAX_PAGES
+from dep_rank.core.scraper import DEFAULT_MAX_PAGES, MAX_PAGES_CEILING
 from dep_rank.core.search import search_dependents
 from dep_rank.core.validation import validate_github_url
 
@@ -183,7 +183,7 @@ async def get_dependents_tool(
     rank_by: Literal["stars", "trust"] = "stars",
     trust_check: bool = False,
     downloads: bool = False,
-    max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
+    max_pages: Annotated[int, Field(ge=1, le=MAX_PAGES_CEILING)] = DEFAULT_MAX_PAGES,
     adaptive_stop: bool = True,
     package_name: str | None = None,
 ) -> DependentsResult:
@@ -239,7 +239,7 @@ async def search_dependents_tool(
     ctx: Context,
     max_repos: Annotated[int, Field(ge=1)] = 10,
     min_stars: Annotated[int, Field(ge=0)] = 50,
-    max_pages: Annotated[int, Field(ge=1, le=1000)] = DEFAULT_MAX_PAGES,
+    max_pages: Annotated[int, Field(ge=1, le=MAX_PAGES_CEILING)] = DEFAULT_MAX_PAGES,
     package_name: str | None = None,
 ) -> CodeSearchResult:
     """Search code across the top-starred dependents of a GitHub repository.
