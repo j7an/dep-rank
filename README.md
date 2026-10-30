@@ -501,14 +501,9 @@ The low-resource API basis is the
 
 ## Development
 
-```bash
-# Prerequisites: Python 3.11+, uv
-uv sync
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy src tests
-```
+Development needs Python 3.11+ and [uv](https://docs.astral.sh/uv/). The setup, test, lint,
+and type-check commands CI runs are listed in [AGENTS.md](AGENTS.md#setup-and-commands); test
+layout and coverage commands are in [tests/README.md](tests/README.md).
 
 ## Acknowledgments
 
