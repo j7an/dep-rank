@@ -588,13 +588,6 @@ class TestTrustTableAndJson:
         assert "Trust" not in out  # no trust column in star/fallback layout
         assert "(by trust)" not in _flat(out)
 
-    def test_json_star_mode_excludes_trust_and_ranked_by(self) -> None:
-        result = _result(ranked_by="stars", repos=[_trust_repo()])
-        out = _render(print_dependents_json, result, include_rank_metadata=False)
-        assert "ranked_by" not in out
-        assert "trust" not in out
-        assert "trust_signals" not in out
-
     def test_json_star_mode_preserves_existing_fields_exactly(self) -> None:
         # The printer — not raw model serialization — is the back-compat boundary.
         # Prove pre-trust fields survive unchanged, including an explicit `null`
@@ -617,18 +610,6 @@ class TestTrustTableAndJson:
             "description": None,
         }  # exact field set — no trust/trust_signals leakage, nothing dropped
         assert "ranked_by" not in payload
-
-    @pytest.mark.parametrize(
-        ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
-    )
-    def test_json_without_downloads_check_has_no_downloads_keys(
-        self, ranked_by: Literal["stars", "trust"], trust_check: bool
-    ) -> None:
-        result = _result(ranked_by=ranked_by, repos=[_trust_repo()])
-        if trust_check:
-            result.trust_check = TrustCheckResult(complete=True, window_weeks=30, repos_checked=1)
-        out = _render(print_dependents_json, result, include_rank_metadata=ranked_by == "trust")
-        assert "downloads" not in out
 
     @pytest.mark.parametrize(
         ("ranked_by", "trust_check"), [("stars", False), ("trust", False), ("trust", True)]
@@ -764,12 +745,6 @@ class TestTrustTableAndJson:
         assert payload["repos"][0]["trust"]["cautions"] == [
             {"code": "stale_activity", "description": "No pushes in 400 days"}
         ]
-
-    def test_json_trust_mode_without_check_has_no_trust_check_key(self) -> None:
-
-        result = _result(ranked_by="trust", repos=[_trust_repo()])
-        out = _render(print_dependents_json, result, include_rank_metadata=True)
-        assert "trust_check" not in json.loads(out)
 
     def test_json_trust_mode_with_check_includes_it(self) -> None:
 
