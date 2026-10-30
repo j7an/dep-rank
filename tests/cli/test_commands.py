@@ -1025,6 +1025,28 @@ class TestRetryStatus:
         )
         assert mock_scrape.call_args.kwargs["on_retry"] is None  # scraper logs instead
 
+    @patch("rich.live.Live.start")
+    @patch("dep_rank.cli.app._renders_live", return_value=True)
+    @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
+    @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)
+    def test_search_verbose_has_no_progress_and_logs_retries(
+        self,
+        mock_scrape: AsyncMock,
+        mock_search: AsyncMock,
+        _renders_live: MagicMock,
+        mock_live_start: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        mock_scrape.return_value = _scrape_result([])
+        mock_search.return_value = CodeSearchResult(
+            source="https://github.com/o/r", query="q", hits=[], searched_repos=0
+        )
+        args = ["-v", "search", "https://github.com/o/r", "q", "--token", "t"]
+        result = runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert mock_scrape.call_args.kwargs["on_retry"] is None  # scraper logs instead
+        mock_live_start.assert_not_called()  # no progress bar
+
     @patch("rich.progress.Progress.update")
     @patch("dep_rank.core.search.search_code", new_callable=AsyncMock)
     @patch("dep_rank.core.search.scrape_dependents", new_callable=AsyncMock)

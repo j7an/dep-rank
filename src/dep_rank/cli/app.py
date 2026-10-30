@@ -464,49 +464,42 @@ def search(
             ) as session:
                 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
-                progress_ctx = None
-                task_id = None
-                if not verbose:
-                    progress_ctx = Progress(
-                        TextColumn("[bold green]Scraping dependents..."),
-                        BarColumn(),
-                        TextColumn(
-                            "{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"
-                        ),
-                        TextColumn("·"),
-                        TextColumn("{task.fields[est_text]}"),
-                        TimeElapsedColumn(),
-                        TextColumn("{task.fields[retry]}", style="yellow"),
-                        console=console,
-                        # The scrape outcome replaces the bar; a leftover bar would show a
-                        # misleading share of --max-pages for a complete scrape.
-                        transient=True,
-                    )
-                    task_id = progress_ctx.add_task(
-                        "scraping", total=max_pages, est_text="estimating...", retry=""
-                    )
+                progress = Progress(
+                    TextColumn("[bold green]Scraping dependents..."),
+                    BarColumn(),
+                    TextColumn("{task.completed}/{task.total} pages ({task.percentage:>5.1f}%)"),
+                    TextColumn("·"),
+                    TextColumn("{task.fields[est_text]}"),
+                    TimeElapsedColumn(),
+                    TextColumn("{task.fields[retry]}", style="yellow"),
+                    console=console,
+                    # The scrape outcome replaces the bar; a leftover bar would show a
+                    # misleading share of --max-pages for a complete scrape.
+                    transient=True,
+                    disable=verbose,
+                )
+                task_id = progress.add_task(
+                    "scraping", total=max_pages, est_text="estimating...", retry=""
+                )
 
                 async def on_page(snapshot: ScrapeSnapshot) -> None:
                     page = snapshot.pages_scraped
                     est_total = snapshot.estimated_total_pages
-                    if progress_ctx is not None and task_id is not None:
-                        est_text = (
-                            f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
-                            if est_total > 0
-                            else "estimating..."
-                        )
-                        progress_ctx.update(task_id, completed=page, est_text=est_text, retry="")
+                    est_text = (
+                        f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
+                        if est_total > 0
+                        else "estimating..."
+                    )
+                    progress.update(task_id, completed=page, est_text=est_text, retry="")
 
                 async def on_retry(status: RetryStatus) -> None:
-                    if progress_ctx is not None and task_id is not None:
-                        progress_ctx.update(task_id, retry=RetryCountdown(status))
+                    progress.update(task_id, retry=RetryCountdown(status))
 
                 no_dependents = False
 
                 async def on_scraped(scrape_result: ScrapeResult) -> None:
                     nonlocal no_dependents
-                    if progress_ctx is not None:
-                        progress_ctx.stop()
+                    progress.stop()
                     _print_scrape_outcome(
                         console,
                         scrape_result,
@@ -517,8 +510,7 @@ def search(
                     )
                     no_dependents = scrape_result.estimated_total_dependents == 0
 
-                if progress_ctx is not None:
-                    progress_ctx.start()
+                progress.start()
                 try:
                     result = await search_dependents(
                         session,
@@ -532,15 +524,10 @@ def search(
                         cache=cache,
                         on_page=on_page,
                         on_scraped=on_scraped,
-                        on_retry=(
-                            on_retry
-                            if progress_ctx is not None and _renders_live(console)
-                            else None
-                        ),
+                        on_retry=on_retry if not verbose and _renders_live(console) else None,
                     )
                 finally:
-                    if progress_ctx is not None:
-                        progress_ctx.stop()  # idempotent; covers a scrape that raised
+                    progress.stop()  # idempotent; covers a scrape that raised
 
                 if no_dependents:
                     return  # the outcome message is the whole answer; nothing to search
