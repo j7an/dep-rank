@@ -73,20 +73,18 @@ def _print_scrape_outcome(
     if scrape_result.estimated_total_dependents == 0:
         message = no_dependents_message(url, dependent_type, graph_note=not show_hint)
         console.print(message, highlight=False)
-        if show_hint:
-            console.print(package_hint(scrape_result), highlight=False)
-        return
-    summary = format_scrape_summary(
-        pages_scraped=scrape_result.pages_scraped,
-        max_pages=scrape_result.max_pages,
-        estimated_total_pages=scrape_result.estimated_total_pages,
-        found_count=scrape_result.matched_count,
-        min_stars=min_stars,
-        complete=scrape_result.complete,
-    )
-    console.print(f"[green]{summary}")
-    if not scrape_result.complete:
-        console.print(partial_warning(scrape_result.reason))
+    else:
+        summary = format_scrape_summary(
+            pages_scraped=scrape_result.pages_scraped,
+            max_pages=scrape_result.max_pages,
+            estimated_total_pages=scrape_result.estimated_total_pages,
+            found_count=scrape_result.matched_count,
+            min_stars=min_stars,
+            complete=scrape_result.complete,
+        )
+        console.print(f"[green]{summary}")
+        if not scrape_result.complete:
+            console.print(partial_warning(scrape_result.reason))
     if show_hint:
         console.print(package_hint(scrape_result), highlight=False)
 
@@ -116,7 +114,7 @@ async def run_deps(
     from rich.table import Table
     from rich.text import Text
 
-    from dep_rank.cli.formatters import RetryCountdown, build_topk_table
+    from dep_rank.cli.formatters import RetryCountdown, build_topk_table, stale_cache_notice
     from dep_rank.core.cache import open_cache
     from dep_rank.core.dependents import get_dependents
     from dep_rank.core.models import RetryStatus, ScrapeSnapshot
@@ -192,8 +190,6 @@ async def run_deps(
                 if scrape_result.stale_pages and not token:
                     # Without a token nothing refreshes expired pages, so say so even in JSON
                     # mode (stderr only; stdout stays parseable).
-                    from dep_rank.cli.formatters import stale_cache_notice
-
                     console.print(
                         stale_cache_notice(scrape_result.stale_pages, scrape_result.pages_scraped)
                     )
@@ -442,7 +438,11 @@ def search(
     async def _run() -> None:
         import httpx2
 
-        from dep_rank.cli.formatters import RetryCountdown, print_search_results
+        from dep_rank.cli.formatters import (
+            RetryCountdown,
+            estimated_pages_text,
+            print_search_results,
+        )
         from dep_rank.core.cache import open_cache
         from dep_rank.core.models import RetryStatus, ScrapeSnapshot
         from dep_rank.core.search import search_dependents
@@ -477,9 +477,7 @@ def search(
                     page = snapshot.pages_scraped
                     est_total = snapshot.estimated_total_pages
                     est_text = (
-                        f"{page}/~{est_total:,} estimated pages ({page / est_total * 100:.2f}%)"
-                        if est_total > 0
-                        else "estimating..."
+                        estimated_pages_text(page, est_total) if est_total > 0 else "estimating..."
                     )
                     progress.update(task_id, completed=page, est_text=est_text, retry="")
 
