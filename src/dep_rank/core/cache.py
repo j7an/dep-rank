@@ -29,16 +29,11 @@ class SqliteCache:
         self._db: sqlite3.Connection | None = None
         self._executor: ThreadPoolExecutor | None = None
 
-    @property
-    def _conn(self) -> sqlite3.Connection:
+    async def _run(self, fn: Callable[[sqlite3.Connection], _T]) -> _T:
         if self._db is None:
             msg = "Cache not initialized; call initialize() first"
             raise RuntimeError(msg)
-        return self._db
-
-    async def _run(self, fn: Callable[[sqlite3.Connection], _T]) -> _T:
-        conn = self._conn
-        return await asyncio.get_running_loop().run_in_executor(self._executor, fn, conn)
+        return await asyncio.get_running_loop().run_in_executor(self._executor, fn, self._db)
 
     async def initialize(self) -> None:
         """Open the connection and create the cache table if it doesn't exist."""

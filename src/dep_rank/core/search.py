@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -20,7 +19,7 @@ from dep_rank.core.models import (
     ScrapeResult,
     ScrapeSnapshot,
 )
-from dep_rank.core.rate_limiter import RETRY_MAX_SECONDS, RateLimiter
+from dep_rank.core.rate_limiter import RETRY_MAX_SECONDS, RateLimiter, retry_after_seconds
 from dep_rank.core.scraper import DEFAULT_MAX_PAGES, REQUEST_TIMEOUT, scrape_dependents
 
 if TYPE_CHECKING:
@@ -47,11 +46,8 @@ def _rate_limit_wait(resp: httpx2.Response, now: float) -> float | None:
         resp.status_code == 403 and (retry_after is not None or exhausted)
     ):
         return None
-    try:
-        seconds = float(retry_after) if retry_after is not None else math.nan
-    except ValueError:  # the HTTP-date form
-        seconds = math.nan
-    if math.isfinite(seconds):
+    seconds = retry_after_seconds(retry_after)
+    if seconds is not None:
         return max(seconds, 0.0)
     if exhausted:
         try:
@@ -97,7 +93,7 @@ async def search_code(
             failed[full_name] = "rate limited"
             continue
 
-        search_query = f"{query} repo:{repo.owner}/{repo.name}"
+        search_query = f"{query} repo:{full_name}"
         url = f"{SEARCH_URL}?q={quote(search_query, safe='')}"
 
         try:
@@ -194,12 +190,9 @@ async def search_dependents(
     if on_scraped is not None:
         await on_scraped(scrape_result)
 
-    if scrape_result.estimated_total_dependents == 0:
-        result = CodeSearchResult(source=url, query=query, hits=[], searched_repos=0)
-    else:
-        result = await search_code(
-            session, scrape_result.repos, query, token=token, max_repos=max_repos
-        )
+    result = await search_code(
+        session, scrape_result.repos, query, token=token, max_repos=max_repos
+    )
     return result.model_copy(
         update={
             "source": url,
