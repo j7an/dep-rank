@@ -133,7 +133,7 @@ async def enrich_with_trust_metadata(
             await resp.aread()
             data = resp.json()
 
-        if "data" not in data or data["data"] is None:
+        if data.get("data") is None:
             message = data.get("message") or data.get("errors", "unknown error")
             logger.warning("GitHub GraphQL error: %s", message)
             enriched.extend(batch)
