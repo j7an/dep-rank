@@ -116,9 +116,15 @@ Caveats:
 - Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
 - The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported: tool calls fail with an error until it is removed from the server's environment.
 
-### Docker MCP Toolkit
+### Run the MCP server in Docker (MCP Toolkit)
 
-The `ghcr.io/j7an/dep-rank` image runs the MCP server under [Docker MCP Toolkit](https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit/). You get container isolation (no host filesystem access, and network access limited to GitHub when the gateway runs with `--block-network`) and one profile shared by every agent harness you connect. It does not change prompt-injection risk: tool results still contain text from third-party repositories, and your agent reads it.
+The `ghcr.io/j7an/dep-rank` image runs the MCP server under [Docker MCP Toolkit](https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit/). You get:
+
+- container isolation, with no host filesystem access;
+- network access limited to GitHub when the gateway runs with `--block-network`;
+- one profile shared by every agent harness you connect.
+
+It does not change prompt-injection risk: tool results still contain text from third-party repositories, and your agent reads it.
 
 Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWorkingSets` feature flag in Docker Desktop, or `docker mcp feature enable profiles`).
 
@@ -142,8 +148,6 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
    ```
 
    `get_dependents` with `downloads` also needs `packages.ecosyste.ms:443`, `api.npmjs.org:443`, and `api.deps.dev:443` in `allowHosts`; without them, download stats are reported as unavailable.
-
-   For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
 
 2. Create the profile. Keep `--id dep-rank`: without it the ID becomes `dep_rank`, which won't match the harness config below.
 
@@ -177,6 +181,7 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
 
 Notes:
 
+- For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
 - Each tool call starts a fresh container. The `dep-rank-cache` volume keeps the cache warm between calls.
 - The gateway can leave its proxy containers behind. Remove them with `docker rm -f $(docker ps -aq --filter label=docker-mcp-proxy=true)`.
 
