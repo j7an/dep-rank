@@ -22,7 +22,7 @@ ATTESTATION_KINDS = {
     "SLSA_ATTESTATION",
     "RUBYGEMS_PUBLISH_ATTESTATION",
 }
-_SUFFIXES = (".js", "-js", "js", ".py", "-py", "-python")
+_SUFFIXES = ("js", ".py", "-py", "-python")
 _PREFIXES = ("py", "python-", "node-")
 
 
@@ -104,8 +104,7 @@ def pick_package(
         if (
             not isinstance(name, str)
             or not isinstance(ecosystem, str)
-            or not isinstance(downloads, int)
-            or isinstance(downloads, bool)
+            or type(downloads) is not int
             or not isinstance(period, str)
         ):
             continue
@@ -229,7 +228,7 @@ async def fetch_downloads(
                 else:
                     payload = response.json()
                     downloads = payload.get("downloads") if isinstance(payload, dict) else None
-                    if not isinstance(downloads, int) or isinstance(downloads, bool):
+                    if type(downloads) is not int:
                         raise ValueError("npm downloads payload malformed")
                     winner = winner.model_copy(
                         update={"downloads": downloads, "period": "last-month"}

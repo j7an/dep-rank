@@ -231,26 +231,17 @@ def _print_incomplete_repos(result: CodeSearchResult) -> None:
 
 def print_search_results(result: CodeSearchResult) -> None:
     """Print code search results."""
-    if not result.hits:
+    if result.hits:
+        table = Table(title=f"Code search: '{escape(result.query)}'")
+        table.add_column("Repository", style="cyan", no_wrap=True)
+        table.add_column("File", style="green")
+        table.add_column("Matches", justify="right", style="yellow")
+        for hit in result.hits:
+            table.add_row(repo_cell(hit.repo), escape(hit.file_path), str(hit.matches))
+        console.print(table)
+        console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
+    else:
         console.print(f"[dim]No results found for '{escape(result.query)}'[/dim]")
-        _print_failed_repos(result)
-        _print_incomplete_repos(result)
-        return
-
-    table = Table(title=f"Code search: '{escape(result.query)}'")
-    table.add_column("Repository", style="cyan", no_wrap=True)
-    table.add_column("File", style="green")
-    table.add_column("Matches", justify="right", style="yellow")
-
-    for hit in result.hits:
-        table.add_row(
-            repo_cell(hit.repo),
-            escape(hit.file_path),
-            str(hit.matches),
-        )
-
-    console.print(table)
-    console.print(f"\n[dim]Searched {result.searched_repos} repositories[/dim]")
     _print_failed_repos(result)
     _print_incomplete_repos(result)
 
@@ -368,6 +359,12 @@ class RetryCountdown:
         return Text(str(self), style="yellow")
 
 
+def estimated_pages_text(pages: int, estimated_total_pages: int) -> str:
+    """Format progress against GitHub's header estimate, e.g. ``"42/~76,515 estimated pages"``."""
+    pct = pages / estimated_total_pages * 100
+    return f"{pages}/~{estimated_total_pages:,} estimated pages ({pct:.2f}%)"
+
+
 def format_scrape_summary(
     pages_scraped: int,
     max_pages: int,
@@ -385,10 +382,7 @@ def format_scrape_summary(
         pct_max = (pages_scraped / max_pages * 100) if max_pages > 0 else 0.0
         parts = [f"Scraped {pages_scraped}/{max_pages} pages ({pct_max:.1f}%)"]
         if estimated_total_pages > 0:
-            pct_est = pages_scraped / estimated_total_pages * 100
-            parts.append(
-                f"{pages_scraped}/~{estimated_total_pages:,} estimated pages ({pct_est:.2f}%)"
-            )
+            parts.append(estimated_pages_text(pages_scraped, estimated_total_pages))
 
     parts.append(f"Found {found_count:,} dependents with ≥{min_stars} stars")
     return " · ".join(parts)
