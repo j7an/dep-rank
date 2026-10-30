@@ -25,7 +25,6 @@ keywords = [
     "mcp",
     "mcp-server",
     "model-context-protocol",
-    "python",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
