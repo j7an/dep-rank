@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from unittest.mock import AsyncMock
 
 import httpx2
@@ -240,28 +239,22 @@ class TestScrapeDependentsEdgeCases:
         assert result.stale_pages == 0  # a fresh hit is not stale
 
     async def test_200_response_stores_in_cache(
-        self, mock_http: FakeHTTP, session: httpx2.AsyncClient
+        self, mock_http: FakeHTTP, session: httpx2.AsyncClient, cache: SqliteCache
     ) -> None:
         """200 response with cache stores the body and etag."""
+        mock_http.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
+            body=DEPENDENTS_HTML_LAST_PAGE,
+            headers={"ETag": '"new-etag"'},
+        )
+        await scrape_dependents(session, "https://github.com/owner/repo", cache=cache, rows=100)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cache = SqliteCache(tmpdir)
-            await cache.initialize()
-
-            mock_http.get(
-                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY",
-                body=DEPENDENTS_HTML_LAST_PAGE,
-                headers={"ETag": '"new-etag"'},
-            )
-            await scrape_dependents(session, "https://github.com/owner/repo", cache=cache, rows=100)
-
-            # Verify cache was populated
-            cached = await cache.get(
-                "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
-            )
-            assert cached is not None
-            assert cached["etag"] == '"new-etag"'
-            await cache.close()
+        # Verify cache was populated
+        cached = await cache.get(
+            "https://github.com/owner/repo/network/dependents?dependent_type=REPOSITORY"
+        )
+        assert cached is not None
+        assert cached["etag"] == '"new-etag"'
 
 
 class TestScrapeResultReturn:
