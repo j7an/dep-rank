@@ -7,14 +7,41 @@ Rank GitHub dependents by stars or trust.
 [![PyPI](https://img.shields.io/pypi/v/dep-rank)](https://pypi.org/project/dep-rank/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![GHCR](https://img.shields.io/badge/ghcr.io-j7an%2Fdep--rank-blue?logo=docker)](https://github.com/j7an/dep-rank/pkgs/container/dep-rank)
 
 dep-rank finds the most popular repositories that depend on a given GitHub project. It scrapes GitHub's dependents page, enriches results via the GraphQL API, and works as a command-line tool and as an MCP server for AI agents (see [MCP server](#mcp-server)).
+
+- **[Rank dependents by stars](#dep-rank-deps--list-top-dependents)** — find the most popular projects that use a repository.
+- **[Trust ranking](#trust-ranking)** — a heuristic, pool-relative re-rank that weighs forks, issues and pull requests, and recent activity alongside stars. Not a fraud verdict.
+- **[Search code across dependents](#dep-rank-search--search-code-in-dependents)** — see how real projects use an API.
+- **[MCP server](#mcp-server)** — the same ranking and search as tools for AI agents, via `uvx` or the [`ghcr.io/j7an/dep-rank` Docker image](#run-the-mcp-server-in-docker-mcp-toolkit).
+
+Also: [JSON output](#dep-rank-deps--list-top-dependents), [package download stats](#package-downloads), [choosing among multiple packages](#repositories-with-several-packages), [local cache](#how-it-works), [Docker image](#run-the-mcp-server-in-docker-mcp-toolkit), [Python API](#python-api-provisional).
 
 ## Quick Start
 
 ```bash
 pip install dep-rank
-dep-rank deps https://github.com/django/django
+export DEP_RANK_TOKEN=ghp_your_token_here   # see Authentication below
+dep-rank deps https://github.com/django/django --rows 5
+```
+
+A token is effectively required; see [Authentication](#authentication). Example output (numbers change over time). dep-rank also prints a scrape summary on stderr; this run stopped early, so the count is a lower bound, not a total (see [Partial results](#partial-results)):
+
+```
+       Top dependents of
+https://github.com/django/django
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Repository           ┃ Stars ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ makeplane/plane      │   61K │
+│ scalar/scalar        │   16K │
+│ jetify-com/devbox    │   12K │
+│ shiaho777/web-to-app │  7.1K │
+│ WeblateOrg/weblate   │  6.1K │
+└──────────────────────┴───────┘
+
+178 dependents at or above the star threshold
 ```
 
 ## CLI Reference
@@ -68,6 +95,8 @@ Rate-limited code searches are retried up to twice, honoring GitHub's wait heade
 
 A scrape result (`deps`, and the `search` pre-pass) reports whether it finished: results include a `complete` flag and a `reason`. `complete: false` means the scrape stopped early — `max_pages_reached` (raise `--max-pages`), `trend_converged` (the adaptive heuristic judged the top-K stable; use `--no-adaptive-stop` to scrape until exhaustion or `--max-pages`), `network_failure`, or `rate_limited`. `total_count`/`filtered_count` are then lower bounds across the pages actually scraped, not population totals.
 
+### Repositories with several packages
+
 Some repositories publish several packages, and GitHub's dependents page lists them in a dropdown (at most 100). Without `--package-name`, GitHub picks the package, and dep-rank names it and the others in a hint. JSON output then also carries `package` (the one scraped) and `packages` (every listed name).
 
 ### `dep-rank cache` — Manage cache
@@ -114,9 +143,15 @@ Caveats:
 - Long calls report progress, including GitHub rate-limit waits. Claude Code moves MCP calls that run longer than two minutes into the background.
 - The server honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` from its environment. A SOCKS proxy (for example `ALL_PROXY=socks5://...`) is not supported: tool calls fail with an error until it is removed from the server's environment.
 
-### Docker MCP Toolkit
+### Run the MCP server in Docker (MCP Toolkit)
 
-The `ghcr.io/j7an/dep-rank` image runs the MCP server under [Docker MCP Toolkit](https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit/). You get container isolation (no host filesystem access, and network access limited to GitHub when the gateway runs with `--block-network`) and one profile shared by every agent harness you connect. It does not change prompt-injection risk: tool results still contain text from third-party repositories, and your agent reads it.
+The `ghcr.io/j7an/dep-rank` image runs the MCP server under [Docker MCP Toolkit](https://docs.docker.com/ai/mcp-catalog-and-toolkit/toolkit/). You get:
+
+- container isolation, with no host filesystem access;
+- network access limited to GitHub when the gateway runs with `--block-network`;
+- one profile shared by every agent harness you connect.
+
+It does not change prompt-injection risk: tool results still contain text from third-party repositories, and your agent reads it.
 
 Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWorkingSets` feature flag in Docker Desktop, or `docker mcp feature enable profiles`).
 
@@ -140,8 +175,6 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
    ```
 
    `get_dependents` with `downloads` also needs `packages.ecosyste.ms:443`, `api.npmjs.org:443`, and `api.deps.dev:443` in `allowHosts`; without them, download stats are reported as unavailable.
-
-   For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
 
 2. Create the profile. Keep `--id dep-rank`: without it the ID becomes `dep_rank`, which won't match the harness config below.
 
@@ -175,6 +208,7 @@ Prerequisites: Docker Desktop with MCP Toolkit, and profiles enabled (the `MCPWo
 
 Notes:
 
+- For reproducible installs, pin `image` to a release tag (`ghcr.io/j7an/dep-rank:<version>`) or an `@sha256:` digest. Verify an image's build provenance with `gh attestation verify oci://ghcr.io/j7an/dep-rank:<version> --repo j7an/dep-rank`.
 - Each tool call starts a fresh container. The `dep-rank-cache` volume keeps the cache warm between calls.
 - The gateway can leave its proxy containers behind. Remove them with `docker rm -f $(docker ps -aq --filter label=docker-mcp-proxy=true)`.
 
