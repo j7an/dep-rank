@@ -26,7 +26,7 @@ export DEP_RANK_TOKEN=ghp_your_token_here   # see Authentication below
 dep-rank deps https://github.com/django/django --rows 5
 ```
 
-A token is effectively required; see [Authentication](#authentication). Example output (numbers change over time):
+A token is effectively required; see [Authentication](#authentication). Example output (numbers change over time). dep-rank also prints a scrape summary on stderr; this run stopped early, so the count is a lower bound, not a total (see [Partial results](#partial-results)):
 
 ```
        Top dependents of
