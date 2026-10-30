@@ -99,9 +99,5 @@ async def _run() -> int:
     return 0
 
 
-def main() -> None:
-    sys.exit(asyncio.run(_run()))
-
-
 if __name__ == "__main__":
-    main()
+    sys.exit(asyncio.run(_run()))

@@ -11,6 +11,7 @@ from dep_rank.core.rate_limiter import (
     BACKGROUND_PAUSE_SECONDS,
     RateLimiter,
     backoff_delay,
+    retry_after_seconds,
 )
 
 
@@ -112,3 +113,20 @@ class TestRateLimiter:
         assert limiter.background_paused() is True
         clock["t"] += 1.0
         assert limiter.background_paused() is False
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("5", 5.0),
+        ("0.5", 0.5),
+        ("-3", -3.0),  # callers clamp; the parser does not
+        (None, None),
+        ("", None),
+        ("Wed, 21 Oct 2015 07:28:00 GMT", None),
+        ("inf", None),
+        ("nan", None),
+    ],
+)
+def test_retry_after_seconds(value: str | None, expected: float | None) -> None:
+    assert retry_after_seconds(value) == expected
