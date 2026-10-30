@@ -93,7 +93,7 @@ async def search_code(
             failed[full_name] = "rate limited"
             continue
 
-        search_query = f"{query} repo:{repo.owner}/{repo.name}"
+        search_query = f"{query} repo:{full_name}"
         url = f"{SEARCH_URL}?q={quote(search_query, safe='')}"
 
         try:
@@ -190,12 +190,9 @@ async def search_dependents(
     if on_scraped is not None:
         await on_scraped(scrape_result)
 
-    if scrape_result.estimated_total_dependents == 0:
-        result = CodeSearchResult(source=url, query=query, hits=[], searched_repos=0)
-    else:
-        result = await search_code(
-            session, scrape_result.repos, query, token=token, max_repos=max_repos
-        )
+    result = await search_code(
+        session, scrape_result.repos, query, token=token, max_repos=max_repos
+    )
     return result.model_copy(
         update={
             "source": url,
