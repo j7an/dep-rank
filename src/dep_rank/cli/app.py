@@ -255,6 +255,23 @@ async def run_deps(
             return result
 
 
+_max_pages_option = click.option(
+    "--max-pages", default=200, help="Maximum pages to scrape (default: 200, ceiling 1000)."
+)
+_concurrency_option = click.option(
+    "--concurrency",
+    type=int,
+    hidden=True,
+    expose_value=False,
+    deprecated="has no effect; dependents pages are fetched serially",
+)
+_package_name_option = click.option(
+    "--package-name",
+    default=None,
+    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
+)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="dep-rank")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose/debug logging.")
@@ -285,16 +302,8 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     "--packages/--repositories", default=False, help="Search packages instead of repositories."
 )
 @click.option("--token", envvar="DEP_RANK_TOKEN", default=None, help="GitHub token.")
-@click.option(
-    "--max-pages", default=200, help="Maximum pages to scrape (default: 200, ceiling 1000)."
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    hidden=True,
-    expose_value=False,
-    deprecated="has no effect; dependents pages are fetched serially",
-)
+@_max_pages_option
+@_concurrency_option
 @click.option(
     "--adaptive-stop/--no-adaptive-stop",
     default=True,
@@ -320,11 +329,7 @@ def cli(ctx: click.Context, verbose: bool) -> None:
     help="Show each dependent's most-downloaded registry package (third-party lookup "
     "via ecosyste.ms, deps.dev, and npm; display only, not used for ranking).",
 )
-@click.option(
-    "--package-name",
-    default=None,
-    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
-)
+@_package_name_option
 @click.pass_context
 def deps(
     ctx: click.Context,
@@ -413,23 +418,9 @@ def deps(
 @click.option("--max-repos", default=10, help="Maximum repos to search.")
 @click.option("--min-stars", default=50, help="Only search repos with this many stars.")
 @click.option("--token", envvar="DEP_RANK_TOKEN", required=True, help="GitHub token (required).")
-@click.option(
-    "--max-pages",
-    default=200,
-    help="Maximum pages to scrape (default: 200, ceiling 1000).",
-)
-@click.option(
-    "--concurrency",
-    type=int,
-    hidden=True,
-    expose_value=False,
-    deprecated="has no effect; dependents pages are fetched serially",
-)
-@click.option(
-    "--package-name",
-    default=None,
-    help="Scrape only the package with this exact name, as listed on GitHub's dependents page.",
-)
+@_max_pages_option
+@_concurrency_option
+@_package_name_option
 @click.pass_context
 def search(
     ctx: click.Context,
