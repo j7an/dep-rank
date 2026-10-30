@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -20,7 +19,7 @@ from dep_rank.core.models import (
     ScrapeResult,
     ScrapeSnapshot,
 )
-from dep_rank.core.rate_limiter import RETRY_MAX_SECONDS, RateLimiter
+from dep_rank.core.rate_limiter import RETRY_MAX_SECONDS, RateLimiter, retry_after_seconds
 from dep_rank.core.scraper import DEFAULT_MAX_PAGES, REQUEST_TIMEOUT, scrape_dependents
 
 if TYPE_CHECKING:
@@ -47,11 +46,8 @@ def _rate_limit_wait(resp: httpx2.Response, now: float) -> float | None:
         resp.status_code == 403 and (retry_after is not None or exhausted)
     ):
         return None
-    try:
-        seconds = float(retry_after) if retry_after is not None else math.nan
-    except ValueError:  # the HTTP-date form
-        seconds = math.nan
-    if math.isfinite(seconds):
+    seconds = retry_after_seconds(retry_after)
+    if seconds is not None:
         return max(seconds, 0.0)
     if exhausted:
         try:

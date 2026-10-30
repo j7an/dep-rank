@@ -6,7 +6,6 @@ import asyncio
 import heapq
 import itertools
 import logging
-import math
 import re
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -31,6 +30,7 @@ from dep_rank.core.rate_limiter import (
     UNAUTH_RATE,
     RateLimiter,
     backoff_delay,
+    retry_after_seconds,
 )
 from dep_rank.core.validation import validate_github_url
 
@@ -225,12 +225,7 @@ async def _get_once(
             body = cached["body"]
             etag = cached["etag"]
         elif resp.status_code == 429:
-            try:
-                retry_after: float | None = float(resp.headers.get("Retry-After", ""))
-            except ValueError:  # absent, or the HTTP-date form
-                retry_after = None
-            if retry_after is not None and not math.isfinite(retry_after):
-                retry_after = None  # "inf" would sleep forever
+            retry_after = retry_after_seconds(resp.headers.get("Retry-After"))
             return _Attempt(429, None, limiter.note_429(retry_after))
         else:
             return _Attempt(resp.status_code, None)
