@@ -68,6 +68,8 @@ Rate-limited code searches are retried up to twice, honoring GitHub's wait heade
 
 A scrape result (`deps`, and the `search` pre-pass) reports whether it finished: results include a `complete` flag and a `reason`. `complete: false` means the scrape stopped early — `max_pages_reached` (raise `--max-pages`), `trend_converged` (the adaptive heuristic judged the top-K stable; use `--no-adaptive-stop` to scrape until exhaustion or `--max-pages`), `network_failure`, or `rate_limited`. `total_count`/`filtered_count` are then lower bounds across the pages actually scraped, not population totals.
 
+### Repositories with several packages
+
 Some repositories publish several packages, and GitHub's dependents page lists them in a dropdown (at most 100). Without `--package-name`, GitHub picks the package, and dep-rank names it and the others in a hint. JSON output then also carries `package` (the one scraped) and `packages` (every listed name).
 
 ### `dep-rank cache` — Manage cache
