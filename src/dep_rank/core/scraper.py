@@ -53,8 +53,7 @@ ADAPTIVE_W_MIN = 30  # minimum pages before adaptive stop may fire
 RETRYABLE_STATUSES = frozenset({500, 502, 503, 504})  # retried like transport errors
 
 SWR_DRAIN_TIMEOUT = 10.0  # seconds to await outstanding refreshes before cancelling
-SWR_HEADROOM_TOKENS = 2  # a background refresh consumes a token only when >= this many remain
-#                          (try_acquire reserve=SWR_HEADROOM_TOKENS-1, leaving >=1 for foreground)
+SWR_RESERVE_TOKENS = 1  # tokens a background refresh always leaves for the foreground
 
 
 class NetworkFailureError(Exception):
@@ -220,7 +219,7 @@ async def _get_once(
         if resp.status_code == 200:
             body: bytes = await resp.aread()
             etag = resp.headers.get("ETag")
-        elif resp.status_code == 304 and cached and cached["body"] is not None:
+        elif resp.status_code == 304 and cached:
             body = cached["body"]
             etag = cached["etag"]
         elif resp.status_code == 429:
@@ -302,9 +301,9 @@ async def _read_page(
     """
     if cache:
         cached = await cache.get(url)
-        if cached and cached["body"] is not None:
+        if cached:
             body: bytes = cached["body"]
-            stale = bool(cached.get("expired"))
+            stale = cached["expired"]
             if stale:
                 swr.schedule(url)
             return body.decode("utf-8"), stale
@@ -349,7 +348,7 @@ class SWRManager:
         availability read is lock-unaware and races the foreground walk
         (tokens read here can be gone by the time the refresh runs). Instead the
         token decision is made atomically at refresh time via
-        ``try_acquire(reserve=SWR_HEADROOM_TOKENS - 1)``, which both reserves
+        ``try_acquire(reserve=SWR_RESERVE_TOKENS)``, which both reserves
         headroom for the foreground and consumes in one lock-aware step.
         """
         if not self._enabled or url in self._inflight:
@@ -369,7 +368,7 @@ class SWRManager:
                     return
                 # Atomically consume a token only if foreground headroom remains;
                 # if not (foreground drained the bucket), abort without making a request.
-                if not self._limiter.try_acquire(reserve=SWR_HEADROOM_TOKENS - 1):
+                if not self._limiter.try_acquire(reserve=SWR_RESERVE_TOKENS):
                     return
                 cached = await self._cache.get(url) if self._cache else None
                 # Re-check here, not in `_get_once` (shared with the foreground): a
